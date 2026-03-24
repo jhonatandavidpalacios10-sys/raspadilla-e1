@@ -42,7 +42,7 @@ export async function initUsuarios() {
             }
 
             if(btn.dataset.action === 'editar-pass') {
-                abrirModalCambioPass(btn.dataset.uid, btn.dataset.email, btn.dataset.oldpass);
+                abrirModalEditarUsuario(btn.dataset.uid, btn.dataset.email, btn.dataset.oldpass, btn.dataset.rol, btn.dataset.localid, btn.dataset.localnombre);
             }
         };
 
@@ -54,68 +54,130 @@ export async function initUsuarios() {
     }
 }
 
-function abrirModalCambioPass(uid, email, oldPass) {
-    let m = document.getElementById('modal-cambio-pass');
+// --- NUEVO: Modal Dinámico para Editar Usuario y Contraseña (Exclusivo Master) ---
+function abrirModalEditarUsuario(uid, email, oldPass, rol, localId, localNombre) {
+    let m = document.getElementById('modal-editar-usuario');
     if(!m) {
         m = document.createElement('div');
-        m.id = 'modal-cambio-pass';
+        m.id = 'modal-editar-usuario';
         m.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] hidden flex items-center justify-center px-4 transition-opacity duration-300 opacity-0';
         m.innerHTML = `
             <div class="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-700">
-                <h3 class="text-lg font-bold text-white mb-1">Cambiar Contraseña</h3>
-                <p class="text-xs text-sky-400 mb-4 font-bold" id="pass-email-display"></p>
-                <input type="hidden" id="pass-target-uid">
-                <input type="hidden" id="pass-target-old">
-                <input type="hidden" id="pass-target-email">
-                <input type="text" id="new-pass-input" placeholder="Escribe la nueva contraseña..." autocomplete="off" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500 mb-4">
+                <h3 class="text-lg font-bold text-white mb-4">Editar Usuario / Contraseña</h3>
+                
+                <input type="hidden" id="edit-target-uid">
+                <input type="hidden" id="edit-target-oldpass">
+                <input type="hidden" id="edit-target-email">
+                <input type="hidden" id="edit-target-rol">
+                <input type="hidden" id="edit-target-localId">
+                <input type="hidden" id="edit-target-localNombre">
+
+                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nombre de Usuario</label>
+                <div class="flex mb-3">
+                    <input type="text" id="edit-user-nombre" autocomplete="off" class="flex-1 bg-slate-900 border border-slate-700 rounded-l-lg px-3 py-2 text-white lowercase outline-none focus:border-sky-500">
+                    <span class="bg-slate-700 border-y border-r border-slate-700 rounded-r-lg px-2 py-2 text-xs text-slate-400 flex items-center">@raspadillas.com</span>
+                </div>
+
+                <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nueva Contraseña</label>
+                <input type="text" id="edit-user-pass" autocomplete="off" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500 mb-5">
+                
                 <div class="flex gap-2">
-                    <button id="btn-cancel-pass" class="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold transition-colors">Cancelar</button>
-                    <button id="btn-confirm-pass" class="flex-1 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold transition-colors">Actualizar</button>
+                    <button id="btn-cancel-edit-user" class="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold transition-colors">Cancelar</button>
+                    <button id="btn-confirm-edit-user" class="flex-1 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold transition-colors">Guardar</button>
                 </div>
             </div>
         `;
         document.body.appendChild(m);
 
-        document.getElementById('btn-cancel-pass').onclick = () => { m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300); };
-        document.getElementById('btn-confirm-pass').onclick = ejecutarCambioPass;
+        document.getElementById('btn-cancel-edit-user').onclick = () => { m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300); };
+        document.getElementById('btn-confirm-edit-user').onclick = ejecutarEditarUsuario;
+        document.getElementById('edit-user-nombre').oninput = (e) => e.target.value = e.target.value.toLowerCase().replace(/@.*/g, '').replace(/[^a-z0-9_.]/g, '');
     }
 
-    document.getElementById('pass-email-display').textContent = email;
-    document.getElementById('pass-target-uid').value = uid;
-    document.getElementById('pass-target-old').value = oldPass;
-    document.getElementById('pass-target-email').value = email;
-    document.getElementById('new-pass-input').value = '';
+    document.getElementById('edit-target-uid').value = uid;
+    document.getElementById('edit-target-oldpass').value = oldPass || '';
+    document.getElementById('edit-target-email').value = email;
+    document.getElementById('edit-target-rol').value = rol;
+    document.getElementById('edit-target-localId').value = localId;
+    document.getElementById('edit-target-localNombre').value = localNombre;
+    
+    document.getElementById('edit-user-nombre').value = email.split('@')[0];
+    document.getElementById('edit-user-pass').value = oldPass || '';
 
     m.classList.remove('hidden'); setTimeout(() => m.classList.remove('opacity-0'), 10);
 }
 
-async function ejecutarCambioPass() {
-    const uid = document.getElementById('pass-target-uid').value; const oldPass = document.getElementById('pass-target-old').value;
-    const email = document.getElementById('pass-target-email').value; const newPass = document.getElementById('new-pass-input').value.trim();
+async function ejecutarEditarUsuario() {
+    const uid = document.getElementById('edit-target-uid').value;
+    const oldPass = document.getElementById('edit-target-oldpass').value;
+    const currentEmail = document.getElementById('edit-target-email').value;
+    
+    const newUsername = document.getElementById('edit-user-nombre').value.trim();
+    const newEmail = newUsername + '@raspadillas.com';
+    const newPass = document.getElementById('edit-user-pass').value.trim();
+    
+    const rol = document.getElementById('edit-target-rol').value;
+    const localId = document.getElementById('edit-target-localId').value;
+    const localNombre = document.getElementById('edit-target-localNombre').value;
 
+    if (newUsername.length < 3) { if(window.mostrarToast) window.mostrarToast('Error', 'Usuario muy corto', 'amber'); return; }
     if (newPass.length < 6) { if(window.mostrarToast) window.mostrarToast('Error', 'Mínimo 6 caracteres', 'amber'); return; }
 
-    const btn = document.getElementById('btn-confirm-pass'); const originalText = btn.innerHTML;
+    // Si no se cambió nada
+    if (currentEmail === newEmail && newPass === oldPass) {
+        const m = document.getElementById('modal-editar-usuario'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
+        return;
+    }
+
+    const btn = document.getElementById('btn-confirm-edit-user'); const originalText = btn.innerHTML;
     btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline"></i> Guardando...'; if(window.lucide) window.lucide.createIcons(); btn.disabled = true;
 
     try {
-        if (uid === state.currentUser.uid) { await updatePassword(state.currentUser, newPass); } 
+        // CASO 1: CAMBIO DE NOMBRE DE USUARIO (Esto recrea la cuenta y salta el bloqueo de contraseña oculta)
+        if (currentEmail !== newEmail) {
+            const secCred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, newPass);
+            const nuevoUID = secCred.user.uid;
+            await secondaryAuth.signOut();
+
+            // Guardar nueva cuenta en Firestore y heredar rol
+            await setDoc(doc(db, "usuarios", nuevoUID), { 
+                email: newEmail, rol: rol, localId: localId, localNombre: localNombre, 
+                creado_manualmente: true, pass_visible: newPass 
+            });
+            
+            // Destruir el registro viejo (esto expulsa a la cuenta vieja)
+            await deleteDoc(doc(db, "usuarios", uid));
+            if(window.mostrarToast) window.mostrarToast('Éxito', 'Cuenta recreada con nuevo usuario', 'emerald');
+        } 
+        // CASO 2: SOLO CAMBIO DE CONTRASEÑA
         else {
-            if(!oldPass) throw new Error("no_old_pass");
-            const secCred = await signInWithEmailAndPassword(secondaryAuth, email, oldPass);
-            await updatePassword(secCred.user, newPass); await secondaryAuth.signOut();
+            if (uid === state.currentUser.uid) { 
+                await updatePassword(state.currentUser, newPass); 
+            } else {
+                if(!oldPass) throw new Error("no_old_pass");
+                const secCred = await signInWithEmailAndPassword(secondaryAuth, currentEmail, oldPass);
+                await updatePassword(secCred.user, newPass); await secondaryAuth.signOut();
+            }
+            await updateDoc(doc(db, "usuarios", uid), { pass_visible: newPass });
+            if(window.mostrarToast) window.mostrarToast('Éxito', 'Contraseña actualizada', 'emerald');
         }
-        await updateDoc(doc(db, "usuarios", uid), { pass_visible: newPass });
-        if(window.mostrarToast) window.mostrarToast('Éxito', 'Contraseña actualizada', 'emerald');
-        const m = document.getElementById('modal-cambio-pass'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
+
+        const m = document.getElementById('modal-editar-usuario'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
         cargarUsuariosYLocales();
     } catch (err) {
-        console.error(err); let msg = 'Error al cambiar contraseña.';
-        if(err.message === 'no_old_pass') msg = 'No se tiene la clave original guardada. Debes borrar y crear de nuevo al vendedor.';
-        if(err.code === 'auth/requires-recent-login') msg = 'Por seguridad, cierra tu sesión y vuelve a entrar para cambiar TU propia clave.';
-        if(window.mostrarAlerta) window.mostrarAlerta('Error', msg, 'red'); else alert(msg);
+        console.error(err); 
+        if(err.message === 'no_old_pass') {
+            if(window.mostrarAlerta) window.mostrarAlerta('Contraseña Oculta', 'No podemos actualizar la clave directamente porque la original está oculta en Firebase.<br><br>Para forzar el cambio, <b>modifica también el Nombre de Usuario</b> (ej: añade un número o letra). Esto recreará la cuenta limpia y solucionará el problema.', 'amber');
+        } else if(err.code === 'auth/email-already-in-use') {
+            if(window.mostrarAlerta) window.mostrarAlerta('Usuario Ocupado', 'Ese nuevo nombre de usuario ya existe. Elige otro diferente.', 'amber');
+        } else if(err.code === 'auth/requires-recent-login') {
+            if(window.mostrarAlerta) window.mostrarAlerta('Seguridad', 'Por seguridad, cierra tu sesión y vuelve a entrar para cambiar TU propia clave.', 'red');
+        } else {
+            if(window.mostrarAlerta) window.mostrarAlerta('Error', err.message, 'red'); else alert(err.message);
+        }
     } finally { btn.innerHTML = originalText; btn.disabled = false; }
 }
+// --- FIN Modal Editar ---
 
 function abrirModalUsuarioConfig() { 
     document.getElementById('form-usuario').reset(); document.getElementById('user-id').value = ''; 
@@ -155,9 +217,8 @@ async function cargarUsuarios() {
 
 function genU(u, opts) {
     // JERARQUÍA DE VISIBILIDAD:
-    // Si la tarjeta pertenece a un Master (o Dueño Principal) y tú NO ERES Master, entonces no ves nada (te la oculto por seguridad).
     const isThisCardMaster = u.rol === 'master' || u.uid === MASTER_UID;
-    if (isThisCardMaster && state.userRole !== 'master') return '';
+    if (isThisCardMaster && state.userRole !== 'master') return ''; // Solo el Master puede ver a otros Masters
     
     const isPrivileged = state.userRole === 'admin' || state.userRole === 'Administrador' || state.userRole === 'master';
     const isMe = (u.uid === state.currentUser?.uid);
@@ -166,10 +227,13 @@ function genU(u, opts) {
     let passHtml = '';
     
     if (isPrivileged) {
+        // Solo el Master puede editar el usuario para forzar recreación
+        const btnEditHtml = state.userRole === 'master' ? `<button data-action="editar-pass" data-uid="${u.uid}" data-email="${u.email}" data-oldpass="${u.pass_visible || ''}" data-rol="${u.rol}" data-localid="${u.localId || ''}" data-localnombre="${u.localNombre || ''}" title="Editar Usuario y Contraseña" class="text-amber-400 hover:text-white p-0.5 ml-1"><i data-lucide="edit-3" class="w-3 h-3"></i></button>` : '';
+        
         passHtml = `<div class="flex items-center gap-1 mt-1 bg-slate-900 w-fit px-2 py-0.5 rounded border border-slate-700">
             <span class="text-[10px] text-sky-400 font-mono tracking-wider">${passDisplay}</span>
             ${u.pass_visible ? `<button data-action="copiar-pass" data-pass="${u.pass_visible}" title="Copiar Contraseña" class="text-slate-400 hover:text-white p-0.5"><i data-lucide="copy" class="w-3 h-3"></i></button>` : ''}
-            <button data-action="editar-pass" data-uid="${u.uid}" data-email="${u.email}" data-oldpass="${u.pass_visible || ''}" title="Cambiar Contraseña" class="text-amber-400 hover:text-white p-0.5 ml-1"><i data-lucide="edit-3" class="w-3 h-3"></i></button>
+            ${btnEditHtml}
         </div>`;
     }
 
@@ -200,7 +264,7 @@ function genU(u, opts) {
         roleTextColor = 'text-purple-400';
     }
 
-    // BLOQUEO PERSONAL: Si "isMe", imprimimos un simple texto, quitándole la posibilidad de auto-degradarse.
+    // BLOQUEO PERSONAL: Desactiva el auto-cambio de rol
     const renderRoleSelector = isMe 
         ? `<span class="bg-slate-900 border border-slate-700 ${roleTextColor} rounded px-2 py-1 text-xs font-bold uppercase tracking-wider">${u.rol}</span>`
         : `<select data-action="cambiar-rol" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs cursor-pointer">${roleOptions}</select>`;
@@ -283,7 +347,7 @@ async function eliminarUsuario(uid) { if(window.mostrarConfirmacion) window.most
 async function cambiarRolUsuario(uid, rol) { 
     await updateDoc(doc(db, "usuarios", uid), { rol }); 
     if(window.mostrarToast) window.mostrarToast('Listo', 'Rol actualizado', 'sky'); 
-    cargarUsuariosYLocales(); // Forzar redibujado para que los colores se actualicen al instante
+    cargarUsuariosYLocales(); 
 }
 
 async function cambiarLocalUsuario(uid, locId) { 
