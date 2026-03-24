@@ -1,4 +1,4 @@
-import { db, collection, getDocs, doc, updateDoc, addDoc, deleteDoc, setDoc, secondaryAuth, createUserWithEmailAndPassword } from '../core/firebase-setup.js';
+import { db, collection, getDocs, doc, updateDoc, deleteDoc, setDoc, secondaryAuth, createUserWithEmailAndPassword } from '../core/firebase-setup.js';
 import { state } from '../core/store.js';
 
 let listaUsuariosEl, listaLocalesEl, selectLocalUsuario; const MASTER_UID = "kRG6hOWsWHfoJwWLCXAkqRuVNLk2";
@@ -8,7 +8,6 @@ export async function initUsuarios() {
     listaLocalesEl = document.getElementById('locales-list'); 
     selectLocalUsuario = document.getElementById('user-local');
     
-    // Usamos .onsubmit y .onclick para evitar eventos duplicados en memoria
     const formUsuario = document.getElementById('form-usuario');
     if(formUsuario) formUsuario.onsubmit = guardarUsuarioSimulado;
     
@@ -36,6 +35,12 @@ export async function initUsuarios() {
         listaUsuariosEl.onclick = e => {
             const btn = e.target.closest('button[data-action]'); if(!btn) return;
             if(btn.dataset.action === 'eliminar-usuario') eliminarUsuario(btn.dataset.uid);
+            
+            // Lógica para copiar contraseña
+            if(btn.dataset.action === 'copiar-pass') {
+                navigator.clipboard.writeText(btn.dataset.pass);
+                if(window.mostrarToast) window.mostrarToast('Copiado', 'Contraseña en el portapapeles', 'sky');
+            }
         };
 
         listaUsuariosEl.onchange = e => {
@@ -46,7 +51,24 @@ export async function initUsuarios() {
     }
 }
 
-function abrirModalUsuarioConfig() { document.getElementById('form-usuario').reset(); document.getElementById('user-id').value = ''; const m = document.getElementById('modal-usuario'); m.classList.remove('hidden'); setTimeout(() => m.classList.remove('opacity-0'), 10); }
+function abrirModalUsuarioConfig() { 
+    document.getElementById('form-usuario').reset(); 
+    document.getElementById('user-id').value = ''; 
+    
+    // Inyectar Rol Master dinámicamente si el creador es el Master
+    const selectRol = document.getElementById('user-rol');
+    if(selectRol) {
+        selectRol.innerHTML = `<option value="vendedor">Vendedor</option><option value="admin">Administrador</option>`;
+        if (state.userRole === 'master') {
+            selectRol.innerHTML += `<option value="master" class="font-bold text-amber-400">Master (Dueño)</option>`;
+        }
+    }
+
+    const m = document.getElementById('modal-usuario'); 
+    m.classList.remove('hidden'); 
+    setTimeout(() => m.classList.remove('opacity-0'), 10); 
+}
+
 function cerrarModalUsuario() { const m = document.getElementById('modal-usuario'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300); }
 
 export async function cargarUsuariosYLocales() { await cargarLocales(); await cargarUsuarios(); }
@@ -68,22 +90,33 @@ async function cargarUsuarios() {
         let html = ''; let selectOptions = '<option value="">Sin Local</option>'; state.locales.forEach(l => selectOptions += `<option value="${l.id}">${l.nombre}</option>`);
         state.locales.forEach(loc => { const usrsLoc = allU.filter(u => u.localId === loc.id); if(usrsLoc.length > 0) { html += `<div class="mt-4 mb-2 border-b border-slate-700 pb-1"><h4 class="text-xs font-bold text-sky-400 uppercase tracking-wider">${loc.nombre}</h4></div>`; usrsLoc.forEach(u => html += genU(u, selectOptions)); } });
         const usrsSin = allU.filter(u => !u.localId); if(usrsSin.length > 0) { html += `<div class="mt-4 mb-2 border-b border-slate-700 pb-1"><h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Sin Asignar / Master</h4></div>`; usrsSin.forEach(u => html += genU(u, selectOptions)); }
-        listaUsuariosEl.innerHTML = html || '<p class="text-xs text-slate-500 p-2">Sin usuarios.</p>'; if (window.lucide) lucide.createIcons();
+        listaUsuariosEl.innerHTML = html || '<p class="text-xs text-slate-500 p-2">Sin usuarios.</p>'; if (window.lucide) window.lucide.createIcons();
     } catch (e) {}
 }
 
 function genU(u, opts) {
     if ((u.rol === 'master' || u.uid === MASTER_UID) && state.currentUser?.uid !== MASTER_UID) return '';
-    return `<div class="bg-slate-800 border border-slate-700 rounded-xl p-3 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-2 mb-2"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center text-slate-400 shrink-0"><i data-lucide="user" class="w-4 h-4"></i></div><div><p class="font-bold text-white text-sm">${u.email || 'Sin correo'}</p><p class="text-[10px] text-slate-500">Rol: <span class="uppercase font-bold">${u.rol}</span></p></div></div>${u.uid === MASTER_UID ? `<span class="bg-purple-500 text-white px-2 py-0.5 rounded text-xs font-bold">Master</span>` : `<div class="flex gap-2 w-full lg:w-auto mt-2 lg:mt-0"><select data-action="cambiar-local" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs">${opts.replace(`value="${u.localId || ''}"`, `value="${u.localId || ''}" selected`)}</select><select data-action="cambiar-rol" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs"><option value="vendedor" ${u.rol === 'vendedor' ? 'selected' : ''}>Vendedor</option><option value="admin" ${u.rol === 'admin' ? 'selected' : ''}>Admin</option></select><button data-action="eliminar-usuario" data-uid="${u.uid}" class="text-red-400 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div>`}</div>`;
+    
+    // MAGIA: Mostrar contraseña solo a Admins/Masters
+    const isPrivileged = state.userRole === 'admin' || state.userRole === 'master';
+    const passHtml = (isPrivileged && u.pass_visible) 
+        ? `<div class="flex items-center gap-1 mt-1 bg-slate-900 w-fit px-2 py-0.5 rounded border border-slate-700"><span class="text-[10px] text-sky-400 font-mono tracking-wider">${u.pass_visible}</span><button data-action="copiar-pass" data-pass="${u.pass_visible}" title="Copiar Contraseña" class="text-slate-400 hover:text-white p-0.5"><i data-lucide="copy" class="w-3 h-3"></i></button></div>` 
+        : '';
+
+    // Selector de roles (Permite ver el rol Master si el actual es Master)
+    let roleOptions = `<option value="vendedor" ${u.rol === 'vendedor' ? 'selected' : ''}>Vendedor</option>
+                       <option value="admin" ${u.rol === 'admin' ? 'selected' : ''}>Admin</option>`;
+    if (state.userRole === 'master') {
+        roleOptions += `<option value="master" ${u.rol === 'master' ? 'selected' : ''}>Master</option>`;
+    }
+
+    return `<div class="bg-slate-800 border border-slate-700 rounded-xl p-3 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-2 mb-2"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center text-slate-400 shrink-0"><i data-lucide="user" class="w-4 h-4"></i></div><div><p class="font-bold text-white text-sm">${u.email || 'Sin correo'}</p><p class="text-[10px] text-slate-500">Rol: <span class="uppercase font-bold">${u.rol}</span></p>${passHtml}</div></div>${u.uid === MASTER_UID ? `<span class="bg-purple-500 text-white px-2 py-0.5 rounded text-xs font-bold">Dueño Principal</span>` : `<div class="flex gap-2 w-full lg:w-auto mt-2 lg:mt-0"><select data-action="cambiar-local" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs">${opts.replace(`value="${u.localId || ''}"`, `value="${u.localId || ''}" selected`)}</select><select data-action="cambiar-rol" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs">${roleOptions}</select><button data-action="eliminar-usuario" data-uid="${u.uid}" class="text-red-400 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div>`}</div>`;
 }
 
 async function editarLocal(id) { /* omitted for brevity */ }
 async function guardarLocal(e) { e.preventDefault(); const n = document.getElementById('nuevo-local-nombre').value.trim(); if(n) { await addDoc(collection(db, "locales"), { nombre: n }); cargarUsuariosYLocales(); document.getElementById('nuevo-local-nombre').value = ''; } }
 async function eliminarLocal(id) { if(window.mostrarConfirmacion) window.mostrarConfirmacion("¿Eliminar sede?", async () => { await deleteDoc(doc(db, "locales", id)); cargarUsuariosYLocales(); }); }
 
-// ==========================================
-// FUNCIÓN DE REGISTRO CON DIAGNÓSTICO
-// ==========================================
 async function guardarUsuarioSimulado(e) { 
     e.preventDefault(); 
     
@@ -96,36 +129,32 @@ async function guardarUsuarioSimulado(e) {
     
     const btn = document.querySelector('#form-usuario button[type="submit"]');
     const btnOriginal = btn.innerHTML;
-    btn.innerHTML = 'Creando cuenta...';
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin inline"></i> Creando...';
+    if(window.lucide) window.lucide.createIcons();
     btn.disabled = true;
 
     try { 
-        // 1. Crear en Firebase Auth
         const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, pass);
         const nuevoUID = userCredential.user.uid;
-
-        // 2. Cerrar sesión de la app secundaria
         await secondaryAuth.signOut();
 
-        // 3. Guardar en Firestore
+        // Se guarda la contraseña en el campo pass_visible
         await setDoc(doc(db, "usuarios", nuevoUID), { 
             email: email, 
             rol: rol, 
             localId: locId, 
             localNombre: loc?.nombre || 'Sin Local',
-            creado_manualmente: true 
+            creado_manualmente: true,
+            pass_visible: pass 
         }); 
         
-        if(window.mostrarToast) window.mostrarToast('Éxito', 'Cuenta de vendedor creada', 'emerald');
+        if(window.mostrarToast) window.mostrarToast('Éxito', 'Cuenta creada con éxito', 'emerald');
         cerrarModalUsuario(); 
         cargarUsuariosYLocales(); 
         
     } catch(error) {
         console.error("DEBUG - ERROR DE FIREBASE:", error);
-        
-        // ALERTA DE DIAGNÓSTICO GIGANTE PARA SABER QUÉ PASA
-        alert(`🚨 ERROR AL CREAR USUARIO 🚨\n\nCÓDIGO: ${error.code}\n\nMENSAJE: ${error.message}\n\n👉 POSIBLE SOLUCIÓN:\nSi dice "auth/operation-not-allowed", tienes que ir a la Consola de Firebase -> Authentication -> Sign-in method -> Y activar la opción de "Correo electrónico/Contraseña".\n\nSi dice "permission-denied", son tus reglas de Firestore.`);
-        
+        alert(`🚨 ERROR AL CREAR USUARIO 🚨\n\nCÓDIGO: ${error.code}\n\nMENSAJE: ${error.message}`);
     } finally {
         btn.innerHTML = btnOriginal;
         btn.disabled = false;

@@ -15,46 +15,31 @@ export function initVentas() {
     window.clearCart = clearCart;
     window.actualizarCarritoUI = actualizarCarritoUI;
 
-    // MAGIA PARA LOS MÉTODOS DE PAGO Y CÁLCULO AUTOMÁTICO
     window.toggleMetodoPago = function(val) {
         document.getElementById('area-vuelto').classList.toggle('hidden', val !== 'efectivo');
         document.getElementById('area-mixto').classList.toggle('hidden', val !== 'mixto');
         
-        // Resaltar visualmente el método seleccionado
         document.querySelectorAll('input[name="metodo_pago"]').forEach(radio => {
             const label = radio.closest('label');
-            if (radio.value === val) {
-                label.classList.add('border-sky-500', 'bg-slate-800');
-                label.classList.remove('border-slate-700', 'bg-slate-900');
-            } else {
-                label.classList.remove('border-sky-500', 'bg-slate-800');
-                label.classList.add('border-slate-700', 'bg-slate-900');
-            }
+            if (radio.value === val) { label.classList.add('border-sky-500', 'bg-slate-800'); label.classList.remove('border-slate-700', 'bg-slate-900'); } 
+            else { label.classList.remove('border-sky-500', 'bg-slate-800'); label.classList.add('border-slate-700', 'bg-slate-900'); }
         });
         
-        // Autocompletar pago mixto si hay items con la marca "isYape"
         if (val === 'mixto') {
             const hasYapeItem = state.carrito.some(i => i.isYape);
             if (hasYapeItem) {
                 let sumYape = 0; let sumEfe = 0;
-                state.carrito.forEach(i => {
-                    if (i.isYape) sumYape += i.precio * i.cantidad;
-                    else sumEfe += i.precio * i.cantidad;
-                });
+                state.carrito.forEach(i => { if (i.isYape) sumYape += i.precio * i.cantidad; else sumEfe += i.precio * i.cantidad; });
                 document.getElementById('input-mixto-yape').value = sumYape > 0 ? sumYape.toFixed(2) : '';
                 document.getElementById('input-mixto-efectivo').value = sumEfe > 0 ? sumEfe.toFixed(2) : '';
             }
         }
-        
         calcularVuelto();
     };
 
     window.toggleYapeItem = function(id) {
         const it = state.carrito.find(c => c.cartId === id);
-        if (it) {
-            it.isYape = !it.isYape; // Invierte el estado
-            actualizarCarritoUI();
-        }
+        if (it) { it.isYape = !it.isYape; actualizarCarritoUI(); }
     };
 
     const grid = document.getElementById('productos-venta-grid');
@@ -132,10 +117,13 @@ export function renderProductosVenta() {
     filtrados.forEach(p => {
         const isAgt = p.stock !== null && p.stock <= 0;
         const blockCls = isAgt ? 'opacity-50 grayscale cursor-not-allowed' : 'cursor-pointer hover:border-sky-500 hover:bg-slate-700/50 active:scale-95';
-        const badgeHtml = isAgt ? `<div class="absolute top-0 right-0 bg-red-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-bl-lg">Agotado</div>` : (p.categoria==='vaso' ? `<div class="absolute top-0 right-0 bg-sky-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-bl-lg">${p.limite===999?'Ilimitados':p.limite}</div>` : '');
+        
+        // Ajuste CSS Móvil: badges, paddings y fuentes más pequeñas
+        const badgeHtml = isAgt ? `<div class="absolute top-0 right-0 bg-red-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">Agotado</div>` : (p.categoria==='vaso' ? `<div class="absolute top-0 right-0 bg-sky-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">${p.limite===999?'Ilimitados':p.limite}</div>` : '');
         const cCls = p.categoria === 'vaso' ? 'from-sky-400 to-indigo-500 shadow-sky-500/30' : 'from-emerald-400 to-teal-500 shadow-emerald-500/30';
         
-        html += `<div data-id="${p.id}" data-categoria="${p.categoria}" class="producto-card bg-slate-800 border border-slate-700 rounded-2xl p-3 flex flex-col items-center text-center transition-all relative overflow-hidden ${blockCls}">${badgeHtml}<div class="w-12 h-12 md:w-14 md:h-14 bg-gradient-to-br ${cCls} rounded-full flex items-center justify-center mt-3 mb-2 shadow-lg"><i data-lucide="${p.categoria === 'vaso' ? 'cup-soda' : 'package'}" class="w-6 h-6 md:w-7 md:h-7 text-white"></i></div><h3 class="text-xs md:text-sm font-bold text-white mb-1 leading-tight line-clamp-2">${p.nombre}</h3><p class="text-${p.categoria==='vaso'?'sky':'emerald'}-400 font-black text-sm mt-auto">${formatMoney(p.precio)}</p></div>`;
+        // Ajuste CSS Móvil: padding p-1.5 en lugar de p-3. Iconos w-8 h-8 en lugar de w-12 h-12. Textos text-[9px] en lugar de text-xs
+        html += `<div data-id="${p.id}" data-categoria="${p.categoria}" class="producto-card bg-slate-800 border border-slate-700 rounded-xl md:rounded-2xl p-1.5 md:p-3 flex flex-col items-center text-center transition-all relative overflow-hidden ${blockCls}">${badgeHtml}<div class="w-8 h-8 sm:w-10 sm:h-10 md:w-14 md:h-14 bg-gradient-to-br ${cCls} rounded-full flex items-center justify-center mt-2 md:mt-3 mb-1 md:mb-2 shadow-lg"><i data-lucide="${p.categoria === 'vaso' ? 'cup-soda' : 'package'}" class="w-4 h-4 sm:w-5 sm:h-5 md:w-7 md:h-7 text-white"></i></div><h3 class="text-[9px] sm:text-[10px] md:text-sm font-bold text-white mb-0.5 md:mb-1 leading-tight line-clamp-2">${p.nombre}</h3><p class="text-${p.categoria==='vaso'?'sky':'emerald'}-400 font-black text-[10px] sm:text-xs md:text-sm mt-auto">${formatMoney(p.precio)}</p></div>`;
     });
     grid.innerHTML = html; if(window.lucide) window.lucide.createIcons();
 }
@@ -151,8 +139,7 @@ function iniciarArmadoVaso(id) {
         html += `<div data-nombre="${j.nombre}" class="sabor-btn bg-slate-900 border border-slate-700 p-3 rounded-xl flex items-center gap-2 transition-colors ${dis}"><div class="check-icon w-4 h-4 rounded-full border border-slate-600 flex items-center justify-center"></div><span class="text-sm font-medium text-slate-300">${j.nombre}</span></div>`;
     });
     
-    c.innerHTML = html; 
-    document.getElementById('builder-count').textContent = '0';
+    c.innerHTML = html; document.getElementById('builder-count').textContent = '0';
     const m = document.getElementById('modal-armar-vaso'); m.classList.remove('hidden'); setTimeout(() => m.classList.remove('opacity-0'), 10);
 }
 
@@ -169,9 +156,7 @@ function toggleSabor(n) {
     if(window.lucide) window.lucide.createIcons();
 }
 
-window.cerrarModalArmar = function() { 
-    const m = document.getElementById('modal-armar-vaso'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300); 
-}
+window.cerrarModalArmar = function() { const m = document.getElementById('modal-armar-vaso'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300); }
 
 function confirmarVasoAlCarrito() {
     if(saboresElegidos.length === 0 && vasoActual.limite !== 0 && window.mostrarToast) { window.mostrarToast('Atención', 'Elige 1 sabor mínimo.', 'amber'); return; }
@@ -186,17 +171,12 @@ function agregarExtra(id) {
     actualizarCarritoUI(); if(window.mostrarToast) window.mostrarToast('Añadido', `${p.nombre}`, 'emerald');
 }
 
-function modificarCantidad(id, delta) {
-    const it = state.carrito.find(c => c.cartId === id);
-    if(it) { it.cantidad += delta; if(it.cantidad <= 0) eliminarItemCarrito(id); else actualizarCarritoUI(); }
-}
+function modificarCantidad(id, delta) { const it = state.carrito.find(c => c.cartId === id); if(it) { it.cantidad += delta; if(it.cantidad <= 0) eliminarItemCarrito(id); else actualizarCarritoUI(); } }
 
 function setCantidad(id, cantStr) {
-    if (cantStr === '') return; 
-    const cant = parseInt(cantStr); 
+    if (cantStr === '') return; const cant = parseInt(cantStr); 
     if(isNaN(cant) || cant <= 0) { eliminarItemCarrito(id); return; }
-    const it = state.carrito.find(c => c.cartId === id); 
-    if(it) { it.cantidad = cant; actualizarCarritoUI(); }
+    const it = state.carrito.find(c => c.cartId === id); if(it) { it.cantidad = cant; actualizarCarritoUI(); }
 }
 
 function eliminarItemCarrito(id) { state.carrito = state.carrito.filter(c => c.cartId !== id); actualizarCarritoUI(); }
@@ -211,8 +191,6 @@ export function actualizarCarritoUI() {
     state.carrito.forEach(i => {
         t += i.precio * i.cantidad;
         const color = i.precio < 0 ? 'text-red-400' : 'text-emerald-400';
-        
-        // Estilo del botón Yape
         const btnYapeClass = i.isYape ? 'bg-purple-500/20 text-purple-400 border-purple-500/50' : 'bg-slate-800 text-slate-500 border-slate-700 hover:text-white';
 
         html += `
@@ -239,33 +217,18 @@ export function actualizarCarritoUI() {
     
     document.getElementById('carrito-total').textContent = formatMoney(t); 
 
-    // LÓGICA DE AUTO-SELECCIÓN DE PAGO AL ACTUALIZAR
-    const hasYape = state.carrito.some(c => c.isYape);
-    const hasEfe = state.carrito.some(c => !c.isYape);
-    
+    const hasYape = state.carrito.some(c => c.isYape); const hasEfe = state.carrito.some(c => !c.isYape);
     if (hasYape) {
-        if (hasEfe && !document.getElementById('radio-mixto').checked) {
-            document.getElementById('radio-mixto').checked = true;
-            window.toggleMetodoPago('mixto');
-        } else if (!hasEfe && !document.getElementById('radio-yape').checked) {
-            document.getElementById('radio-yape').checked = true;
-            window.toggleMetodoPago('yape');
-        } else if (document.getElementById('radio-mixto').checked) {
-            window.toggleMetodoPago('mixto'); // Refresca los montos si cambiaron las cantidades
-        }
+        if (hasEfe && !document.getElementById('radio-mixto').checked) { document.getElementById('radio-mixto').checked = true; window.toggleMetodoPago('mixto'); } 
+        else if (!hasEfe && !document.getElementById('radio-yape').checked) { document.getElementById('radio-yape').checked = true; window.toggleMetodoPago('yape'); } 
+        else if (document.getElementById('radio-mixto').checked) { window.toggleMetodoPago('mixto'); }
     }
 
-    if(window.lucide) window.lucide.createIcons(); 
-    calcularVuelto();
+    if(window.lucide) window.lucide.createIcons(); calcularVuelto();
 
     if (activeElementId) {
         const inputToRefocus = document.querySelector(`input[data-id="${activeElementId}"]`);
-        if (inputToRefocus) {
-            inputToRefocus.focus();
-            const val = inputToRefocus.value;
-            inputToRefocus.value = '';
-            inputToRefocus.value = val; 
-        }
+        if (inputToRefocus) { inputToRefocus.focus(); const val = inputToRefocus.value; inputToRefocus.value = ''; inputToRefocus.value = val; }
     }
 }
 
@@ -288,16 +251,11 @@ async function procesarCobroFinal() {
     else if (m === 'yape') { pY = t; } 
     else { pE = parseFloat(document.getElementById('input-mixto-efectivo').value) || 0; pY = parseFloat(document.getElementById('input-mixto-yape').value) || 0; if(Math.abs((pE + pY) - t) > 0.01 && window.mostrarToast) return window.mostrarToast('Error', 'Sumas no cuadran.', 'red'); }
 
-    btn.disabled = true;
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Procesando...';
+    btn.disabled = true; const originalText = btn.innerHTML; btn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Procesando...';
     if(window.lucide) window.lucide.createIcons();
 
     const tId = generateTicketId(); const hs = getTodayDateStr(); const cr = [...state.carrito];
-    
-    // Bandera para saber si proviene de una edición
-    const esEditado = window.ticketEditadoOriginal === true;
-    window.ticketEditadoOriginal = false;
+    const esEditado = window.ticketEditadoOriginal === true; window.ticketEditadoOriginal = false;
 
     try {
         const bt = writeBatch(db);
@@ -308,14 +266,10 @@ async function procesarCobroFinal() {
         
         clearCart(); actualizarCarritoUI(); document.getElementById('input-paga-con').value = ''; document.getElementById('input-mixto-efectivo').value = ''; document.getElementById('input-mixto-yape').value = ''; document.getElementById('txt-vuelto').textContent = 'S/ 0.00';
         if(window.mostrarToast) window.mostrarToast('Procesado', `Ticket #T-${tId.split('-')[1]} a la cola.`, 'emerald');
-        
         if (typeof window.cargarInventarioDesdeFirebase === 'function') window.cargarInventarioDesdeFirebase();
     } catch (err) { 
-        console.error(err); 
-        if(window.mostrarToast) window.mostrarToast('Error', 'Problema de conexión.', 'red');
+        console.error(err); if(window.mostrarToast) window.mostrarToast('Error', 'Problema de conexión.', 'red');
     } finally {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-        if(window.lucide) window.lucide.createIcons();
+        btn.innerHTML = originalText; btn.disabled = false; if(window.lucide) window.lucide.createIcons();
     }
 }

@@ -21,10 +21,15 @@ document.addEventListener("DOMContentLoaded", () => {
             e.preventDefault(); document.getElementById('login-error').classList.add('hidden');
             const ot = bs.innerHTML; bs.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Conectando...'; bs.disabled = true;
             try { 
-                await login(document.getElementById('login-email').value, document.getElementById('login-password').value); 
+                // MAGIA: Auto-completar el correo si el usuario solo pone su nombre
+                const inputUser = document.getElementById('login-username') || document.getElementById('login-email');
+                const rawUser = inputUser.value.trim().toLowerCase();
+                const finalEmail = rawUser.includes('@') ? rawUser : rawUser + '@raspadillas.com';
+                
+                await login(finalEmail, document.getElementById('login-password').value); 
                 setTimeout(() => { bs.innerHTML = ot; bs.disabled = false; }, 1000); 
             } catch (err) { 
-                document.getElementById('login-error').classList.remove('hidden'); bs.innerHTML = ot; bs.disabled = false; if(window.lucide) lucide.createIcons(); 
+                document.getElementById('login-error').classList.remove('hidden'); bs.innerHTML = ot; bs.disabled = false; if(window.lucide) window.lucide.createIcons(); 
             }
         });
     }
