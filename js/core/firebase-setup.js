@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
 import { getFirestore, enableIndexedDbPersistence, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, increment, serverTimestamp, query, where, onSnapshot, orderBy, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence, inMemoryPersistence, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence, inMemoryPersistence, createUserWithEmailAndPassword, updatePassword } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
 
 const firebaseConfig = { 
     apiKey: "AIzaSyBwpV1ilLgU2ULN7ZtGIcZdBe4ccktdBzk", 
@@ -18,14 +18,13 @@ const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence).catch(console.error); 
 enableIndexedDbPersistence(db).catch(console.warn);
 
-// APP SECUNDARIA ESTRICTA (Memoria volátil para no chocar con el Admin)
 const secondaryApp = initializeApp(firebaseConfig, "SecondaryAppIcePOS");
 const secondaryAuth = getAuth(secondaryApp);
 setPersistence(secondaryAuth, inMemoryPersistence).catch(console.warn);
 
 export { 
-    db, auth, secondaryAuth, createUserWithEmailAndPassword, 
+    db, auth, secondaryAuth, createUserWithEmailAndPassword, updatePassword, signInWithEmailAndPassword,
     collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, 
     writeBatch, increment, serverTimestamp, query, where, onSnapshot, 
-    orderBy, runTransaction, signInWithEmailAndPassword, signOut, onAuthStateChanged 
+    orderBy, runTransaction, signOut, onAuthStateChanged 
 };

@@ -1,4 +1,4 @@
-import { db, collection, getDocs, doc, updateDoc, deleteDoc, setDoc, secondaryAuth, createUserWithEmailAndPassword } from '../core/firebase-setup.js';
+import { db, collection, getDocs, doc, updateDoc, deleteDoc, setDoc, secondaryAuth, createUserWithEmailAndPassword, updatePassword, signInWithEmailAndPassword } from '../core/firebase-setup.js';
 import { state } from '../core/store.js';
 
 let listaUsuariosEl, listaLocalesEl, selectLocalUsuario; const MASTER_UID = "kRG6hOWsWHfoJwWLCXAkqRuVNLk2";
@@ -36,10 +36,13 @@ export async function initUsuarios() {
             const btn = e.target.closest('button[data-action]'); if(!btn) return;
             if(btn.dataset.action === 'eliminar-usuario') eliminarUsuario(btn.dataset.uid);
             
-            // Lógica para copiar contraseña
             if(btn.dataset.action === 'copiar-pass') {
                 navigator.clipboard.writeText(btn.dataset.pass);
-                if(window.mostrarToast) window.mostrarToast('Copiado', 'Contraseña en el portapapeles', 'sky');
+                if(window.mostrarToast) window.mostrarToast('Copiado', 'Contraseña copiada', 'sky');
+            }
+
+            if(btn.dataset.action === 'editar-pass') {
+                abrirModalCambioPass(btn.dataset.uid, btn.dataset.email, btn.dataset.oldpass);
             }
         };
 
@@ -51,11 +54,101 @@ export async function initUsuarios() {
     }
 }
 
+// --- NUEVO: Modal Dinámico para Cambiar Contraseña ---
+function abrirModalCambioPass(uid, email, oldPass) {
+    let m = document.getElementById('modal-cambio-pass');
+    if(!m) {
+        m = document.createElement('div');
+        m.id = 'modal-cambio-pass';
+        m.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] hidden flex items-center justify-center px-4 transition-opacity duration-300 opacity-0';
+        m.innerHTML = `
+            <div class="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-700">
+                <h3 class="text-lg font-bold text-white mb-1">Cambiar Contraseña</h3>
+                <p class="text-xs text-sky-400 mb-4 font-bold" id="pass-email-display"></p>
+                <input type="hidden" id="pass-target-uid">
+                <input type="hidden" id="pass-target-old">
+                <input type="hidden" id="pass-target-email">
+                <input type="text" id="new-pass-input" placeholder="Escribe la nueva contraseña..." autocomplete="off" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:border-sky-500 mb-4">
+                <div class="flex gap-2">
+                    <button id="btn-cancel-pass" class="flex-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold transition-colors">Cancelar</button>
+                    <button id="btn-confirm-pass" class="flex-1 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold transition-colors">Actualizar</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(m);
+
+        document.getElementById('btn-cancel-pass').onclick = () => {
+            m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
+        };
+        document.getElementById('btn-confirm-pass').onclick = ejecutarCambioPass;
+    }
+
+    document.getElementById('pass-email-display').textContent = email;
+    document.getElementById('pass-target-uid').value = uid;
+    document.getElementById('pass-target-old').value = oldPass;
+    document.getElementById('pass-target-email').value = email;
+    document.getElementById('new-pass-input').value = '';
+
+    m.classList.remove('hidden');
+    setTimeout(() => m.classList.remove('opacity-0'), 10);
+}
+
+async function ejecutarCambioPass() {
+    const uid = document.getElementById('pass-target-uid').value;
+    const oldPass = document.getElementById('pass-target-old').value;
+    const email = document.getElementById('pass-target-email').value;
+    const newPass = document.getElementById('new-pass-input').value.trim();
+
+    if (newPass.length < 6) {
+        if(window.mostrarToast) window.mostrarToast('Error', 'Mínimo 6 caracteres', 'amber');
+        return;
+    }
+
+    const btn = document.getElementById('btn-confirm-pass');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline"></i> Guardando...';
+    if(window.lucide) window.lucide.createIcons();
+    btn.disabled = true;
+
+    try {
+        if (uid === state.currentUser.uid) {
+            // Es el propio usuario: Firebase permite update directo en sesión primaria
+            await updatePassword(state.currentUser, newPass);
+        } else {
+            // Es otro usuario: Usamos la app secundaria para no cerrar la sesión del Admin
+            if(!oldPass) throw new Error("no_old_pass");
+            const secCred = await signInWithEmailAndPassword(secondaryAuth, email, oldPass);
+            await updatePassword(secCred.user, newPass);
+            await secondaryAuth.signOut();
+        }
+
+        // Reflejar la nueva contraseña en Firestore
+        await updateDoc(doc(db, "usuarios", uid), { pass_visible: newPass });
+        
+        if(window.mostrarToast) window.mostrarToast('Éxito', 'Contraseña actualizada', 'emerald');
+        const m = document.getElementById('modal-cambio-pass');
+        m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
+        cargarUsuariosYLocales();
+
+    } catch (err) {
+        console.error(err);
+        let msg = 'Error al cambiar contraseña.';
+        if(err.message === 'no_old_pass') msg = 'No se tiene la clave original guardada. Debes borrar y crear de nuevo al vendedor.';
+        if(err.code === 'auth/requires-recent-login') msg = 'Por seguridad, cierra tu sesión y vuelve a entrar para cambiar TU propia clave.';
+        if(window.mostrarAlerta) window.mostrarAlerta('Error', msg, 'red');
+        else alert(msg);
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+// --- FIN Modal Dinámico ---
+
 function abrirModalUsuarioConfig() { 
     document.getElementById('form-usuario').reset(); 
     document.getElementById('user-id').value = ''; 
     
-    // Inyectar Rol Master dinámicamente si el creador es el Master
+    // El MASTER puede crear a otros Masters
     const selectRol = document.getElementById('user-rol');
     if(selectRol) {
         selectRol.innerHTML = `<option value="vendedor">Vendedor</option><option value="admin">Administrador</option>`;
@@ -72,6 +165,7 @@ function abrirModalUsuarioConfig() {
 function cerrarModalUsuario() { const m = document.getElementById('modal-usuario'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300); }
 
 export async function cargarUsuariosYLocales() { await cargarLocales(); await cargarUsuarios(); }
+
 async function cargarLocales() {
     if (!listaLocalesEl) return;
     try {
@@ -95,22 +189,46 @@ async function cargarUsuarios() {
 }
 
 function genU(u, opts) {
-    if ((u.rol === 'master' || u.uid === MASTER_UID) && state.currentUser?.uid !== MASTER_UID) return '';
+    // Esconder al verdadero Master para que nadie más lo edite
+    if (u.uid === MASTER_UID && state.currentUser?.uid !== MASTER_UID) return '';
     
-    // MAGIA: Mostrar contraseña solo a Admins/Masters
     const isPrivileged = state.userRole === 'admin' || state.userRole === 'master';
-    const passHtml = (isPrivileged && u.pass_visible) 
-        ? `<div class="flex items-center gap-1 mt-1 bg-slate-900 w-fit px-2 py-0.5 rounded border border-slate-700"><span class="text-[10px] text-sky-400 font-mono tracking-wider">${u.pass_visible}</span><button data-action="copiar-pass" data-pass="${u.pass_visible}" title="Copiar Contraseña" class="text-slate-400 hover:text-white p-0.5"><i data-lucide="copy" class="w-3 h-3"></i></button></div>` 
-        : '';
+    const isMe = (u.uid === state.currentUser?.uid);
+    
+    let passDisplay = u.pass_visible || 'Oculta';
+    let passHtml = '';
+    
+    // Mostrar contraseñas solo a Admins o Masters
+    if (isPrivileged) {
+        passHtml = `<div class="flex items-center gap-1 mt-1 bg-slate-900 w-fit px-2 py-0.5 rounded border border-slate-700">
+            <span class="text-[10px] text-sky-400 font-mono tracking-wider">${passDisplay}</span>
+            ${u.pass_visible ? `<button data-action="copiar-pass" data-pass="${u.pass_visible}" title="Copiar Contraseña" class="text-slate-400 hover:text-white p-0.5"><i data-lucide="copy" class="w-3 h-3"></i></button>` : ''}
+            <button data-action="editar-pass" data-uid="${u.uid}" data-email="${u.email}" data-oldpass="${u.pass_visible || ''}" title="Cambiar Contraseña" class="text-amber-400 hover:text-white p-0.5 ml-1"><i data-lucide="edit-3" class="w-3 h-3"></i></button>
+        </div>`;
+    }
 
-    // Selector de roles (Permite ver el rol Master si el actual es Master)
     let roleOptions = `<option value="vendedor" ${u.rol === 'vendedor' ? 'selected' : ''}>Vendedor</option>
                        <option value="admin" ${u.rol === 'admin' ? 'selected' : ''}>Admin</option>`;
     if (state.userRole === 'master') {
         roleOptions += `<option value="master" ${u.rol === 'master' ? 'selected' : ''}>Master</option>`;
     }
 
-    return `<div class="bg-slate-800 border border-slate-700 rounded-xl p-3 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-2 mb-2"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center text-slate-400 shrink-0"><i data-lucide="user" class="w-4 h-4"></i></div><div><p class="font-bold text-white text-sm">${u.email || 'Sin correo'}</p><p class="text-[10px] text-slate-500">Rol: <span class="uppercase font-bold">${u.rol}</span></p>${passHtml}</div></div>${u.uid === MASTER_UID ? `<span class="bg-purple-500 text-white px-2 py-0.5 rounded text-xs font-bold">Dueño Principal</span>` : `<div class="flex gap-2 w-full lg:w-auto mt-2 lg:mt-0"><select data-action="cambiar-local" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs">${opts.replace(`value="${u.localId || ''}"`, `value="${u.localId || ''}" selected`)}</select><select data-action="cambiar-rol" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs">${roleOptions}</select><button data-action="eliminar-usuario" data-uid="${u.uid}" class="text-red-400 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div>`}</div>`;
+    // BLOQUEO DE SEGURIDAD: Deshabilitar el selector de ROL si el usuario es uno mismo
+    // (Para evitar que un admin se quite su propio admin por accidente)
+    const disSelect = isMe ? 'disabled opacity-50 cursor-not-allowed' : '';
+
+    return `<div class="bg-slate-800 border border-slate-700 rounded-xl p-3 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-2 mb-2">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center text-slate-400 shrink-0"><i data-lucide="user" class="w-4 h-4"></i></div>
+            <div><p class="font-bold text-white text-sm">${u.email || 'Sin correo'}</p><p class="text-[10px] text-slate-500">Rol: <span class="uppercase font-bold">${u.rol}</span></p>${passHtml}</div>
+        </div>
+        ${(u.uid === MASTER_UID && !isMe) ? `<span class="bg-purple-500 text-white px-2 py-0.5 rounded text-xs font-bold">Dueño Principal</span>` : 
+        `<div class="flex gap-2 w-full lg:w-auto mt-2 lg:mt-0">
+            <select data-action="cambiar-local" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs">${opts.replace(`value="${u.localId || ''}"`, `value="${u.localId || ''}" selected`)}</select>
+            <select data-action="cambiar-rol" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs ${disSelect}">${roleOptions}</select>
+            ${!isMe ? `<button data-action="eliminar-usuario" data-uid="${u.uid}" class="text-red-400 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : `<span class="text-[10px] text-slate-500 px-2 flex items-center font-bold uppercase tracking-widest border border-slate-700 rounded bg-slate-900">Tú</span>`}
+        </div>`}
+    </div>`;
 }
 
 async function editarLocal(id) { /* omitted for brevity */ }
@@ -138,7 +256,6 @@ async function guardarUsuarioSimulado(e) {
         const nuevoUID = userCredential.user.uid;
         await secondaryAuth.signOut();
 
-        // Se guarda la contraseña en el campo pass_visible
         await setDoc(doc(db, "usuarios", nuevoUID), { 
             email: email, 
             rol: rol, 
