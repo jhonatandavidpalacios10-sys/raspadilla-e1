@@ -1,0 +1,67 @@
+/* Estilos base para convertir la web en una App Nativa */
+:root {
+    --safe-bottom: env(safe-area-inset-bottom, 20px);
+}
+
+/* Evitar que el usuario seleccione texto al tocar rápido (muy común en TPV/POS) */
+body {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent; /* Quita el parpadeo azul en móviles al tocar */
+}
+
+/* Para iPhones con "Notch" o barra inferior */
+.pb-safe { 
+    padding-bottom: var(--safe-bottom); 
+}
+
+/* Scrollbar invisible pero funcional (Diseño limpio global) */
+::-webkit-scrollbar { 
+    width: 6px; 
+    height: 6px; 
+}
+::-webkit-scrollbar-track { 
+    background: transparent; 
+}
+::-webkit-scrollbar-thumb { 
+    background: #334155; 
+    border-radius: 10px; 
+}
+::-webkit-scrollbar-thumb:hover { 
+    background: #475569; 
+}
+
+/* Ocultar las flechas feas de los inputs numéricos */
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button { 
+    -webkit-appearance: none; 
+    margin: 0; 
+}
+input[type=number] {
+    -moz-appearance: textfield;
+}
+
+/* ==========================================
+   CLASES UTILITARIAS Y ANIMACIONES
+   ========================================== */
+
+/* Ocultar scrollbar completamente en listas específicas (menú, carrito, etc) */
+.no-scrollbar::-webkit-scrollbar { 
+    display: none; 
+}
+.no-scrollbar { 
+    -ms-overflow-style: none; 
+    scrollbar-width: none; 
+}
+
+/* Animación fluida para los modales en vista móvil (Bottom Sheet) */
+.bottom-sheet-up { 
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; 
+}
+
+@keyframes slideUp { 
+    from { transform: translateY(100%); } 
+    to { transform: translateY(0); } 
+}

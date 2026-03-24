@@ -1,0 +1,2 @@
+export const state = { currentUser: null, userRole: 'vendedor', userLocal: 'Local Desconocido', userLocalId: '', carrito: [], productos: [], locales: [] };
+export function clearCart() { state.carrito = []; }
