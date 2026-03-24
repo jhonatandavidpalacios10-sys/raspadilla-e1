@@ -54,7 +54,6 @@ export async function initUsuarios() {
     }
 }
 
-// --- NUEVO: Modal Dinámico para Editar Usuario y Contraseña (Exclusivo Master) ---
 function abrirModalEditarUsuario(uid, email, oldPass, rol, localId, localNombre) {
     let m = document.getElementById('modal-editar-usuario');
     if(!m) {
@@ -123,7 +122,6 @@ async function ejecutarEditarUsuario() {
     if (newUsername.length < 3) { if(window.mostrarToast) window.mostrarToast('Error', 'Usuario muy corto', 'amber'); return; }
     if (newPass.length < 6) { if(window.mostrarToast) window.mostrarToast('Error', 'Mínimo 6 caracteres', 'amber'); return; }
 
-    // Si no se cambió nada
     if (currentEmail === newEmail && newPass === oldPass) {
         const m = document.getElementById('modal-editar-usuario'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
         return;
@@ -133,23 +131,19 @@ async function ejecutarEditarUsuario() {
     btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline"></i> Guardando...'; if(window.lucide) window.lucide.createIcons(); btn.disabled = true;
 
     try {
-        // CASO 1: CAMBIO DE NOMBRE DE USUARIO (Esto recrea la cuenta y salta el bloqueo de contraseña oculta)
         if (currentEmail !== newEmail) {
             const secCred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, newPass);
             const nuevoUID = secCred.user.uid;
             await secondaryAuth.signOut();
 
-            // Guardar nueva cuenta en Firestore y heredar rol
             await setDoc(doc(db, "usuarios", nuevoUID), { 
                 email: newEmail, rol: rol, localId: localId, localNombre: localNombre, 
                 creado_manualmente: true, pass_visible: newPass 
             });
             
-            // Destruir el registro viejo (esto expulsa a la cuenta vieja)
             await deleteDoc(doc(db, "usuarios", uid));
             if(window.mostrarToast) window.mostrarToast('Éxito', 'Cuenta recreada con nuevo usuario', 'emerald');
         } 
-        // CASO 2: SOLO CAMBIO DE CONTRASEÑA
         else {
             if (uid === state.currentUser.uid) { 
                 await updatePassword(state.currentUser, newPass); 
@@ -177,7 +171,6 @@ async function ejecutarEditarUsuario() {
         }
     } finally { btn.innerHTML = originalText; btn.disabled = false; }
 }
-// --- FIN Modal Editar ---
 
 function abrirModalUsuarioConfig() { 
     document.getElementById('form-usuario').reset(); document.getElementById('user-id').value = ''; 
@@ -216,9 +209,8 @@ async function cargarUsuarios() {
 }
 
 function genU(u, opts) {
-    // JERARQUÍA DE VISIBILIDAD:
     const isThisCardMaster = u.rol === 'master' || u.uid === MASTER_UID;
-    if (isThisCardMaster && state.userRole !== 'master') return ''; // Solo el Master puede ver a otros Masters
+    if (isThisCardMaster && state.userRole !== 'master') return ''; 
     
     const isPrivileged = state.userRole === 'admin' || state.userRole === 'Administrador' || state.userRole === 'master';
     const isMe = (u.uid === state.currentUser?.uid);
@@ -227,7 +219,6 @@ function genU(u, opts) {
     let passHtml = '';
     
     if (isPrivileged) {
-        // Solo el Master puede editar el usuario para forzar recreación
         const btnEditHtml = state.userRole === 'master' ? `<button data-action="editar-pass" data-uid="${u.uid}" data-email="${u.email}" data-oldpass="${u.pass_visible || ''}" data-rol="${u.rol}" data-localid="${u.localId || ''}" data-localnombre="${u.localNombre || ''}" title="Editar Usuario y Contraseña" class="text-amber-400 hover:text-white p-0.5 ml-1"><i data-lucide="edit-3" class="w-3 h-3"></i></button>` : '';
         
         passHtml = `<div class="flex items-center gap-1 mt-1 bg-slate-900 w-fit px-2 py-0.5 rounded border border-slate-700">
@@ -243,7 +234,6 @@ function genU(u, opts) {
         roleOptions += `<option value="master" ${u.rol === 'master' ? 'selected' : ''}>Master</option>`;
     }
 
-    // DISEÑO Y COLORES POR ROLES:
     let cardBorderColor = 'border-slate-700';
     let userIconColor = 'text-sky-400';
     let userIconBg = 'bg-sky-500/10';
@@ -264,7 +254,6 @@ function genU(u, opts) {
         roleTextColor = 'text-purple-400';
     }
 
-    // BLOQUEO PERSONAL: Desactiva el auto-cambio de rol
     const renderRoleSelector = isMe 
         ? `<span class="bg-slate-900 border border-slate-700 ${roleTextColor} rounded px-2 py-1 text-xs font-bold uppercase tracking-wider">${u.rol}</span>`
         : `<select data-action="cambiar-rol" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs cursor-pointer">${roleOptions}</select>`;
