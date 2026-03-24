@@ -54,7 +54,6 @@ export async function initUsuarios() {
     }
 }
 
-// --- NUEVO: Modal Dinámico para Cambiar Contraseña ---
 function abrirModalCambioPass(uid, email, oldPass) {
     let m = document.getElementById('modal-cambio-pass');
     if(!m) {
@@ -77,9 +76,7 @@ function abrirModalCambioPass(uid, email, oldPass) {
         `;
         document.body.appendChild(m);
 
-        document.getElementById('btn-cancel-pass').onclick = () => {
-            m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
-        };
+        document.getElementById('btn-cancel-pass').onclick = () => { m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300); };
         document.getElementById('btn-confirm-pass').onclick = ejecutarCambioPass;
     }
 
@@ -89,77 +86,45 @@ function abrirModalCambioPass(uid, email, oldPass) {
     document.getElementById('pass-target-email').value = email;
     document.getElementById('new-pass-input').value = '';
 
-    m.classList.remove('hidden');
-    setTimeout(() => m.classList.remove('opacity-0'), 10);
+    m.classList.remove('hidden'); setTimeout(() => m.classList.remove('opacity-0'), 10);
 }
 
 async function ejecutarCambioPass() {
-    const uid = document.getElementById('pass-target-uid').value;
-    const oldPass = document.getElementById('pass-target-old').value;
-    const email = document.getElementById('pass-target-email').value;
-    const newPass = document.getElementById('new-pass-input').value.trim();
+    const uid = document.getElementById('pass-target-uid').value; const oldPass = document.getElementById('pass-target-old').value;
+    const email = document.getElementById('pass-target-email').value; const newPass = document.getElementById('new-pass-input').value.trim();
 
-    if (newPass.length < 6) {
-        if(window.mostrarToast) window.mostrarToast('Error', 'Mínimo 6 caracteres', 'amber');
-        return;
-    }
+    if (newPass.length < 6) { if(window.mostrarToast) window.mostrarToast('Error', 'Mínimo 6 caracteres', 'amber'); return; }
 
-    const btn = document.getElementById('btn-confirm-pass');
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline"></i> Guardando...';
-    if(window.lucide) window.lucide.createIcons();
-    btn.disabled = true;
+    const btn = document.getElementById('btn-confirm-pass'); const originalText = btn.innerHTML;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline"></i> Guardando...'; if(window.lucide) window.lucide.createIcons(); btn.disabled = true;
 
     try {
-        if (uid === state.currentUser.uid) {
-            // Es el propio usuario: Firebase permite update directo en sesión primaria
-            await updatePassword(state.currentUser, newPass);
-        } else {
-            // Es otro usuario: Usamos la app secundaria para no cerrar la sesión del Admin
+        if (uid === state.currentUser.uid) { await updatePassword(state.currentUser, newPass); } 
+        else {
             if(!oldPass) throw new Error("no_old_pass");
             const secCred = await signInWithEmailAndPassword(secondaryAuth, email, oldPass);
-            await updatePassword(secCred.user, newPass);
-            await secondaryAuth.signOut();
+            await updatePassword(secCred.user, newPass); await secondaryAuth.signOut();
         }
-
-        // Reflejar la nueva contraseña en Firestore
         await updateDoc(doc(db, "usuarios", uid), { pass_visible: newPass });
-        
         if(window.mostrarToast) window.mostrarToast('Éxito', 'Contraseña actualizada', 'emerald');
-        const m = document.getElementById('modal-cambio-pass');
-        m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
+        const m = document.getElementById('modal-cambio-pass'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
         cargarUsuariosYLocales();
-
     } catch (err) {
-        console.error(err);
-        let msg = 'Error al cambiar contraseña.';
+        console.error(err); let msg = 'Error al cambiar contraseña.';
         if(err.message === 'no_old_pass') msg = 'No se tiene la clave original guardada. Debes borrar y crear de nuevo al vendedor.';
         if(err.code === 'auth/requires-recent-login') msg = 'Por seguridad, cierra tu sesión y vuelve a entrar para cambiar TU propia clave.';
-        if(window.mostrarAlerta) window.mostrarAlerta('Error', msg, 'red');
-        else alert(msg);
-    } finally {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-    }
+        if(window.mostrarAlerta) window.mostrarAlerta('Error', msg, 'red'); else alert(msg);
+    } finally { btn.innerHTML = originalText; btn.disabled = false; }
 }
-// --- FIN Modal Dinámico ---
 
 function abrirModalUsuarioConfig() { 
-    document.getElementById('form-usuario').reset(); 
-    document.getElementById('user-id').value = ''; 
-    
-    // El MASTER puede crear a otros Masters
+    document.getElementById('form-usuario').reset(); document.getElementById('user-id').value = ''; 
     const selectRol = document.getElementById('user-rol');
     if(selectRol) {
         selectRol.innerHTML = `<option value="vendedor">Vendedor</option><option value="admin">Administrador</option>`;
-        if (state.userRole === 'master') {
-            selectRol.innerHTML += `<option value="master" class="font-bold text-amber-400">Master (Dueño)</option>`;
-        }
+        if (state.userRole === 'master') { selectRol.innerHTML += `<option value="master" class="font-bold text-amber-400">Master (Dueño)</option>`; }
     }
-
-    const m = document.getElementById('modal-usuario'); 
-    m.classList.remove('hidden'); 
-    setTimeout(() => m.classList.remove('opacity-0'), 10); 
+    const m = document.getElementById('modal-usuario'); m.classList.remove('hidden'); setTimeout(() => m.classList.remove('opacity-0'), 10); 
 }
 
 function cerrarModalUsuario() { const m = document.getElementById('modal-usuario'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300); }
@@ -189,16 +154,17 @@ async function cargarUsuarios() {
 }
 
 function genU(u, opts) {
-    // Esconder al verdadero Master para que nadie más lo edite
-    if (u.uid === MASTER_UID && state.currentUser?.uid !== MASTER_UID) return '';
+    // JERARQUÍA DE VISIBILIDAD:
+    // Si la tarjeta pertenece a un Master (o Dueño Principal) y tú NO ERES Master, entonces no ves nada (te la oculto por seguridad).
+    const isThisCardMaster = u.rol === 'master' || u.uid === MASTER_UID;
+    if (isThisCardMaster && state.userRole !== 'master') return '';
     
-    const isPrivileged = state.userRole === 'admin' || state.userRole === 'master';
+    const isPrivileged = state.userRole === 'admin' || state.userRole === 'Administrador' || state.userRole === 'master';
     const isMe = (u.uid === state.currentUser?.uid);
     
     let passDisplay = u.pass_visible || 'Oculta';
     let passHtml = '';
     
-    // Mostrar contraseñas solo a Admins o Masters
     if (isPrivileged) {
         passHtml = `<div class="flex items-center gap-1 mt-1 bg-slate-900 w-fit px-2 py-0.5 rounded border border-slate-700">
             <span class="text-[10px] text-sky-400 font-mono tracking-wider">${passDisplay}</span>
@@ -213,20 +179,46 @@ function genU(u, opts) {
         roleOptions += `<option value="master" ${u.rol === 'master' ? 'selected' : ''}>Master</option>`;
     }
 
-    // BLOQUEO DE SEGURIDAD: Deshabilitar el selector de ROL si el usuario es uno mismo
-    // (Para evitar que un admin se quite su propio admin por accidente)
-    const disSelect = isMe ? 'disabled opacity-50 cursor-not-allowed' : '';
+    // DISEÑO Y COLORES POR ROLES:
+    let cardBorderColor = 'border-slate-700';
+    let userIconColor = 'text-sky-400';
+    let userIconBg = 'bg-sky-500/10';
+    let userIconType = 'user';
+    let roleTextColor = 'text-slate-500';
 
-    return `<div class="bg-slate-800 border border-slate-700 rounded-xl p-3 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-2 mb-2">
+    if (isThisCardMaster) {
+        cardBorderColor = 'border-amber-500/50 shadow-lg shadow-amber-500/10';
+        userIconColor = 'text-amber-400';
+        userIconBg = 'bg-amber-500/20';
+        userIconType = 'crown';
+        roleTextColor = 'text-amber-400';
+    } else if (u.rol === 'admin') {
+        cardBorderColor = 'border-purple-500/50 shadow-lg shadow-purple-500/10';
+        userIconColor = 'text-purple-400';
+        userIconBg = 'bg-purple-500/20';
+        userIconType = 'shield-check';
+        roleTextColor = 'text-purple-400';
+    }
+
+    // BLOQUEO PERSONAL: Si "isMe", imprimimos un simple texto, quitándole la posibilidad de auto-degradarse.
+    const renderRoleSelector = isMe 
+        ? `<span class="bg-slate-900 border border-slate-700 ${roleTextColor} rounded px-2 py-1 text-xs font-bold uppercase tracking-wider">${u.rol}</span>`
+        : `<select data-action="cambiar-rol" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs cursor-pointer">${roleOptions}</select>`;
+
+    return `<div class="bg-slate-800 border ${cardBorderColor} rounded-xl p-3 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-2 mb-2 transition-all">
         <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center text-slate-400 shrink-0"><i data-lucide="user" class="w-4 h-4"></i></div>
-            <div><p class="font-bold text-white text-sm">${u.email || 'Sin correo'}</p><p class="text-[10px] text-slate-500">Rol: <span class="uppercase font-bold">${u.rol}</span></p>${passHtml}</div>
+            <div class="w-8 h-8 rounded-full ${userIconBg} flex items-center justify-center ${userIconColor} shrink-0"><i data-lucide="${userIconType}" class="w-4 h-4"></i></div>
+            <div>
+                <p class="font-bold text-white text-sm flex items-center gap-2">${u.email || 'Sin correo'} ${isMe ? '<span class="text-[9px] bg-slate-700 text-white px-1.5 py-0.5 rounded uppercase">Tú</span>' : ''}</p>
+                <p class="text-[10px] ${roleTextColor}">Rol: <span class="uppercase font-bold tracking-wide">${u.rol}</span></p>
+                ${passHtml}
+            </div>
         </div>
-        ${(u.uid === MASTER_UID && !isMe) ? `<span class="bg-purple-500 text-white px-2 py-0.5 rounded text-xs font-bold">Dueño Principal</span>` : 
+        ${(u.uid === MASTER_UID && !isMe) ? `<span class="bg-amber-500 text-white px-2 py-0.5 rounded text-xs font-bold">Dueño Principal</span>` : 
         `<div class="flex gap-2 w-full lg:w-auto mt-2 lg:mt-0">
-            <select data-action="cambiar-local" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs">${opts.replace(`value="${u.localId || ''}"`, `value="${u.localId || ''}" selected`)}</select>
-            <select data-action="cambiar-rol" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs ${disSelect}">${roleOptions}</select>
-            ${!isMe ? `<button data-action="eliminar-usuario" data-uid="${u.uid}" class="text-red-400 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : `<span class="text-[10px] text-slate-500 px-2 flex items-center font-bold uppercase tracking-widest border border-slate-700 rounded bg-slate-900">Tú</span>`}
+            <select data-action="cambiar-local" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs cursor-pointer">${opts.replace(`value="${u.localId || ''}"`, `value="${u.localId || ''}" selected`)}</select>
+            ${renderRoleSelector}
+            ${!isMe ? `<button data-action="eliminar-usuario" data-uid="${u.uid}" class="text-red-400 hover:text-red-300 bg-slate-900 border border-slate-700 rounded p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : ''}
         </div>`}
     </div>`;
 }
@@ -271,7 +263,15 @@ async function guardarUsuarioSimulado(e) {
         
     } catch(error) {
         console.error("DEBUG - ERROR DE FIREBASE:", error);
-        alert(`🚨 ERROR AL CREAR USUARIO 🚨\n\nCÓDIGO: ${error.code}\n\nMENSAJE: ${error.message}`);
+        if (error.code === 'auth/email-already-in-use') {
+            if(window.mostrarAlerta) window.mostrarAlerta('Usuario Existente', 'Este nombre de usuario ya está registrado en el sistema.<br><br>Búscalo en la lista de abajo y presiona el <b>botón naranja (Lápiz)</b> para asignarle una nueva clave.', 'amber');
+            else alert('El usuario ya existe. Búscalo en la lista para editar su contraseña.');
+        } else if (error.code === 'auth/weak-password') {
+            if(window.mostrarToast) window.mostrarToast('Error', 'La contraseña debe tener mínimo 6 caracteres.', 'red');
+        } else {
+            if(window.mostrarAlerta) window.mostrarAlerta('Error', `No se pudo crear la cuenta.<br><br>Código: ${error.code}`, 'red');
+            else alert(`🚨 ERROR AL CREAR USUARIO 🚨\n\nCÓDIGO: ${error.code}\n\nMENSAJE: ${error.message}`);
+        }
     } finally {
         btn.innerHTML = btnOriginal;
         btn.disabled = false;
@@ -279,5 +279,14 @@ async function guardarUsuarioSimulado(e) {
 }
 
 async function eliminarUsuario(uid) { if(window.mostrarConfirmacion) window.mostrarConfirmacion("¿Borrar de la lista?", async () => { await deleteDoc(doc(db, "usuarios", uid)); cargarUsuariosYLocales(); }); }
-async function cambiarRolUsuario(uid, rol) { await updateDoc(doc(db, "usuarios", uid), { rol }); if(window.mostrarToast) window.mostrarToast('Listo', 'Rol actualizado', 'sky'); }
-async function cambiarLocalUsuario(uid, locId) { const l = state.locales.find(x => x.id === locId); await updateDoc(doc(db, "usuarios", uid), { localId: locId, localNombre: l?.nombre||'Sin Local' }); }
+
+async function cambiarRolUsuario(uid, rol) { 
+    await updateDoc(doc(db, "usuarios", uid), { rol }); 
+    if(window.mostrarToast) window.mostrarToast('Listo', 'Rol actualizado', 'sky'); 
+    cargarUsuariosYLocales(); // Forzar redibujado para que los colores se actualicen al instante
+}
+
+async function cambiarLocalUsuario(uid, locId) { 
+    const l = state.locales.find(x => x.id === locId); 
+    await updateDoc(doc(db, "usuarios", uid), { localId: locId, localNombre: l?.nombre||'Sin Local' }); 
+}
