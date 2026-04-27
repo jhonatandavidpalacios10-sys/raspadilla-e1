@@ -699,6 +699,10 @@
             document.getElementById('btn-mes-next')?.addEventListener('click', () => window.changeAnalysisMonth?.(1));
             document.getElementById('card-bruto-dia')?.addEventListener('click', () => window.showBreakdown?.('BRUTO', window.currentSelectedDayObj));
             document.getElementById('card-ganancia-dia')?.addEventListener('click', () => window.showBreakdown?.('GANANCIA', window.currentSelectedDayObj));
+            document.getElementById('btn-exportar-backup')?.addEventListener('click', () => window.exportBackup?.());
+            document.getElementById('importFileInput')?.addEventListener('change', (e) => window.handleImportBackup?.(e));
+            document.getElementById('btn-importar-backup')?.addEventListener('click', () => document.getElementById('importFileInput').click());
+            document.getElementById('btn-toggle-sistema')?.addEventListener('click', () => window.toggleSistemaLock?.());
             document.getElementById('btn-cerrar-modal-breakdown')?.addEventListener('click', () => window.closeBreakdownModal?.());
         });
     </script>
