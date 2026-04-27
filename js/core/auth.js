@@ -1,4 +1,4 @@
-import { auth, db, doc, setDoc, signInWithEmailAndPassword, signOut, onAuthStateChanged, onSnapshot } from './firebase-setup.js';
+import { auth, db, doc, setDoc, getDoc, signInWithEmailAndPassword, signOut, onAuthStateChanged, onSnapshot } from './firebase-setup.js';
 import { state } from './store.js';
 
 const MASTER_UID = "kRG6hOWsWHfoJwWLCXAkqRuVNLk2";
@@ -79,17 +79,31 @@ export function initAuth() {
 }
 
 // Función que inyecta la pantalla técnica de Error si el sistema está cerrado
-function verificarBloqueoSistema(user) {
+async function verificarBloqueoSistema(user) {
     const appContainer = document.getElementById('app-container');
     const loginScreen = document.getElementById('login-screen');
     
-    // Comprobación de seguridad: Es Master por ID duro o por el rol de Firestore
-    const isMaster = (user.uid === MASTER_UID) || (state.userRole === 'master');
+    // Comprobación de seguridad primaria
+    let isMaster = (user.uid === MASTER_UID) || (String(state.userRole).trim().toLowerCase() === 'master');
 
     // Si la pantalla de login aún no se oculta, no hacer transiciones para evitar parpadeos
     if (loginScreen && !loginScreen.classList.contains('hidden')) return;
+
+    // DOBLE VERIFICACIÓN (Crucial para evitar expulsar a nuevos Masters por retrasos en la red):
+    // Si el sistema está bloqueado pero state.userRole no cargó a tiempo, consultamos directo a la base de datos.
+    if (isSystemLocked && !isMaster) {
+        try {
+            const userDoc = await getDoc(doc(db, "usuarios", user.uid));
+            if (userDoc.exists() && String(userDoc.data().rol).trim().toLowerCase() === 'master') {
+                isMaster = true;
+                state.userRole = 'master'; // Sincroniza y salva la sesión
+            }
+        } catch (error) {
+            console.error("Error al re-verificar rol maestro:", error);
+        }
+    }
     
-    // Si está bloqueado y NO es la cuenta Master, mostramos el Error de Servidor (503)
+    // Si está bloqueado y DEFINITIVAMENTE NO es la cuenta Master, mostramos el Error de Servidor (503)
     if (isSystemLocked && !isMaster) {
         mostrarError404();
     } else {
