@@ -53,6 +53,7 @@ export function initAuth() {
                 
                 // Refrescar qué menús puedes ver en ese exacto segundo
                 aplicarPermisosVisuales(userData);
+                verificarBloqueoSistema(user); // RE-VERIFICAR CUANDO SE CARGA EL ROL EXACTO
             });
 
             // Asegurar que el usuario exista en la BD (último acceso)
@@ -62,15 +63,13 @@ export function initAuth() {
                 loginScreen.classList.add('opacity-0'); 
                 setTimeout(() => { 
                     loginScreen.classList.add('hidden'); 
-                    // Solo mostramos la app si no está bloqueada, o si eres el Master
-                    if(!isSystemLocked || user.uid === MASTER_UID) {
-                        appContainer.classList.remove('hidden'); 
-                        setTimeout(() => appContainer.classList.remove('opacity-0'), 50); 
-                    }
+                    // Delegamos la visualización final a verificarBloqueoSistema
+                    verificarBloqueoSistema(user);
                 }, 300); 
             }
         } else {
             state.currentUser = null; state.userRole = null;
+            quitarError404(); // Resetear el bloqueo si se cierra sesión
             if(loginScreen && appContainer) { 
                 appContainer.classList.add('opacity-0'); 
                 setTimeout(() => { appContainer.classList.add('hidden'); loginScreen.classList.remove('hidden'); setTimeout(() => loginScreen.classList.remove('opacity-0'), 50); }, 300); 
@@ -82,13 +81,20 @@ export function initAuth() {
 // Función que inyecta la pantalla técnica de Error si el sistema está cerrado
 function verificarBloqueoSistema(user) {
     const appContainer = document.getElementById('app-container');
+    const loginScreen = document.getElementById('login-screen');
+    
+    // Comprobación de seguridad: Es Master por ID duro o por el rol de Firestore
+    const isMaster = (user.uid === MASTER_UID) || (state.userRole === 'master');
+
+    // Si la pantalla de login aún no se oculta, no hacer transiciones para evitar parpadeos
+    if (loginScreen && !loginScreen.classList.contains('hidden')) return;
     
     // Si está bloqueado y NO es la cuenta Master, mostramos el Error de Servidor (503)
-    if (isSystemLocked && user.uid !== MASTER_UID) {
+    if (isSystemLocked && !isMaster) {
         mostrarError404();
     } else {
         quitarError404();
-        if (appContainer && document.getElementById('login-screen').classList.contains('hidden')) {
+        if (appContainer && appContainer.classList.contains('hidden')) {
             appContainer.classList.remove('hidden');
             setTimeout(() => appContainer.classList.remove('opacity-0'), 50);
         }
