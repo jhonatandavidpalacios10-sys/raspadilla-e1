@@ -35,17 +35,14 @@
     <div id="login-screen" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900 transition-opacity duration-300 px-4">
         <div class="bg-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-700 flex flex-col items-center">
             
-            <!-- Logo Dinámico -->
             <img src="assets/img/logo.svg" alt="IcePOS Logo" class="w-24 h-24 mb-4 drop-shadow-[0_0_15px_rgba(14,165,233,0.3)]" onerror="this.outerHTML='<div class=\'w-20 h-20 bg-sky-500/20 text-sky-400 rounded-full flex items-center justify-center mb-6 shadow-lg shadow-sky-500/20\'><i data-lucide=\'snowflake\' class=\'w-10 h-10\'></i></div>'">
             
             <h1 class="text-2xl font-black text-white mb-2 tracking-tight">IcePOS</h1>
             <p class="text-sm text-slate-400 mb-6 text-center" id="login-subtitle">Punto de Venta Profesional</p>
             
-            <!-- SECCIÓN: PERFILES GUARDADOS (Inicio Rápido) -->
+            <!-- SECCIÓN: PERFILES GUARDADOS -->
             <div id="login-profiles-section" class="hidden w-full flex-col items-center transition-all duration-300">
-                <div id="saved-profiles-list" class="flex flex-wrap justify-center gap-3 w-full mb-6 max-h-48 overflow-y-auto no-scrollbar pt-2">
-                    <!-- Inyectado por JS -->
-                </div>
+                <div id="saved-profiles-list" class="flex flex-wrap justify-center gap-3 w-full mb-6 max-h-48 overflow-y-auto no-scrollbar pt-2"></div>
                 <button type="button" id="btn-show-manual-login" class="text-xs text-slate-400 hover:text-sky-400 font-bold transition-colors mt-2 flex items-center gap-1.5">
                     <i data-lucide="plus-circle" class="w-4 h-4"></i> Ingresar con otra cuenta
                 </button>
@@ -60,7 +57,6 @@
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Contraseña</label>
-                        <!-- autocomplete="new-password" evita la alerta roja de Google Chrome sobre contraseñas vulneradas -->
                         <input type="password" id="login-password" required autocomplete="new-password" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all" placeholder="••••••••">
                     </div>
                     <div id="login-error" class="hidden bg-red-500/10 border border-red-500/50 text-red-400 text-xs p-3 rounded-lg flex items-center gap-2">
@@ -88,7 +84,6 @@
             </div>
             
             <div class="flex flex-row md:flex-col w-full h-full md:h-auto items-center justify-between md:justify-start px-1 md:px-2 md:gap-3 overflow-y-auto no-scrollbar">
-                <!-- Vistas para todos -->
                 <button id="nav-ventas" class="nav-btn active flex flex-col items-center justify-center gap-1 p-1 md:py-2 text-sky-400 border-t-2 md:border-t-0 md:border-r-4 border-sky-500 flex-1 md:w-full transition-colors">
                     <i data-lucide="shopping-cart" class="w-5 h-5 md:w-6 md:h-6"></i>
                     <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Ventas</span>
@@ -102,8 +97,6 @@
                     <i data-lucide="package" class="w-5 h-5 md:w-6 md:h-6"></i>
                     <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Catálogo</span>
                 </button>
-
-                <!-- Vistas ocultas por defecto (Solo Admin/Master) -->
                 <button id="nav-caja" class="hidden nav-btn flex flex-col items-center justify-center gap-1 p-1 md:py-2 text-slate-500 hover:text-slate-300 border-t-2 md:border-t-0 md:border-r-4 border-transparent flex-1 md:w-full transition-colors">
                     <i data-lucide="inbox" class="w-5 h-5 md:w-6 md:h-6"></i>
                     <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Caja</span>
@@ -116,7 +109,7 @@
                     <i data-lucide="users" class="w-5 h-5 md:w-6 md:h-6"></i>
                     <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Usuarios</span>
                 </button>
-                <button id="nav-respaldo" class="hidden nav-btn solo-admin flex flex-col items-center justify-center gap-1 p-1 md:py-2 text-slate-500 hover:text-slate-300 border-t-2 md:border-t-0 md:border-r-4 border-transparent flex-1 md:w-full transition-colors">
+                <button id="nav-respaldo" class="hidden nav-btn solo-master flex flex-col items-center justify-center gap-1 p-1 md:py-2 text-slate-500 hover:text-slate-300 border-t-2 md:border-t-0 md:border-r-4 border-transparent flex-1 md:w-full transition-colors">
                     <i data-lucide="database" class="w-5 h-5 md:w-6 md:h-6"></i>
                     <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Respaldo</span>
                 </button>
@@ -129,25 +122,20 @@
 
         <!-- ÁREA PRINCIPAL -->
         <main class="flex-1 flex flex-col overflow-hidden relative mb-14 md:mb-0">
-            
-            <!-- HEADER SUPERIOR MÓVIL (Solo visible en móvil) -->
+            <!-- HEADER SUPERIOR MÓVIL -->
             <header class="md:hidden bg-slate-900 border-b border-slate-800 p-3 flex justify-between items-center z-40">
                 <div class="flex items-center gap-2">
-                    <!-- Logo Pequeño Móvil -->
                     <img src="assets/img/logo.svg" alt="IcePOS" class="w-8 h-8" onerror="this.outerHTML='<div class=\'w-8 h-8 bg-sky-500/20 text-sky-400 rounded-lg flex items-center justify-center\'><i data-lucide=\'snowflake\' class=\'w-5 h-5\'></i></div>'">
                     <div>
                         <h2 class="font-bold text-sm text-white leading-tight">IcePOS</h2>
                         <p class="text-[10px] text-slate-400" id="user-local-display-mobile">Local...</p>
                     </div>
                 </div>
-                <button id="btn-logout-mobile" class="p-2 text-slate-400 hover:text-red-400 transition-colors">
-                    <i data-lucide="log-out" class="w-5 h-5"></i>
-                </button>
+                <button id="btn-logout-mobile" class="p-2 text-slate-400 hover:text-red-400 transition-colors"><i data-lucide="log-out" class="w-5 h-5"></i></button>
             </header>
 
-            <!-- VISTA 1: VENTAS (POS) -->
+            <!-- VISTA 1: VENTAS -->
             <div id="view-ventas" class="view-section flex-1 flex flex-col lg:flex-row h-full overflow-hidden">
-                
                 <section class="flex flex-col h-[55%] lg:h-full lg:flex-1 relative border-b lg:border-b-0 border-slate-800">
                     <header class="p-2 md:p-5 bg-slate-900 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 md:gap-3 z-10 flex-shrink-0">
                         <div class="hidden sm:block">
@@ -155,13 +143,10 @@
                             <p class="text-xs text-slate-400" id="user-local-display-desktop">Local...</p>
                         </div>
                         <div class="flex flex-row gap-2 w-full sm:w-auto items-center">
-                            
-                            <!-- Botones de Ajustes (+ / -) -->
                             <div class="flex gap-1 bg-slate-800 p-1 border border-slate-700 rounded-lg shrink-0">
                                 <button id="btn-ajuste-cargo" title="Añadir Cargo Extra" class="p-1 md:p-1.5 bg-slate-900 hover:bg-slate-700 text-emerald-400 rounded-md transition-colors"><i data-lucide="plus" class="w-4 h-4"></i></button>
                                 <button id="btn-ajuste-descuento" title="Aplicar Descuento" class="p-1 md:p-1.5 bg-slate-900 hover:bg-slate-700 text-red-400 rounded-md transition-colors"><i data-lucide="minus" class="w-4 h-4"></i></button>
                             </div>
-
                             <select id="posCategoryFilter" class="flex-1 sm:w-36 bg-slate-800 text-xs md:text-sm text-white border border-slate-700 rounded-lg px-2 py-1.5 md:py-2.5 focus:outline-none focus:border-sky-500 transition-all">
                                 <option value="">Todo</option>
                                 <option value="vaso">Vasos / Copas</option>
@@ -175,9 +160,7 @@
                     </header>
 
                     <div class="flex-1 overflow-y-auto no-scrollbar p-2 md:p-5 bg-slate-900/50">
-                        <div id="productos-venta-grid" class="grid grid-cols-3 sm:grid-cols-4 xl:grid-cols-5 gap-1.5 md:gap-4 pb-6">
-                            <!-- Productos inyectados por JS -->
-                        </div>
+                        <div id="productos-venta-grid" class="grid grid-cols-3 sm:grid-cols-4 xl:grid-cols-5 gap-1.5 md:gap-4 pb-6"></div>
                     </div>
                 </section>
 
@@ -196,19 +179,15 @@
                             <i data-lucide="shopping-bag" class="w-8 h-8 md:w-10 md:h-10 opacity-50"></i>
                             <p class="text-xs md:text-sm">El ticket está vacío</p>
                         </div>
-                        <div id="carrito-items" class="space-y-1.5 md:space-y-2 relative z-10 hidden">
-                            <!-- Items del carrito -->
-                        </div>
+                        <div id="carrito-items" class="space-y-1.5 md:space-y-2 relative z-10 hidden"></div>
                     </div>
 
-                    <!-- Zona Inferior de Pagos (Compacta en Móvil) -->
                     <footer class="bg-slate-900 p-2 md:p-4 border-t border-slate-700 flex-shrink-0">
                         <div class="flex justify-between items-center text-white text-sm md:text-lg font-bold mb-2 md:mb-3">
                             <span>Total</span>
                             <span id="carrito-total" class="text-sky-400">S/ 0.00</span>
                         </div>
 
-                        <!-- Métodos de Pago -->
                         <div class="grid grid-cols-3 gap-1 md:gap-2 mb-2 md:mb-3">
                             <label class="cursor-pointer border border-sky-500 bg-slate-800 rounded-lg p-1 md:p-2 flex flex-col items-center justify-center hover:border-emerald-500/50 transition-colors group">
                                 <input type="radio" name="metodo_pago" id="radio-efectivo" value="efectivo" class="hidden" checked>
@@ -227,7 +206,6 @@
                             </label>
                         </div>
 
-                        <!-- Zonas Ocultas de Pago -->
                         <div id="area-vuelto" class="mb-2 md:mb-3 bg-slate-800 p-1.5 md:p-2 rounded-lg border border-slate-700 flex justify-between items-center hidden">
                             <div class="flex items-center gap-2">
                                 <span class="text-[9px] md:text-[10px] text-slate-400">Paga con: S/</span>
@@ -268,14 +246,12 @@
                         <i data-lucide="plus" class="w-4 h-4"></i> Añadir
                     </button>
                 </header>
-
                 <div class="p-3 md:p-6 flex flex-col flex-1 overflow-hidden">
                     <div id="tabs-insumos" class="flex gap-4 border-b border-slate-800 mb-4 flex-shrink-0">
                         <button class="pb-2 text-sm font-bold text-emerald-400 border-b-2 border-emerald-400 transition-colors">Vasos</button>
                         <button class="pb-2 text-sm font-bold text-slate-500 hover:text-slate-300 transition-colors">Sabores</button>
                         <button class="pb-2 text-sm font-bold text-slate-500 hover:text-slate-300 transition-colors">Extras</button>
                     </div>
-
                     <div class="flex-1 overflow-y-auto no-scrollbar bg-slate-800 rounded-xl border border-slate-700">
                         <table class="w-full text-left border-collapse min-w-[500px]">
                             <thead>
@@ -293,7 +269,7 @@
                 </div>
             </div>
 
-            <!-- VISTA 3: PEDIDOS (COLA) -->
+            <!-- VISTA 3: PEDIDOS -->
             <div id="view-pedidos" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
                     <div>
@@ -301,7 +277,6 @@
                         <p class="text-xs text-slate-400">Tickets pagados listos para armar.</p>
                     </div>
                 </header>
-
                 <div class="flex-1 overflow-y-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 no-scrollbar">
                     <div class="bg-slate-800/50 rounded-xl border border-slate-700 flex flex-col h-full overflow-hidden">
                         <div class="p-3 bg-red-500/10 border-b border-red-500/20 text-red-400 font-bold flex justify-between items-center">
@@ -310,7 +285,6 @@
                         </div>
                         <div id="pedidos-pendientes-list" class="flex-1 overflow-y-auto p-3 no-scrollbar space-y-3"></div>
                     </div>
-
                     <div class="bg-slate-800/50 rounded-xl border border-slate-700 flex flex-col h-full overflow-hidden">
                         <div class="p-3 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-400 font-bold flex justify-between items-center">
                             <span><i data-lucide="check-circle" class="w-4 h-4 inline mr-1"></i> Despachados Hoy</span>
@@ -321,7 +295,7 @@
                 </div>
             </div>
 
-            <!-- VISTA 4: CAJA (ARQUEO Y GASTOS) -->
+            <!-- VISTA 4: CAJA -->
             <div id="view-caja" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
                     <div>
@@ -335,37 +309,20 @@
                         </button>
                     </div>
                 </header>
-
                 <div class="flex-1 overflow-y-auto p-4 md:p-6 no-scrollbar">
                     <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4 mb-6">
-                        <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-col justify-center">
-                            <p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Ingreso Bruto</p>
-                            <p class="text-lg md:text-xl font-bold text-sky-400" id="caja-total">S/ 0.00</p>
-                        </div>
-                        <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-col justify-center">
-                            <p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Gastos / Retiros</p>
-                            <p class="text-lg md:text-xl font-bold text-red-400" id="caja-gastos">S/ 0.00</p>
-                        </div>
-                        <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-col justify-center bg-gradient-to-br from-slate-800 to-slate-900 border-emerald-500/30">
-                            <p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Caja Neta</p>
-                            <p class="text-lg md:text-xl font-black text-emerald-400" id="caja-neta">S/ 0.00</p>
-                        </div>
-                        <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-col justify-center">
-                            <p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Efectivo</p>
-                            <p class="text-lg md:text-xl font-bold text-white" id="caja-efectivo">S/ 0.00</p>
-                        </div>
-                        <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-col justify-center">
-                            <p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Yape/Plin</p>
-                            <p class="text-lg md:text-xl font-bold text-white" id="caja-yape">S/ 0.00</p>
-                        </div>
+                        <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-col justify-center"><p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Ingreso Bruto</p><p class="text-lg md:text-xl font-bold text-sky-400" id="caja-total">S/ 0.00</p></div>
+                        <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-col justify-center"><p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Gastos / Retiros</p><p class="text-lg md:text-xl font-bold text-red-400" id="caja-gastos">S/ 0.00</p></div>
+                        <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-col justify-center bg-gradient-to-br from-slate-800 to-slate-900 border-emerald-500/30"><p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Caja Neta</p><p class="text-lg md:text-xl font-black text-emerald-400" id="caja-neta">S/ 0.00</p></div>
+                        <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-col justify-center"><p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Efectivo</p><p class="text-lg md:text-xl font-bold text-white" id="caja-efectivo">S/ 0.00</p></div>
+                        <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 flex flex-col justify-center"><p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Yape/Plin</p><p class="text-lg md:text-xl font-bold text-white" id="caja-yape">S/ 0.00</p></div>
                     </div>
-
                     <h3 class="font-bold text-white mb-3">Historial de Movimientos</h3>
                     <div id="caja-historial-list" class="space-y-2"></div>
                 </div>
             </div>
 
-            <!-- VISTA 5: USUARIOS (ADMIN) -->
+            <!-- VISTA 5: USUARIOS -->
             <div id="view-usuarios" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
                     <div>
@@ -376,13 +333,11 @@
                         <i data-lucide="user-plus" class="w-4 h-4"></i> Nuevo
                     </button>
                 </header>
-
                 <div class="flex-1 overflow-y-auto p-4 md:p-6 no-scrollbar grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div class="bg-slate-800 rounded-xl border border-slate-700 flex flex-col h-fit">
                         <div class="p-4 border-b border-slate-700 font-bold text-white flex items-center gap-2"><i data-lucide="users" class="w-5 h-5 text-indigo-400"></i> Personal Registrado</div>
                         <div class="p-2 space-y-2" id="usuarios-list"></div>
                     </div>
-
                     <div class="bg-slate-800 rounded-xl border border-slate-700 flex flex-col h-fit">
                         <div class="p-4 border-b border-slate-700 font-bold text-white flex items-center gap-2"><i data-lucide="store" class="w-5 h-5 text-emerald-400"></i> Sedes / Franquicias</div>
                         <div class="p-4 border-b border-slate-700">
@@ -446,56 +401,46 @@
                     </div>
                 </div>
             </div>
-
             <!-- VISTA 7: RESPALDO -->
             <div id="view-respaldo" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-y-auto md:overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex-shrink-0">
-                    <h1 class="text-xl font-bold text-white">Respaldo y Seguridad</h1>
-                    <p class="text-xs text-slate-400">Exporta o importa los datos de IcePOS.</p>
+                    <h1 class="text-xl font-bold text-white">Centro de Control Master</h1>
+                    <p class="text-xs text-slate-400">Respaldo de datos y Seguridad del sistema.</p>
                 </header>
                 <div class="flex-1 overflow-auto p-4 flex flex-col lg:flex-row gap-4 justify-center items-start">
-                    <!-- Tarjeta Exportar -->
-                    <div class="w-full lg:w-1/2 max-w-lg bg-slate-800 rounded-xl p-5 border border-slate-700 shadow-lg">
+                    
+                    <div class="w-full lg:w-1/3 max-w-sm bg-slate-800 rounded-xl p-5 border border-slate-700 shadow-lg">
                         <div class="w-12 h-12 bg-sky-500/20 text-sky-400 rounded-xl flex items-center justify-center mb-4"><i data-lucide="download-cloud" class="w-6 h-6"></i></div>
-                        <h2 class="text-lg font-bold text-white mb-2">Generar Respaldo Local</h2>
+                        <h2 class="text-lg font-bold text-white mb-2">Generar Respaldo</h2>
                         <div class="space-y-3 mb-6 mt-4">
-                            <p class="text-xs font-bold text-slate-400 uppercase mb-2">Selecciona qué guardar:</p>
-                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-sky-500 transition-colors">
-                                <input type="checkbox" id="chkExpInv" class="w-4 h-4 rounded bg-slate-800 border-slate-600 text-sky-500 focus:ring-sky-500" checked>
-                                <span class="text-xs font-medium text-slate-200">Inventario (Productos y Extras)</span>
-                            </label>
-                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-sky-500 transition-colors">
-                                <input type="checkbox" id="chkExpVentas" class="w-4 h-4 rounded bg-slate-800 border-slate-600 text-sky-500 focus:ring-sky-500" checked>
-                                <span class="text-xs font-medium text-slate-200">Ventas y Gastos Históricos</span>
-                            </label>
-                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-sky-500 transition-colors">
-                                <input type="checkbox" id="chkExpConf" class="w-4 h-4 rounded bg-slate-800 border-slate-600 text-sky-500 focus:ring-sky-500" checked>
-                                <span class="text-xs font-medium text-slate-200">Usuarios y Locales</span>
-                            </label>
+                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-sky-500"><input type="checkbox" id="chkExpInv" class="rounded bg-slate-800 text-sky-500" checked><span class="text-xs text-slate-200">Inventario</span></label>
+                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-sky-500"><input type="checkbox" id="chkExpVentas" class="rounded bg-slate-800 text-sky-500" checked><span class="text-xs text-slate-200">Ventas e Historial</span></label>
+                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-sky-500"><input type="checkbox" id="chkExpConf" class="rounded bg-slate-800 text-sky-500" checked><span class="text-xs text-slate-200">Usuarios y Locales</span></label>
                         </div>
                         <button id="btn-exportar-backup" class="w-full py-3 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold flex justify-center items-center gap-2"><i data-lucide="save" class="w-5 h-5"></i> Descargar JSON</button>
                     </div>
-                    <!-- Tarjeta Importar -->
-                    <div class="w-full lg:w-1/2 max-w-lg bg-slate-800 rounded-xl p-5 border border-slate-700 shadow-lg">
-                        <div class="w-12 h-12 bg-red-500/20 text-red-400 rounded-xl flex items-center justify-center mb-4"><i data-lucide="upload-cloud" class="w-6 h-6"></i></div>
+
+                    <div class="w-full lg:w-1/3 max-w-sm bg-slate-800 rounded-xl p-5 border border-slate-700 shadow-lg">
+                        <div class="w-12 h-12 bg-amber-500/20 text-amber-400 rounded-xl flex items-center justify-center mb-4"><i data-lucide="upload-cloud" class="w-6 h-6"></i></div>
                         <h2 class="text-lg font-bold text-white mb-2">Restaurar Sistema</h2>
                         <div class="space-y-3 mb-6 mt-4">
-                            <p class="text-xs font-bold text-slate-400 uppercase mb-2">Selecciona qué restaurar (Peligro):</p>
-                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-red-500 transition-colors">
-                                <input type="checkbox" id="chkImpInv" class="w-4 h-4 rounded bg-slate-800 border-slate-600 text-red-500 focus:ring-red-500">
-                                <span class="text-xs font-medium text-slate-200">Inventario <span class="text-red-400">(Riesgo Alto)</span></span>
-                            </label>
-                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-red-500 transition-colors">
-                                <input type="checkbox" id="chkImpVentas" class="w-4 h-4 rounded bg-slate-800 border-slate-600 text-red-500 focus:ring-red-500" checked>
-                                <span class="text-xs font-medium text-slate-200">Historial de Ventas y Gastos</span>
-                            </label>
-                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-red-500 transition-colors">
-                                <input type="checkbox" id="chkImpConf" class="w-4 h-4 rounded bg-slate-800 border-slate-600 text-red-500 focus:ring-red-500">
-                                <span class="text-xs font-medium text-slate-200">Usuarios y Locales</span>
-                            </label>
+                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-amber-500"><input type="checkbox" id="chkImpInv" class="rounded bg-slate-800 text-amber-500"><span class="text-xs text-slate-200">Inventario (Riesgo)</span></label>
+                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-amber-500"><input type="checkbox" id="chkImpVentas" class="rounded bg-slate-800 text-amber-500" checked><span class="text-xs text-slate-200">Historial Ventas</span></label>
+                            <label class="flex items-center gap-3 cursor-pointer p-2 bg-slate-900 rounded-lg border border-slate-700 hover:border-amber-500"><input type="checkbox" id="chkImpConf" class="rounded bg-slate-800 text-amber-500"><span class="text-xs text-slate-200">Usuarios/Locales</span></label>
                         </div>
                         <input type="file" id="importFileInput" accept=".json" class="hidden">
-                        <button id="btn-importar-backup" class="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold flex justify-center items-center gap-2"><i data-lucide="folder-open" class="w-5 h-5"></i> Seleccionar JSON</button>
+                        <button id="btn-importar-backup" class="w-full py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold flex justify-center items-center gap-2"><i data-lucide="folder-open" class="w-5 h-5"></i> Seleccionar JSON</button>
+                    </div>
+
+                    <div class="w-full lg:w-1/3 max-w-sm bg-slate-800 rounded-xl p-5 border border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.1)] relative overflow-hidden">
+                        <div class="w-12 h-12 bg-red-500/20 text-red-500 rounded-xl flex items-center justify-center mb-4 relative z-10"><i data-lucide="power" class="w-6 h-6"></i></div>
+                        <h2 class="text-lg font-bold text-white mb-2 relative z-10">Estado del Sistema</h2>
+                        <p class="text-xs text-slate-400 mb-6 relative z-10">Interrumpe la conexión a la base de datos simulando un error técnico de red (503 Service Unavailable).</p>
+                        <div class="p-3 bg-slate-900 rounded-lg border border-slate-700 mb-4 flex items-center justify-between relative z-10">
+                            <span class="text-sm font-bold text-slate-300">Estado:</span>
+                            <span id="txt-sys-estado" class="text-sm font-bold text-emerald-400 animate-pulse">En Línea</span>
+                        </div>
+                        <button id="btn-toggle-sistema" class="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold flex justify-center items-center gap-2 relative z-10 shadow-lg shadow-red-500/20"><i data-lucide="alert-octagon" class="w-5 h-5"></i> Suspender Sistema</button>
                     </div>
                 </div>
             </div>
@@ -503,8 +448,7 @@
         </main>
     </div>
 
-    <!-- MODALES GLOBALES -->
-
+    <!-- Modales Globales -->
     <!-- Modal: Armar Vaso -->
     <div id="modal-armar-vaso" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex flex-col justify-end md:justify-center items-center transition-opacity duration-300 opacity-0">
         <div class="bg-slate-800 w-full md:w-[450px] md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none max-h-[90vh]">
@@ -618,7 +562,7 @@
         </div>
     </div>
 
-    <!-- Modal: Usuario (Admin) -->
+    <!-- Modal: Usuario (AQUÍ ESTÁN LOS CHECKBOXES DE PERMISOS) -->
     <div id="modal-usuario" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center transition-opacity duration-300 opacity-0 px-4">
         <div class="bg-slate-800 w-full max-w-sm rounded-2xl flex flex-col shadow-2xl border border-slate-700">
             <header class="p-4 border-b border-slate-700 flex justify-between"><h3 class="text-lg font-bold text-white">Nuevo Usuario</h3><button id="btn-cerrar-modal-usuario" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button></header>
@@ -629,12 +573,22 @@
                     <input type="password" id="user-pass" required minlength="6" autocomplete="new-password" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:border-indigo-500" placeholder="Contraseña">
                     <div class="grid grid-cols-2 gap-2">
                         <select id="user-rol" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:border-indigo-500">
-                            <!-- JS inyecta "Master" dinámicamente si aplica -->
                             <option value="vendedor">Vendedor</option>
                             <option value="admin">Administrador</option>
                         </select>
                         <select id="user-local" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:border-indigo-500"></select>
                     </div>
+                    
+                    <!-- PERMISOS DE VENDEDOR -->
+                    <div id="container-permisos-vendedor" class="bg-slate-900/50 border border-slate-700 rounded-lg p-3 mt-2">
+                        <p class="text-[10px] font-bold text-slate-400 uppercase mb-2">Permisos de Módulos (Vendedor)</p>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="permisos[]" value="nav-ventas" class="rounded bg-slate-800" checked><span class="text-xs text-slate-300">Ventas</span></label>
+                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="permisos[]" value="nav-pedidos" class="rounded bg-slate-800" checked><span class="text-xs text-slate-300">Pedidos</span></label>
+                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="permisos[]" value="nav-inventario" class="rounded bg-slate-800" checked><span class="text-xs text-slate-300">Catálogo</span></label>
+                        </div>
+                    </div>
+
                     <button type="submit" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold mt-2 shadow-lg">Guardar</button>
                 </form>
             </div>
@@ -674,126 +628,67 @@
     <!-- MAIN APP SCRIPT -->
     <script type="module" src="js/app.js"></script>
 
-    <!-- SCRIPT DE INTERFAZ GLOBAL (Y PUENTE TEMPORAL) -->
+    <!-- SCRIPT DE INTERFAZ GLOBAL -->
     <script>
-        // Funciones Globales UI (Mantenidas globalmente por retrocompatibilidad)
         window.mostrarAlerta = (titulo, mensaje, colorClass = 'sky') => {
             const modal = document.getElementById('modal-alerta');
-            document.getElementById('alerta-titulo').textContent = titulo;
-            document.getElementById('alerta-mensaje').innerHTML = mensaje;
-            const icon = document.getElementById('alerta-icon');
-            icon.className = `w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-${colorClass}-500/30 bg-${colorClass}-500/10 text-${colorClass}-400`;
-            icon.innerHTML = `<i data-lucide="${colorClass === 'emerald' ? 'check-circle' : (colorClass === 'red' ? 'x-circle' : (colorClass === 'amber' ? 'alert-triangle' : 'info'))}" class="w-8 h-8"></i>`;
-            modal.classList.remove('hidden');
-            if (window.lucide) window.lucide.createIcons();
-            setTimeout(() => {
-                modal.classList.remove('opacity-0');
-                modal.children[0].classList.remove('scale-95');
-                modal.children[0].classList.add('scale-100');
-            }, 10);
+            document.getElementById('alerta-titulo').textContent = titulo; document.getElementById('alerta-mensaje').innerHTML = mensaje;
+            const icon = document.getElementById('alerta-icon'); icon.className = `w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-${colorClass}-500/30 bg-${colorClass}-500/10 text-${colorClass}-400`; icon.innerHTML = `<i data-lucide="${colorClass === 'emerald' ? 'check-circle' : (colorClass === 'red' ? 'x-circle' : (colorClass === 'amber' ? 'alert-triangle' : 'info'))}" class="w-8 h-8"></i>`;
+            modal.classList.remove('hidden'); if (window.lucide) window.lucide.createIcons(); setTimeout(() => { modal.classList.remove('opacity-0'); modal.children[0].classList.remove('scale-95'); modal.children[0].classList.add('scale-100'); }, 10);
         };
-        
-        window.cerrarAlerta = () => {
-            const modal = document.getElementById('modal-alerta');
-            modal.classList.add('opacity-0');
-            modal.children[0].classList.remove('scale-100');
-            modal.children[0].classList.add('scale-95');
-            setTimeout(() => modal.classList.add('hidden'), 200);
-        };
-
+        window.cerrarAlerta = () => { const modal = document.getElementById('modal-alerta'); modal.classList.add('opacity-0'); modal.children[0].classList.remove('scale-100'); modal.children[0].classList.add('scale-95'); setTimeout(() => modal.classList.add('hidden'), 200); };
         window.mostrarToast = (titulo, mensaje, colorClass = 'sky') => {
-            const container = document.getElementById('toast-container');
-            const toast = document.createElement('div');
-            toast.className = `bg-slate-800 border-l-4 border-${colorClass}-500 p-4 rounded-lg shadow-2xl flex items-start gap-3 transform transition-all duration-300 translate-x-full opacity-0 pointer-events-auto`;
-            const iconMap = { 'emerald': 'check-circle', 'red': 'x-circle', 'amber': 'alert-triangle', 'sky': 'info' };
-            toast.innerHTML = `
-                <i data-lucide="${iconMap[colorClass] || 'info'}" class="w-5 h-5 text-${colorClass}-400 shrink-0 mt-0.5"></i>
-                <div><h4 class="text-sm font-bold text-white leading-tight">${titulo}</h4><p class="text-xs text-slate-400 mt-0.5">${mensaje}</p></div>
-            `;
-            container.appendChild(toast);
-            if(window.lucide) window.lucide.createIcons({root: toast});
-            
-            requestAnimationFrame(() => toast.classList.remove('translate-x-full', 'opacity-0'));
-            
-            setTimeout(() => {
-                toast.classList.add('opacity-0', 'translate-x-full');
-                setTimeout(() => toast.remove(), 300);
-            }, 3000);
+            const container = document.getElementById('toast-container'); const toast = document.createElement('div'); toast.className = `bg-slate-800 border-l-4 border-${colorClass}-500 p-4 rounded-lg shadow-2xl flex items-start gap-3 transform transition-all duration-300 translate-x-full opacity-0 pointer-events-auto`; const iconMap = { 'emerald': 'check-circle', 'red': 'x-circle', 'amber': 'alert-triangle', 'sky': 'info' }; toast.innerHTML = `<i data-lucide="${iconMap[colorClass] || 'info'}" class="w-5 h-5 text-${colorClass}-400 shrink-0 mt-0.5"></i><div><h4 class="text-sm font-bold text-white leading-tight">${titulo}</h4><p class="text-xs text-slate-400 mt-0.5">${mensaje}</p></div>`; container.appendChild(toast); if(window.lucide) window.lucide.createIcons({root: toast}); requestAnimationFrame(() => toast.classList.remove('translate-x-full', 'opacity-0')); setTimeout(() => { toast.classList.add('opacity-0', 'translate-x-full'); setTimeout(() => toast.remove(), 300); }, 3000);
         };
-
         let confirmCallback = null;
-        window.mostrarConfirmacion = (mensaje, callback) => {
-            document.getElementById('confirm-mensaje').textContent = mensaje;
-            confirmCallback = callback;
-            const modal = document.getElementById('modal-confirmacion');
-            modal.classList.remove('hidden');
-            setTimeout(() => {
-                modal.classList.remove('opacity-0');
-                modal.children[0].classList.remove('scale-95');
-                modal.children[0].classList.add('scale-100');
-            }, 10);
-        };
+        window.mostrarConfirmacion = (mensaje, callback) => { document.getElementById('confirm-mensaje').textContent = mensaje; confirmCallback = callback; const modal = document.getElementById('modal-confirmacion'); modal.classList.remove('hidden'); setTimeout(() => { modal.classList.remove('opacity-0'); modal.children[0].classList.remove('scale-95'); modal.children[0].classList.add('scale-100'); }, 10); };
+        window.cerrarConfirmacion = () => { const modal = document.getElementById('modal-confirmacion'); modal.classList.add('opacity-0'); modal.children[0].classList.remove('scale-100'); modal.children[0].classList.add('scale-95'); setTimeout(() => { modal.classList.add('hidden'); confirmCallback = null; }, 200); };
         
-        window.cerrarConfirmacion = () => {
-            const modal = document.getElementById('modal-confirmacion');
-            modal.classList.add('opacity-0');
-            modal.children[0].classList.remove('scale-100');
-            modal.children[0].classList.add('scale-95');
-            setTimeout(() => { modal.classList.add('hidden'); confirmCallback = null; }, 200);
-        };
-        
-        // Ruteo UI Base
         window.switchView = (viewName) => {
             document.querySelectorAll('.view-section').forEach(v => v.classList.add('hidden'));
-            document.querySelectorAll('.nav-btn').forEach(btn => { 
-                btn.classList.remove('text-sky-400', 'border-sky-500', 'border-t-2', 'md:border-t-0', 'md:border-r-4'); 
-                btn.classList.add('text-slate-500', 'border-transparent', 'border-t-2', 'md:border-t-0', 'md:border-r-4'); 
-            });
-            const targetView = document.getElementById(`view-${viewName}`); 
-            if(targetView) targetView.classList.remove('hidden');
-            
-            const activeBtn = document.getElementById(`nav-${viewName}`); 
-            if(activeBtn) { 
-                activeBtn.classList.remove('text-slate-500', 'border-transparent'); 
-                activeBtn.classList.add('text-sky-400', 'border-sky-500'); 
-            }
+            document.querySelectorAll('.nav-btn').forEach(btn => { btn.classList.remove('text-sky-400', 'border-sky-500', 'border-t-2', 'md:border-t-0', 'md:border-r-4'); btn.classList.add('text-slate-500', 'border-transparent', 'border-t-2', 'md:border-t-0', 'md:border-r-4'); });
+            const targetView = document.getElementById(`view-${viewName}`); if(targetView) targetView.classList.remove('hidden');
+            const activeBtn = document.getElementById(`nav-${viewName}`); if(activeBtn) { activeBtn.classList.remove('text-slate-500', 'border-transparent'); activeBtn.classList.add('text-sky-400', 'border-sky-500'); }
         };
 
         document.addEventListener('DOMContentLoaded', () => {
-            // Navegación
             const views = ['ventas', 'pedidos', 'inventario', 'caja', 'analisis', 'usuarios', 'respaldo'];
-            views.forEach(view => {
-                document.getElementById(`nav-${view}`)?.addEventListener('click', () => window.switchView(view));
+            views.forEach(view => { document.getElementById(`nav-${view}`)?.addEventListener('click', () => window.switchView(view)); });
+
+            // Mostrar/Ocultar permisos según rol en el modal de usuario
+            document.getElementById('user-rol')?.addEventListener('change', (e) => {
+                const container = document.getElementById('container-permisos-vendedor');
+                if (e.target.value === 'vendedor') container.classList.remove('hidden');
+                else container.classList.add('hidden');
             });
 
-            // Alertas Globales
             document.getElementById('btn-confirm-accept')?.addEventListener('click', () => { if(confirmCallback) confirmCallback(); window.cerrarConfirmacion(); });
             document.getElementById('btn-confirm-cancel')?.addEventListener('click', window.cerrarConfirmacion);
             document.getElementById('btn-alerta-aceptar')?.addEventListener('click', window.cerrarAlerta);
 
-            // Eventos UI
+            // Redirecciones a funciones dinámicas de los modulos js
             document.getElementById('btn-ajuste-cargo')?.addEventListener('click', () => window.abrirModalAjuste?.('Cargo Extra'));
             document.getElementById('btn-ajuste-descuento')?.addEventListener('click', () => window.abrirModalAjuste?.('Descuento'));
             document.getElementById('btn-vaciar-carrito')?.addEventListener('click', () => { window.clearCart?.(); window.actualizarCarritoUI?.(); });
             document.querySelectorAll('input[name="metodo_pago"]').forEach(radio => {
                 radio.addEventListener('change', (e) => { if(window.toggleMetodoPago) window.toggleMetodoPago(e.target.value); });
             });
-            
+
             document.getElementById('btn-nuevo-producto')?.addEventListener('click', () => window.abrirModalProducto?.());
             document.getElementById('btn-registrar-gasto')?.addEventListener('click', () => window.abrirModalGasto?.());
-            
+
             document.getElementById('btn-cerrar-modal-vaso')?.addEventListener('click', () => window.cerrarModalArmar?.());
             document.getElementById('btn-cerrar-modal-ajuste')?.addEventListener('click', () => {
                 const m = document.getElementById('modal-ajuste'); m.classList.add('opacity-0'); setTimeout(()=>m.classList.add('hidden'), 300);
             });
             document.getElementById('form-ajuste')?.addEventListener('submit', (e) => window.confirmarAjuste?.(e));
             document.getElementById('btn-cerrar-modal-gasto')?.addEventListener('click', () => window.cerrarModalGasto?.());
-            document.getElementById('btn-cerrar-modal-producto')?.addEventListener('click', () => {
-                const m = document.getElementById('modal-producto'); m.classList.add('opacity-0'); setTimeout(()=>m.classList.add('hidden'), 300);
-            });
-            document.getElementById('btn-cerrar-modal-breakdown')?.addEventListener('click', () => window.closeBreakdownModal?.());
-
-            // Análisis y Respaldo
+            document.getElementById('btn-cerrar-modal-producto')?.addEventListener('click', () => { const m = document.getElementById('modal-producto'); m.classList.add('opacity-0'); setTimeout(()=>m.classList.add('hidden'), 300); });
+            document.getElementById('btn-exportar-backup')?.addEventListener('click', () => window.exportBackup?.());
+            document.getElementById('importFileInput')?.addEventListener('change', (e) => window.handleImportBackup?.(e));
+            document.getElementById('btn-importar-backup')?.addEventListener('click', () => document.getElementById('importFileInput').click());
+            document.getElementById('btn-toggle-sistema')?.addEventListener('click', () => window.toggleSistemaLock?.());
+            
             document.getElementById('filterStartDate')?.addEventListener('change', () => window.updateAnalysisRange?.());
             document.getElementById('filterEndDate')?.addEventListener('change', () => window.updateAnalysisRange?.());
             document.getElementById('analisisLocalFilter')?.addEventListener('change', () => window.updateAnalysisRange?.());
@@ -804,9 +699,7 @@
             document.getElementById('btn-mes-next')?.addEventListener('click', () => window.changeAnalysisMonth?.(1));
             document.getElementById('card-bruto-dia')?.addEventListener('click', () => window.showBreakdown?.('BRUTO', window.currentSelectedDayObj));
             document.getElementById('card-ganancia-dia')?.addEventListener('click', () => window.showBreakdown?.('GANANCIA', window.currentSelectedDayObj));
-            document.getElementById('btn-exportar-backup')?.addEventListener('click', () => window.exportBackup?.());
-            document.getElementById('importFileInput')?.addEventListener('change', (e) => window.handleImportBackup?.(e));
-            document.getElementById('btn-importar-backup')?.addEventListener('click', () => document.getElementById('importFileInput').click());
+            document.getElementById('btn-cerrar-modal-breakdown')?.addEventListener('click', () => window.closeBreakdownModal?.());
         });
     </script>
 </body>
