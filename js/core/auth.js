@@ -15,18 +15,28 @@ export function initAuth() {
         if (userUnsubscribe) { userUnsubscribe(); userUnsubscribe = null; }
         if (sysUnsubscribe) { sysUnsubscribe(); sysUnsubscribe = null; }
 
+        // 1. Escuchar el estado de Pago/Bloqueo y LOGO GLOBAL del sistema
+        sysUnsubscribe = onSnapshot(doc(db, "configuracion", "estado_sistema"), (sysDoc) => {
+            if (sysDoc.exists()) {
+                const data = sysDoc.data();
+                isSystemLocked = data.cerrado === true;
+                
+                // ACTUALIZACIÓN DE LOGO EN TIEMPO REAL
+                if (data.logoUrl) {
+                    actualizarLogoGlobal(data.logoUrl);
+                }
+            } else {
+                isSystemLocked = false;
+            }
+            
+            // Si hay un usuario logueado, re-verificamos su acceso por si acabas de apagar/encender el sistema
+            if (state.currentUser) {
+                verificarBloqueoSistema(state.currentUser);
+            }
+        });
+
         if (user) {
             state.currentUser = user;
-            
-            // 1. Escuchar el estado de Pago/Bloqueo del sistema globalmente
-            sysUnsubscribe = onSnapshot(doc(db, "configuracion", "estado_sistema"), (sysDoc) => {
-                if (sysDoc.exists() && sysDoc.data().cerrado === true) {
-                    isSystemLocked = true;
-                } else {
-                    isSystemLocked = false;
-                }
-                verificarBloqueoSistema(user);
-            });
 
             // 2. Escucha en TIEMPO REAL los cambios en tu propio documento de usuario
             userUnsubscribe = onSnapshot(doc(db, "usuarios", user.uid), async (userDoc) => {
@@ -78,6 +88,28 @@ export function initAuth() {
     });
 }
 
+// ==========================================
+// NUEVA FUNCIÓN: ACTUALIZADOR DE LOGO GLOBAL
+// ==========================================
+function actualizarLogoGlobal(url) {
+    // 1. Cambiar los logos principales (Login y Cabecera Móvil)
+    const logosImg = document.querySelectorAll('img[alt="IcePOS Logo"], img[alt="IcePOS"]');
+    logosImg.forEach(img => {
+        img.src = url;
+        img.style.objectFit = 'contain';
+        // Quitar la sombra celeste que venía por defecto si el logo tiene su propio diseño
+        img.classList.remove('drop-shadow-[0_0_15px_rgba(14,165,233,0.3)]');
+    });
+
+    // 2. Cambiar el ícono de copo de nieve del menú lateral de PC por el logo
+    const sidebarLogoContainer = document.querySelector('.bg-sky-600.rounded-xl.items-center.justify-center.mb-6');
+    if (sidebarLogoContainer) {
+        sidebarLogoContainer.innerHTML = `<img src="${url}" class="w-full h-full object-contain p-1 drop-shadow-md" alt="Logo Franquicia">`;
+        sidebarLogoContainer.classList.replace('bg-sky-600', 'bg-transparent'); 
+        sidebarLogoContainer.classList.remove('shadow-lg', 'shadow-sky-500/30');
+    }
+}
+
 // Función que inyecta la pantalla técnica de Error si el sistema está cerrado
 async function verificarBloqueoSistema(user) {
     const appContainer = document.getElementById('app-container');
@@ -89,8 +121,7 @@ async function verificarBloqueoSistema(user) {
     // Si la pantalla de login aún no se oculta, no hacer transiciones para evitar parpadeos
     if (loginScreen && !loginScreen.classList.contains('hidden')) return;
 
-    // DOBLE VERIFICACIÓN (Crucial para evitar expulsar a nuevos Masters por retrasos en la red):
-    // Si el sistema está bloqueado pero state.userRole no cargó a tiempo, consultamos directo a la base de datos.
+    // DOBLE VERIFICACIÓN: Si el sistema está bloqueado pero state.userRole no cargó a tiempo, consultamos directo a la BD.
     if (isSystemLocked && !isMaster) {
         try {
             const userDoc = await getDoc(doc(db, "usuarios", user.uid));
@@ -175,7 +206,7 @@ function quitarError404() {
 
 function aplicarPermisosVisuales(userDocData) {
     const r = state.userRole;
-    const permisosVendedor = userDocData?.permisos || []; // Array de menús permitidos guardados en la BD
+    const permisosVendedor = userDocData?.permisos || []; 
 
     const views = {
         'nav-ventas': document.getElementById('nav-ventas'),
@@ -188,33 +219,27 @@ function aplicarPermisosVisuales(userDocData) {
     };
 
     if (r === 'master') {
-        // Master ve TODO
         Object.values(views).forEach(v => v && v.classList.remove('hidden'));
     } 
     else if (r === 'admin' || r === 'Administrador') {
-        // Admin ve todo EXCEPTO Respaldo
         Object.values(views).forEach(v => v && v.classList.remove('hidden'));
         if (views['nav-respaldo']) views['nav-respaldo'].classList.add('hidden');
         
-        // Si estaba en respaldo, botarlo a ventas
         const viewRespaldo = document.getElementById('view-respaldo');
         if (viewRespaldo && !viewRespaldo.classList.contains('hidden')) window.switchView('ventas');
     } 
     else {
-        // Vendedor usa permisos personalizados o los básicos por defecto
         const defaultVendedor = ['nav-ventas', 'nav-pedidos', 'nav-inventario'];
         
         for (const [id, el] of Object.entries(views)) {
             if (!el) continue;
             
-            // Verificamos si tiene acceso personalizado (marcado en las casillas), sino usamos default
             const hasAccess = permisosVendedor.length > 0 ? permisosVendedor.includes(id) : defaultVendedor.includes(id);
             
             if (hasAccess) {
                 el.classList.remove('hidden');
             } else {
                 el.classList.add('hidden');
-                // Si el vendedor intentaba ver una sección sin permiso, lo devuelve a ventas
                 const viewSection = document.getElementById(id.replace('nav-', 'view-'));
                 if (viewSection && !viewSection.classList.contains('hidden')) {
                     window.switchView('ventas');
