@@ -34,7 +34,7 @@ export async function initUsuarios() {
     if(listaUsuariosEl) {
         listaUsuariosEl.onclick = e => {
             const btn = e.target.closest('button[data-action]'); if(!btn) return;
-            if(btn.dataset.action === 'eliminar-usuario') eliminarUsuario(btn.dataset.uid);
+            if(btn.dataset.action === 'eliminar-usuario') eliminarUsuario(btn.dataset.uid, btn.dataset.activo === 'true');
             
             if(btn.dataset.action === 'copiar-pass') {
                 navigator.clipboard.writeText(btn.dataset.pass);
@@ -52,6 +52,25 @@ export async function initUsuarios() {
             else if(sel.dataset.action === 'cambiar-rol') cambiarRolUsuario(sel.dataset.uid, sel.value);
         };
     }
+}
+
+// FUNCIÓN MAGICA: Genera variaciones automáticas si el usuario original está trabado en Firebase
+async function crearUsuarioFuerzaBruta(baseName, pass) {
+    let attempt = 1;
+    while (attempt < 20) {
+        let testName = attempt === 1 ? `${baseName}_nuevo` : `${baseName}_${attempt}`;
+        let testEmail = `${testName}@raspadillas.com`;
+        try {
+            const cred = await createUserWithEmailAndPassword(secondaryAuth, testEmail, pass);
+            const uid = cred.user.uid;
+            await secondaryAuth.signOut();
+            return { uid, email: testEmail, username: testName };
+        } catch(e) {
+            if (e.code === 'auth/email-already-in-use') attempt++;
+            else throw e;
+        }
+    }
+    throw new Error("No se pudo forzar la creación.");
 }
 
 function abrirModalEditarUsuario(uid, email, oldPass, rol, localId, localNombre) {
@@ -122,8 +141,12 @@ async function ejecutarEditarUsuario() {
     if (newUsername.length < 3) { if(window.mostrarToast) window.mostrarToast('Error', 'Usuario muy corto', 'amber'); return; }
     if (newPass.length < 6) { if(window.mostrarToast) window.mostrarToast('Error', 'Mínimo 6 caracteres', 'amber'); return; }
 
+    // Si no cambió ni el correo ni la contraseña, solo actualizamos los datos básicos
     if (currentEmail === newEmail && newPass === oldPass) {
+        await updateDoc(doc(db, "usuarios", uid), { rol: rol, localId: localId, localNombre: localNombre, activo: true });
+        if(window.mostrarToast) window.mostrarToast('Éxito', 'Datos actualizados', 'emerald');
         const m = document.getElementById('modal-editar-usuario'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
+        cargarUsuariosYLocales();
         return;
     }
 
@@ -131,7 +154,38 @@ async function ejecutarEditarUsuario() {
     btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline"></i> Guardando...'; if(window.lucide) window.lucide.createIcons(); btn.disabled = true;
 
     try {
-        if (currentEmail !== newEmail) {
+        if (currentEmail === newEmail) {
+            // Intentan cambiar la contraseña en el mismo usuario
+            if (!oldPass) {
+                // FORCE RECREATE: La contraseña estaba oculta, no podemos cambiarla en el mismo correo.
+                const baseUsername = currentEmail.split('@')[0];
+                const newRes = await crearUsuarioFuerzaBruta(baseUsername, newPass);
+                
+                await setDoc(doc(db, "usuarios", newRes.uid), { 
+                    email: newRes.email, rol: rol, localId: localId, localNombre: localNombre, 
+                    creado_manualmente: true, pass_visible: newPass, activo: true 
+                });
+                await deleteDoc(doc(db, "usuarios", uid)); // Borramos el registro bloqueado
+                
+                if(window.mostrarAlerta) window.mostrarAlerta('Cuenta Recreada Forzosamente', `No se pudo cambiar la contraseña original porque estaba oculta en Firebase.<br><br>Para solucionarlo, el sistema generó un nuevo usuario automático: <b>${newRes.username}</b><br><br>Informa al empleado que debe usar este nuevo nombre de usuario.`, 'sky');
+                
+                const m = document.getElementById('modal-editar-usuario'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
+                cargarUsuariosYLocales();
+                return;
+            } else {
+                // Flujo estándar con contraseña conocida
+                if (uid === state.currentUser.uid) { 
+                    await updatePassword(state.currentUser, newPass); 
+                } else {
+                    const secCred = await signInWithEmailAndPassword(secondaryAuth, currentEmail, oldPass);
+                    await updatePassword(secCred.user, newPass); await secondaryAuth.signOut();
+                }
+                await updateDoc(doc(db, "usuarios", uid), { pass_visible: newPass, activo: true, rol: rol, localId: localId, localNombre: localNombre });
+                if(window.mostrarToast) window.mostrarToast('Éxito', 'Contraseña actualizada', 'emerald');
+            }
+        } 
+        else {
+            // Cambiaron el nombre de usuario (esto siempre crea uno nuevo exitosamente)
             const secCred = await createUserWithEmailAndPassword(secondaryAuth, newEmail, newPass);
             const nuevoUID = secCred.user.uid;
             await secondaryAuth.signOut();
@@ -141,29 +195,16 @@ async function ejecutarEditarUsuario() {
                 creado_manualmente: true, pass_visible: newPass, activo: true 
             });
             
-            // Aquí sí aplicamos el soft-delete al viejo
+            // Aplicamos soft-delete al usuario viejo para no romper el historial
             await updateDoc(doc(db, "usuarios", uid), { activo: false });
             if(window.mostrarToast) window.mostrarToast('Éxito', 'Cuenta recreada con nuevo usuario', 'emerald');
-        } 
-        else {
-            if (uid === state.currentUser.uid) { 
-                await updatePassword(state.currentUser, newPass); 
-            } else {
-                if(!oldPass) throw new Error("no_old_pass");
-                const secCred = await signInWithEmailAndPassword(secondaryAuth, currentEmail, oldPass);
-                await updatePassword(secCred.user, newPass); await secondaryAuth.signOut();
-            }
-            await updateDoc(doc(db, "usuarios", uid), { pass_visible: newPass, activo: true });
-            if(window.mostrarToast) window.mostrarToast('Éxito', 'Contraseña actualizada', 'emerald');
         }
 
         const m = document.getElementById('modal-editar-usuario'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
         cargarUsuariosYLocales();
     } catch (err) {
         console.error(err); 
-        if(err.message === 'no_old_pass') {
-            if(window.mostrarAlerta) window.mostrarAlerta('Contraseña Oculta', 'No podemos actualizar la clave directamente porque la original está oculta en Firebase.<br><br>Para forzar el cambio, <b>modifica también el Nombre de Usuario</b> (ej: añade un número o letra). Esto recreará la cuenta limpia y solucionará el problema.', 'amber');
-        } else if(err.code === 'auth/email-already-in-use') {
+        if(err.code === 'auth/email-already-in-use') {
             if(window.mostrarAlerta) window.mostrarAlerta('Usuario Ocupado', 'Ese nuevo nombre de usuario ya existe. Elige otro diferente.', 'amber');
         } else if(err.code === 'auth/requires-recent-login') {
             if(window.mostrarAlerta) window.mostrarAlerta('Seguridad', 'Por seguridad, cierra tu sesión y vuelve a entrar para cambiar TU propia clave.', 'red');
@@ -202,13 +243,8 @@ async function cargarUsuarios() {
     if (!listaUsuariosEl) return;
     try {
         const snap = await getDocs(collection(db, "usuarios")); let allU = []; 
-        // FILTRO IMPORTANTE: Solo mostramos los usuarios que NO tengan activo en false.
-        snap.forEach(d => {
-            const data = d.data();
-            if (data.activo !== false) {
-                allU.push({uid: d.id, ...data});
-            }
-        });
+        // AHORA MOSTRAMOS TODOS LOS USUARIOS (Incluso los desactivados para poder verlos y borrarlos definitivamente)
+        snap.forEach(d => { allU.push({uid: d.id, ...d.data()}); });
         
         let html = ''; let selectOptions = '<option value="">Sin Local</option>'; state.locales.forEach(l => selectOptions += `<option value="${l.id}">${l.nombre}</option>`);
         state.locales.forEach(loc => { const usrsLoc = allU.filter(u => u.localId === loc.id); if(usrsLoc.length > 0) { html += `<div class="mt-4 mb-2 border-b border-slate-700 pb-1"><h4 class="text-xs font-bold text-sky-400 uppercase tracking-wider">${loc.nombre}</h4></div>`; usrsLoc.forEach(u => html += genU(u, selectOptions)); } });
@@ -223,6 +259,7 @@ function genU(u, opts) {
     
     const isPrivileged = state.userRole === 'admin' || state.userRole === 'Administrador' || state.userRole === 'master';
     const isMe = (u.uid === state.currentUser?.uid);
+    const isInactive = u.activo === false;
     
     let passDisplay = u.pass_visible || 'Oculta';
     let passHtml = '';
@@ -243,11 +280,11 @@ function genU(u, opts) {
         roleOptions += `<option value="master" ${u.rol === 'master' ? 'selected' : ''}>Master</option>`;
     }
 
-    let cardBorderColor = 'border-slate-700';
-    let userIconColor = 'text-sky-400';
-    let userIconBg = 'bg-sky-500/10';
-    let userIconType = 'user';
-    let roleTextColor = 'text-slate-500';
+    let cardBorderColor = isInactive ? 'border-red-500/30 opacity-70' : 'border-slate-700';
+    let userIconColor = isInactive ? 'text-red-400' : 'text-sky-400';
+    let userIconBg = isInactive ? 'bg-red-500/10' : 'bg-sky-500/10';
+    let userIconType = isInactive ? 'user-x' : 'user';
+    let roleTextColor = isInactive ? 'text-slate-600' : 'text-slate-500';
 
     if (isThisCardMaster) {
         cardBorderColor = 'border-amber-500/50 shadow-lg shadow-amber-500/10';
@@ -255,7 +292,7 @@ function genU(u, opts) {
         userIconBg = 'bg-amber-500/20';
         userIconType = 'crown';
         roleTextColor = 'text-amber-400';
-    } else if (u.rol === 'admin') {
+    } else if (u.rol === 'admin' && !isInactive) {
         cardBorderColor = 'border-purple-500/50 shadow-lg shadow-purple-500/10';
         userIconColor = 'text-purple-400';
         userIconBg = 'bg-purple-500/20';
@@ -263,15 +300,17 @@ function genU(u, opts) {
         roleTextColor = 'text-purple-400';
     }
 
+    const inactiveBadge = isInactive ? `<span class="bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ml-2">Inactivo</span>` : '';
+
     const renderRoleSelector = isMe 
         ? `<span class="bg-slate-900 border border-slate-700 ${roleTextColor} rounded px-2 py-1 text-xs font-bold uppercase tracking-wider">${u.rol}</span>`
         : `<select data-action="cambiar-rol" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs cursor-pointer">${roleOptions}</select>`;
 
-    return `<div class="bg-slate-800 border ${cardBorderColor} rounded-xl p-3 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-2 mb-2 transition-all">
+    return `<div class="bg-slate-800 border ${cardBorderColor} rounded-xl p-3 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-2 mb-2 transition-all hover:opacity-100">
         <div class="flex items-center gap-3">
             <div class="w-8 h-8 rounded-full ${userIconBg} flex items-center justify-center ${userIconColor} shrink-0"><i data-lucide="${userIconType}" class="w-4 h-4"></i></div>
             <div>
-                <p class="font-bold text-white text-sm flex items-center gap-2">${u.email || 'Sin correo'} ${isMe ? '<span class="text-[9px] bg-slate-700 text-white px-1.5 py-0.5 rounded uppercase">Tú</span>' : ''}</p>
+                <p class="font-bold text-white text-sm flex items-center gap-2">${u.email || 'Sin correo'} ${isMe ? '<span class="text-[9px] bg-slate-700 text-white px-1.5 py-0.5 rounded uppercase">Tú</span>' : ''} ${inactiveBadge}</p>
                 <p class="text-[10px] ${roleTextColor}">Rol: <span class="uppercase font-bold tracking-wide">${u.rol}</span></p>
                 ${passHtml}
             </div>
@@ -280,7 +319,7 @@ function genU(u, opts) {
         `<div class="flex gap-2 w-full lg:w-auto mt-2 lg:mt-0">
             <select data-action="cambiar-local" data-uid="${u.uid}" class="bg-slate-900 border border-slate-600 text-slate-300 rounded px-1 py-1 text-xs cursor-pointer">${opts.replace(`value="${u.localId || ''}"`, `value="${u.localId || ''}" selected`)}</select>
             ${renderRoleSelector}
-            ${!isMe ? `<button data-action="eliminar-usuario" data-uid="${u.uid}" class="text-red-400 hover:text-red-300 bg-slate-900 border border-slate-700 rounded p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : ''}
+            ${!isMe ? `<button data-action="eliminar-usuario" data-uid="${u.uid}" data-activo="${!isInactive}" title="${isInactive ? 'Eliminar Definitivamente (Irreversible)' : 'Desactivar Usuario'}" class="text-red-400 hover:text-red-300 bg-slate-900 border border-slate-700 rounded p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : ''}
         </div>`}
     </div>`;
 }
@@ -306,7 +345,6 @@ async function guardarUsuarioSimulado(e) {
     btn.disabled = true;
 
     try { 
-        // 1. Intentamos crear el usuario
         const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, pass);
         const nuevoUID = userCredential.user.uid;
         await secondaryAuth.signOut();
@@ -318,7 +356,7 @@ async function guardarUsuarioSimulado(e) {
             localNombre: loc?.nombre || 'Sin Local',
             creado_manualmente: true,
             pass_visible: pass,
-            activo: true // Añadido estado activo
+            activo: true
         }); 
         
         if(window.mostrarToast) window.mostrarToast('Éxito', 'Cuenta creada con éxito', 'emerald');
@@ -328,10 +366,8 @@ async function guardarUsuarioSimulado(e) {
     } catch(error) {
         console.error("DEBUG - ERROR DE FIREBASE:", error);
         
-        // RECUPERACIÓN DE USUARIO ELIMINADO LÓGICAMENTE
         if (error.code === 'auth/email-already-in-use') {
             try {
-                // Buscamos si existe en Firestore pero está oculto
                 const q = query(collection(db, "usuarios"), where("email", "==", email));
                 const snap = await getDocs(q);
                 
@@ -340,48 +376,45 @@ async function guardarUsuarioSimulado(e) {
                     const existingData = existingDoc.data();
                     
                     if (existingData.activo === false) {
-                        // El usuario fue "eliminado", vamos a revivirlo
                         const oldPass = existingData.pass_visible;
                         
-                        if (!oldPass) {
-                             if(window.mostrarAlerta) window.mostrarAlerta('Error de Recuperación', 'Este usuario fue eliminado y su contraseña original está oculta. No podemos revivirlo de forma segura. Por favor, crea un usuario con un nombre diferente (ej: '+n+'2).', 'amber');
-                             return;
+                        if (oldPass) {
+                            const secCred = await signInWithEmailAndPassword(secondaryAuth, email, oldPass);
+                            await updatePassword(secCred.user, pass);
+                            await secondaryAuth.signOut();
+                            
+                            await updateDoc(doc(db, "usuarios", existingDoc.id), { 
+                                rol: rol, localId: locId, localNombre: loc?.nombre || 'Sin Local', pass_visible: pass, activo: true 
+                            });
+
+                            if(window.mostrarToast) window.mostrarToast('Recuperado', 'Cuenta restaurada con éxito', 'emerald');
+                            cerrarModalUsuario(); cargarUsuariosYLocales();
+                            return;
                         }
-
-                        // Entramos con la contraseña vieja para poder cambiarla
-                        const secCred = await signInWithEmailAndPassword(secondaryAuth, email, oldPass);
-                        await updatePassword(secCred.user, pass);
-                        await secondaryAuth.signOut();
-                        
-                        // Actualizamos su documento en Firestore
-                        await updateDoc(doc(db, "usuarios", existingDoc.id), { 
-                            rol: rol, 
-                            localId: locId, 
-                            localNombre: loc?.nombre || 'Sin Local',
-                            pass_visible: pass,
-                            activo: true // Lo volvemos visible
-                        });
-
-                        if(window.mostrarToast) window.mostrarToast('Recuperado', 'Cuenta restaurada con éxito', 'emerald');
-                        cerrarModalUsuario(); 
-                        cargarUsuariosYLocales();
                     } else {
-                        // Si está activo y existe
-                        if(window.mostrarAlerta) window.mostrarAlerta('Usuario Existente', 'Este nombre de usuario ya está activo en el sistema. Elige otro o edita el actual.', 'amber');
+                        if(window.mostrarAlerta) return window.mostrarAlerta('Usuario Existente', 'Este nombre de usuario ya está activo en el sistema. Puedes editarlo desde la lista.', 'amber');
                     }
-                } else {
-                    // Existe en Firebase Auth pero NO en Firestore (desincronizado)
-                    if(window.mostrarAlerta) window.mostrarAlerta('Usuario Ocupado', 'Este usuario existe en la base de datos de credenciales. Elige otro nombre diferente.', 'amber');
                 }
+                
+                // FALLBACK: Si no hay contraseña original o el usuario está completamente huérfano en Firebase, forzamos creación.
+                const newRes = await crearUsuarioFuerzaBruta(n, pass);
+                await setDoc(doc(db, "usuarios", newRes.uid), { 
+                    email: newRes.email, rol: rol, localId: locId, localNombre: loc?.nombre || 'Sin Local',
+                    creado_manualmente: true, pass_visible: pass, activo: true 
+                });
+                
+                if(window.mostrarAlerta) window.mostrarAlerta('Usuario Forzado', `El nombre original <b>${n}</b> está bloqueado o su clave está oculta en Firebase Auth.<br><br>Se ha forzado la creación de una variante automática: <b>${newRes.username}</b><br><br>Informa al empleado que debe usar este nuevo nombre para ingresar.`, 'amber');
+                
+                cerrarModalUsuario(); cargarUsuariosYLocales();
+
             } catch (recoveryError) {
-                console.error("Error en recuperación:", recoveryError);
-                if(window.mostrarAlerta) window.mostrarAlerta('Error', 'Hubo un fallo al intentar restaurar el usuario. Usa un nombre diferente.', 'red');
+                console.error("Error en recuperación/fuerza:", recoveryError);
+                if(window.mostrarAlerta) window.mostrarAlerta('Error', 'Hubo un fallo al intentar restaurar o forzar el usuario.', 'red');
             }
         } else if (error.code === 'auth/weak-password') {
             if(window.mostrarToast) window.mostrarToast('Error', 'La contraseña debe tener mínimo 6 caracteres.', 'red');
         } else {
             if(window.mostrarAlerta) window.mostrarAlerta('Error', `No se pudo crear la cuenta.<br><br>Código: ${error.code}`, 'red');
-            else alert(`🚨 ERROR AL CREAR USUARIO 🚨\n\nCÓDIGO: ${error.code}\n\nMENSAJE: ${error.message}`);
         }
     } finally {
         btn.innerHTML = btnOriginal;
@@ -389,14 +422,21 @@ async function guardarUsuarioSimulado(e) {
     }
 }
 
-// MODIFICADO: Borrado lógico
-async function eliminarUsuario(uid) { 
+async function eliminarUsuario(uid, isActivo) { 
     if(window.mostrarConfirmacion) {
-        window.mostrarConfirmacion("¿Borrar usuario de la lista? (Podrá ser restaurado si se vuelve a crear con el mismo nombre)", async () => { 
-            await updateDoc(doc(db, "usuarios", uid), { activo: false }); 
-            cargarUsuariosYLocales(); 
-            if(window.mostrarToast) window.mostrarToast('Eliminado', 'Usuario ocultado correctamente.', 'sky');
-        }); 
+        if (isActivo) {
+            window.mostrarConfirmacion("¿Desactivar usuario? (Ya no podrá operar, pero podrás verlo aquí para borrarlo permanentemente o reactivarlo)", async () => { 
+                await updateDoc(doc(db, "usuarios", uid), { activo: false }); 
+                cargarUsuariosYLocales(); 
+                if(window.mostrarToast) window.mostrarToast('Desactivado', 'Usuario ocultado y pausado.', 'sky');
+            }); 
+        } else {
+            window.mostrarConfirmacion("¿Eliminar usuario DEFINITIVAMENTE de la base de datos? (La credencial vieja en Firebase quedará inutilizable para siempre)", async () => { 
+                await deleteDoc(doc(db, "usuarios", uid)); 
+                cargarUsuariosYLocales(); 
+                if(window.mostrarToast) window.mostrarToast('Eliminado', 'Registro borrado permanentemente.', 'emerald');
+            }); 
+        }
     }
 }
 
