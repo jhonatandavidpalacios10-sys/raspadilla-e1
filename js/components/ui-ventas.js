@@ -82,6 +82,7 @@ export function initVentas() {
     document.getElementById('btn-procesar-cobro')?.addEventListener('click', procesarCobroFinal);
     ['input-paga-con', 'input-mixto-yape', 'input-mixto-efectivo'].forEach(id => document.getElementById(id)?.addEventListener('input', calcularVuelto));
     document.getElementById('searchInput')?.addEventListener('input', renderProductosVenta);
+    document.getElementById('posCategoryFilter')?.addEventListener('change', renderProductosVenta);
 }
 
 function abrirModalAjuste(tipo) {
@@ -107,7 +108,14 @@ function confirmarAjuste(e) {
 export function renderProductosVenta() {
     const grid = document.getElementById('productos-venta-grid'); if (!grid) return;
     const term = document.getElementById('searchInput')?.value.toLowerCase() || ''; const cat = document.getElementById('posCategoryFilter')?.value || '';
-    let filtrados = state.productos.filter(p => p.categoria === 'vaso' || p.categoria === 'extra');
+    
+    // MAGIA MULTI-SEDE INYECTADA: Los vendedores no pueden ver vasos/extras de otras sedes
+    let filtrados = state.productos.filter(p => {
+        const isRightCat = p.categoria === 'vaso' || p.categoria === 'extra';
+        const isRightLocal = (state.userRole === 'admin' || state.userRole === 'master') ? true : (!p.localId || p.localId === 'global' || p.localId === state.userLocalId);
+        return isRightCat && isRightLocal;
+    });
+
     if(cat !== '') filtrados = filtrados.filter(p => p.categoria === cat);
     if(term !== '') filtrados = filtrados.filter(p => p.nombre.toLowerCase().includes(term));
     
@@ -118,12 +126,12 @@ export function renderProductosVenta() {
         const isAgt = p.stock !== null && p.stock <= 0;
         const blockCls = isAgt ? 'opacity-50 grayscale cursor-not-allowed' : 'cursor-pointer hover:border-sky-500 hover:bg-slate-700/50 active:scale-95';
         
-        // Ajuste CSS Móvil: badges, paddings y fuentes más pequeñas
+        // Etiqueta de sede (Solo visible para Admin/Master)
+        const badgeLocal = (p.localId && p.localId !== 'global' && (state.userRole === 'master' || state.userRole === 'admin')) ? `<span class="absolute top-1 left-1 bg-slate-900 text-[8px] text-slate-400 px-1 py-0.5 rounded border border-slate-700 truncate max-w-[60px]">${state.locales.find(l => l.id === p.localId)?.nombre || 'Sede'}</span>` : '';
         const badgeHtml = isAgt ? `<div class="absolute top-0 right-0 bg-red-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">Agotado</div>` : (p.categoria==='vaso' ? `<div class="absolute top-0 right-0 bg-sky-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">${p.limite===999?'Ilimitados':p.limite}</div>` : '');
         const cCls = p.categoria === 'vaso' ? 'from-sky-400 to-indigo-500 shadow-sky-500/30' : 'from-emerald-400 to-teal-500 shadow-emerald-500/30';
         
-        // Ajuste CSS Móvil: padding p-1.5 en lugar de p-3. Iconos w-8 h-8 en lugar de w-12 h-12. Textos text-[9px] en lugar de text-xs
-        html += `<div data-id="${p.id}" data-categoria="${p.categoria}" class="producto-card bg-slate-800 border border-slate-700 rounded-xl md:rounded-2xl p-1.5 md:p-3 flex flex-col items-center text-center transition-all relative overflow-hidden ${blockCls}">${badgeHtml}<div class="w-8 h-8 sm:w-10 sm:h-10 md:w-14 md:h-14 bg-gradient-to-br ${cCls} rounded-full flex items-center justify-center mt-2 md:mt-3 mb-1 md:mb-2 shadow-lg"><i data-lucide="${p.categoria === 'vaso' ? 'cup-soda' : 'package'}" class="w-4 h-4 sm:w-5 sm:h-5 md:w-7 md:h-7 text-white"></i></div><h3 class="text-[9px] sm:text-[10px] md:text-sm font-bold text-white mb-0.5 md:mb-1 leading-tight line-clamp-2">${p.nombre}</h3><p class="text-${p.categoria==='vaso'?'sky':'emerald'}-400 font-black text-[10px] sm:text-xs md:text-sm mt-auto">${formatMoney(p.precio)}</p></div>`;
+        html += `<div data-id="${p.id}" data-categoria="${p.categoria}" class="producto-card bg-slate-800 border border-slate-700 rounded-xl md:rounded-2xl p-1.5 md:p-3 flex flex-col items-center text-center transition-all relative overflow-hidden ${blockCls}">${badgeLocal}${badgeHtml}<div class="w-8 h-8 sm:w-10 sm:h-10 md:w-14 md:h-14 bg-gradient-to-br ${cCls} rounded-full flex items-center justify-center mt-2 md:mt-3 mb-1 md:mb-2 shadow-lg"><i data-lucide="${p.categoria === 'vaso' ? 'cup-soda' : 'package'}" class="w-4 h-4 sm:w-5 sm:h-5 md:w-7 md:h-7 text-white"></i></div><h3 class="text-[9px] sm:text-[10px] md:text-sm font-bold text-white mb-0.5 md:mb-1 leading-tight line-clamp-2">${p.nombre}</h3><p class="text-${p.categoria==='vaso'?'sky':'emerald'}-400 font-black text-[10px] sm:text-xs md:text-sm mt-auto">${formatMoney(p.precio)}</p></div>`;
     });
     grid.innerHTML = html; if(window.lucide) window.lucide.createIcons();
 }
@@ -134,12 +142,16 @@ function iniciarArmadoVaso(id) {
     document.getElementById('limite-sabores-txt').textContent = vasoActual.limite === 999 ? 'Ilimitados' : `Max: ${vasoActual.limite}`;
     const c = document.getElementById('builder-sabores'); let html = '';
     
-    state.productos.filter(p => p.categoria === 'sabor').forEach(j => {
+    // MAGIA MULTI-SEDE INYECTADA: Filtramos los sabores disponibles también
+    const saboresDisp = state.productos.filter(p => p.categoria === 'sabor' && (!p.localId || p.localId === 'global' || p.localId === state.userLocalId));
+    
+    saboresDisp.forEach(j => {
         const dis = (j.stock !== null && j.stock <= 0) ? 'opacity-50 pointer-events-none line-through' : 'cursor-pointer hover:border-slate-500';
         html += `<div data-nombre="${j.nombre}" class="sabor-btn bg-slate-900 border border-slate-700 p-3 rounded-xl flex items-center gap-2 transition-colors ${dis}"><div class="check-icon w-4 h-4 rounded-full border border-slate-600 flex items-center justify-center"></div><span class="text-sm font-medium text-slate-300">${j.nombre}</span></div>`;
     });
     
-    c.innerHTML = html; document.getElementById('builder-count').textContent = '0';
+    c.innerHTML = html || '<p class="text-xs text-slate-500 col-span-2">No hay sabores disponibles en esta sede.</p>'; 
+    document.getElementById('builder-count').textContent = '0';
     const m = document.getElementById('modal-armar-vaso'); m.classList.remove('hidden'); setTimeout(() => m.classList.remove('opacity-0'), 10);
 }
 
@@ -256,15 +268,19 @@ async function procesarCobroFinal() {
 
     const tId = generateTicketId(); const hs = getTodayDateStr(); const cr = [...state.carrito];
     const esEditado = window.ticketEditadoOriginal === true; window.ticketEditadoOriginal = false;
+    
+    // MAGIA MULTI-SEDE INYECTADA
+    const idLocalSeguro = state.userLocalId || 'general';
 
     try {
         const bt = writeBatch(db);
-        bt.set(doc(db, "ventas", tId), { id: tId, fecha: serverTimestamp(), fechaStr: hs, items: cr, total: t, costoTotal: c, pagoEfectivo: pE, pagoYape: pY, metodoFinal: m, localId: state.userLocalId, localNombre: state.userLocal, cajeroEmail: state.currentUser.email, estado: 'pendiente', editado: esEditado });
-        bt.set(doc(db, "caja_diaria", hs + "_" + (state.userLocalId || 'general')), { localId: state.userLocalId, localNombre: state.userLocal, fechaStr: hs, total_ingresos: increment(t), total_costos: increment(c), total_efectivo: increment(pE), total_yape: increment(pY), cantidad_ventas: increment(1) }, { merge: true });
+        // Usamos compatibilidad hacia atrás en los nombres de variables (ej. costoTotal y costo_total) para no romper lecturas
+        bt.set(doc(db, "ventas", tId), { id: tId, fecha: serverTimestamp(), timestamp: serverTimestamp(), fechaStr: hs, items: cr, total: t, costoTotal: c, costo_total: c, pagoEfectivo: pE, pago_efectivo: pE, pagoYape: pY, pago_yape: pY, metodoFinal: m, metodo_pago: m, localId: idLocalSeguro, localNombre: state.userLocal, cajeroEmail: state.currentUser.email, estado: 'pendiente', editado: esEditado });
+        bt.set(doc(db, "caja_diaria", hs + "_" + idLocalSeguro), { localId: idLocalSeguro, localNombre: state.userLocal, fechaStr: hs, total_ingresos: increment(t), total_costos: increment(c), total_efectivo: increment(pE), total_yape: increment(pY), cantidad_ventas: increment(1) }, { merge: true });
         cr.forEach(i => { if(i.productoId !== 'AJUSTE') { const p = state.productos.find(x => x.id === i.productoId); if(p && p.stock !== null) bt.update(doc(db, "productos", p.id), { stock: increment(-i.cantidad) }); } });
         await bt.commit();
         
-        clearCart(); actualizarCarritoUI(); document.getElementById('input-paga-con').value = ''; document.getElementById('input-mixto-efectivo').value = ''; document.getElementById('input-mixto-yape').value = ''; document.getElementById('txt-vuelto').textContent = 'S/ 0.00';
+        window.clearCart(); actualizarCarritoUI(); document.getElementById('input-paga-con').value = ''; document.getElementById('input-mixto-efectivo').value = ''; document.getElementById('input-mixto-yape').value = ''; document.getElementById('txt-vuelto').textContent = 'S/ 0.00';
         if(window.mostrarToast) window.mostrarToast('Procesado', `Ticket #T-${tId.split('-')[1]} a la cola.`, 'emerald');
         if (typeof window.cargarInventarioDesdeFirebase === 'function') window.cargarInventarioDesdeFirebase();
     } catch (err) { 
