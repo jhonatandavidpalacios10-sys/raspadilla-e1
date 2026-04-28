@@ -3,24 +3,28 @@ import { state } from '../core/store.js'; import { getTodayDateStr } from '../ut
 
 let unsubscribePedidos = null;
 let pedidosInicializado = false;
+let pedidosGlobales = []; // Guarda todos los del día
+let filtroLocalPedidos = 'todas'; // Controlado por el Select de Admin
 
 export function initPedidos() { 
     if (pedidosInicializado) return;
     pedidosInicializado = true;
 
+    window.cambiarLocalPedidos = function(val) {
+        filtroLocalPedidos = val;
+        renderPedidosUI(); // Vuelve a dibujar con el nuevo filtro local en JS
+    };
+
     const listaPendientes = document.getElementById('pedidos-pendientes-list');
     if (listaPendientes) {
         listaPendientes.addEventListener('click', e => {
-            const btn = e.target.closest('button[data-action]');
-            if (!btn) return;
+            const btn = e.target.closest('button[data-action]'); if (!btn) return;
             const id = btn.dataset.id;
-
             if(btn.dataset.action === 'editar-pedido') editarPedido(id);
             else if(btn.dataset.action === 'despachar-pedido') actualizarEstadoPedido(id, 'listo');
             else if(btn.dataset.action === 'rechazar-pedido') actualizarEstadoPedido(id, 'rechazado');
         });
     }
-
     iniciarEscuchaPedidos(); 
 }
 
@@ -28,97 +32,76 @@ function iniciarEscuchaPedidos() {
     if(unsubscribePedidos) unsubscribePedidos();
     const hoy = getTodayDateStr(); 
     
+    // MAGIA: Traemos TODOS los del día sin importar el local. El filtro se hace en JS abajo.
     const q = query(collection(db, "ventas"), where("fechaStr", "==", hoy));
     
     unsubscribePedidos = onSnapshot(q, (snapshot) => {
-        let pendientes = [], listos = [];
-        
-        snapshot.forEach(d => { 
-            const v = d.data(); v.id = d.id; 
-            
-            if (state.userRole !== 'admin' && state.userRole !== 'master' && v.localId !== state.userLocalId) {
-                return; 
-            }
-
-            if(v.estado === 'pendiente') pendientes.push(v); 
-            else if (v.estado === 'listo' || v.estado === 'rechazado') listos.push(v); 
-        });
-        
-        pendientes.sort((a,b) => (a.fecha?.seconds || 0) - (b.fecha?.seconds || 0)); 
-        listos.sort((a,b) => (b.fecha?.seconds || 0) - (a.fecha?.seconds || 0));
-        
-        renderPedidos(pendientes, listos);
+        pedidosGlobales = [];
+        snapshot.forEach(d => { const v = d.data(); v.id = d.id; pedidosGlobales.push(v); });
+        renderPedidosUI();
     });
 }
 
-function renderPedidos(pendientes, listos) {
-    const listPen = document.getElementById('pedidos-pendientes-list'); const listLis = document.getElementById('pedidos-listos-list');
-    if(!listPen) return;
+function renderPedidosUI() {
+    let pendientes = [], listos = [];
     
-    document.getElementById('contador-pendientes').textContent = pendientes.length; document.getElementById('contador-listos').textContent = listos.length;
-    const badgeSidebar = document.getElementById('badge-pedidos'); if(badgeSidebar) { if(pendientes.length > 0) badgeSidebar.classList.remove('hidden'); else badgeSidebar.classList.add('hidden'); }
-
-    let hPen = '';
-    pendientes.forEach(p => {
-        let itemsHtml = '';
-        p.items.forEach(i => {
-            const sabTag = (i.sabores && i.sabores.length > 0) ? `<div class="flex flex-wrap gap-1 mt-1 ml-4">${i.sabores.map(s => `<span class="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded">${s}</span>`).join('')}</div>` : '';
-            itemsHtml += `<div class="mb-2"><p class="text-sm text-white font-bold"><span class="text-sky-400">${i.cantidad}x</span> ${i.nombre}</p>${sabTag}</div>`;
-        });
-        const safeId = p.id.includes('-') ? p.id.split('-')[1] : p.id;
+    pedidosGlobales.forEach(v => {
+        // FILTRO JS: Evita que ventas viejas sin localId se escondan mágicamente
+        const isAdmin = (state.userRole === 'admin' || state.userRole === 'master');
+        const miSedeId = state.userLocalId || ""; // El ID del vendedor
         
-        // Etiqueta de ESTRELLA Modificado si proviene de una edición
-        const badgeEditado = p.editado ? `<span class="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded font-bold ml-2 inline-flex items-center gap-1"><i data-lucide="star" class="w-3 h-3 fill-amber-400"></i> Modificado</span>` : '';
+        let mostrar = false;
+        if (isAdmin) {
+            // Admin ve lo que elija en el select. Si elige 'todas', ve TODO (incluso las viejas sin local)
+            mostrar = (filtroLocalPedidos === 'todas' || v.localId === filtroLocalPedidos);
+        } else {
+            // Vendedor ve solo las de su sede (O las que no tienen sede si es una BD vieja y queremos que se vea)
+            mostrar = (!v.localId || v.localId === miSedeId);
+        }
 
-        // Botones de acción para Vendedores y Admins
-        const actionButtons = `
-            <div class="grid grid-cols-2 gap-2 mt-4">
-                <button data-action="rechazar-pedido" data-id="${p.id}" class="py-2.5 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/50 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5"><i data-lucide="x-circle" class="w-4 h-4"></i> <span>Rechazar</span></button>
-                <button data-action="editar-pedido" data-id="${p.id}" class="py-2.5 bg-sky-600/20 hover:bg-sky-600 text-sky-400 hover:text-white border border-sky-500/50 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5"><i data-lucide="edit-2" class="w-4 h-4"></i> <span>Editar</span></button>
-                <button data-action="despachar-pedido" data-id="${p.id}" class="col-span-2 py-2.5 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/50 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5"><i data-lucide="check-circle-2" class="w-4 h-4"></i> <span>Despachar</span></button>
-            </div>
-        `;
-
-        hPen += `<div class="bg-slate-800 border-l-4 border-amber-500 p-4 rounded-r-xl shadow-lg relative mb-3"><div class="flex justify-between items-start mb-3"><div class="flex flex-col gap-1"><div class="flex items-center"><h4 class="text-xl font-black text-white">#${safeId}</h4>${badgeEditado}</div><span class="text-[10px] bg-slate-700 text-slate-300 px-2 py-0.5 rounded font-bold w-fit">${p.localNombre}</span></div></div><div class="space-y-2 bg-slate-900/50 p-3 rounded-lg border border-slate-700">${itemsHtml}</div>${actionButtons}</div>`;
+        if (mostrar) {
+            if (v.estado === 'pendiente') pendientes.push(v);
+            else if (v.estado === 'listo') listos.push(v);
+        }
     });
-    listPen.innerHTML = hPen || '<p class="text-xs text-slate-500 text-center py-4">No hay pedidos pendientes.</p>';
 
-    let hLis = '';
-    listos.slice(0, 15).forEach(p => {
-        const safeId = p.id.includes('-') ? p.id.split('-')[1] : p.id;
-        
-        let iconoEstado = '<i data-lucide="check-circle-2" class="w-5 h-5 text-emerald-500/50"></i>';
-        let textoEstado = 'Despachado';
-        
-        if(p.estado === 'rechazado') { iconoEstado = '<i data-lucide="x-circle" class="w-5 h-5 text-red-500/50"></i>'; textoEstado = 'Rechazado'; }
+    // Ordenar
+    pendientes.sort((a,b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
+    listos.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
 
-        hLis += `<div class="bg-slate-800/50 border border-slate-700 p-4 rounded-xl mb-3"><div class="flex justify-between items-center mb-1"><h4 class="text-base font-bold text-slate-500 line-through">#${safeId}</h4>${iconoEstado}</div><p class="text-[10px] text-slate-500">${p.items.length} productos • ${textoEstado}</p></div>`;
-    });
-    listLis.innerHTML = hLis || '<p class="text-xs text-slate-500 text-center py-4">Aún no se ha procesado nada.</p>';
-    if(window.lucide) window.lucide.createIcons();
+    document.getElementById('contador-pendientes').textContent = pendientes.length;
+    document.getElementById('contador-listos').textContent = listos.length;
+    
+    const lp = document.getElementById('pedidos-pendientes-list'); if(lp) lp.innerHTML = pendientes.map(v => generarHTMLPedido(v)).join('') || '<p class="text-xs text-slate-500 text-center py-4">No hay pedidos pendientes.</p>';
+    const ll = document.getElementById('pedidos-listos-list'); if(ll) ll.innerHTML = listos.map(v => generarHTMLPedido(v, true)).join('') || '<p class="text-xs text-slate-500 text-center py-4">No hay pedidos despachados.</p>';
+    if (window.lucide) window.lucide.createIcons();
 }
 
-async function actualizarEstadoPedido(idVenta, nuevoEstado) {
+function generarHTMLPedido(v, esListo = false) {
+    let iHtml = '';
+    v.items.forEach(i => { iHtml += `<div class="flex justify-between items-start mb-1 text-xs"><p class="text-white leading-tight pr-2"><span class="text-sky-400 font-bold">${i.cantidad}x</span> ${i.nombre}</p></div>`; });
+    const time = v.timestamp ? new Date(v.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
+    const num = v.id.split('-')[1] || '---';
+    const editBdge = v.editado ? `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] px-1 rounded uppercase font-bold ml-2 animate-pulse">Modificado</span>` : '';
+    
+    // Mostramos de qué local viene si eres admin
+    const badgeLocal = (state.userRole === 'admin' || state.userRole === 'master') && v.localNombre 
+        ? `<div class="text-[9px] text-slate-400 mt-1 uppercase font-bold"><i data-lucide="store" class="w-3 h-3 inline"></i> ${v.localNombre}</div>` 
+        : '';
+
+    let actionBtn = esListo ? '' : `<div class="flex gap-2 mt-3 pt-3 border-t border-slate-700/50"><button data-action="rechazar-pedido" data-id="${v.id}" class="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors border border-transparent hover:border-red-500/30" title="Rechazar y borrar"><i data-lucide="x" class="w-4 h-4"></i></button><button data-action="editar-pedido" data-id="${v.id}" class="p-2 text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 rounded-lg transition-colors border border-transparent hover:border-amber-500/30" title="Devolver a Caja"><i data-lucide="edit" class="w-4 h-4"></i></button><button data-action="despachar-pedido" data-id="${v.id}" class="flex-1 bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/50 hover:border-emerald-500 text-emerald-400 hover:text-white rounded-lg py-2 text-xs font-bold transition-all shadow-lg flex justify-center items-center gap-1"><i data-lucide="check-circle" class="w-4 h-4"></i> Despachar</button></div>`;
+
+    return `<div class="bg-slate-900 border border-slate-700 p-3 rounded-xl flex flex-col shadow-lg"><div class="flex justify-between items-start mb-2"><div class="flex items-center gap-2"><div class="bg-slate-800 text-slate-300 font-mono text-[10px] px-1.5 py-0.5 rounded border border-slate-700">#${num}</div><span class="text-[10px] text-slate-500 font-bold">${time}</span>${editBdge}</div></div>${badgeLocal}<div class="mb-1 mt-1 border-l-2 border-slate-700 pl-2">${iHtml}</div>${actionBtn}</div>`;
+}
+
+function actualizarEstadoPedido(idVenta, nuevoEstado) {
     if (nuevoEstado === 'rechazado') {
-        if(window.mostrarConfirmacion) {
-            window.mostrarConfirmacion(`¿Seguro que deseas marcar este pedido como RECHAZADO?`, async () => {
-                ejecutarCambioEstado(idVenta, nuevoEstado);
-            });
-        } else { ejecutarCambioEstado(idVenta, nuevoEstado); }
-    } else {
-        ejecutarCambioEstado(idVenta, nuevoEstado);
-    }
+        if(window.mostrarConfirmacion) window.mostrarConfirmacion(`¿Rechazar y OCULTAR?`, async () => { ejecutarCambioEstado(idVenta, nuevoEstado); });
+    } else { ejecutarCambioEstado(idVenta, nuevoEstado); }
 }
 
 async function ejecutarCambioEstado(idVenta, nuevoEstado) {
-    try { 
-        await updateDoc(doc(db, "ventas", idVenta), { 
-            estado: nuevoEstado,
-            modificadoPor: state.currentUser.email,
-            fechaModificacion: new Date().toISOString()
-        }); 
-        if(window.mostrarToast) window.mostrarToast('Actualizado', `Pedido ${nuevoEstado}`, nuevoEstado === 'listo' ? 'emerald' : 'amber'); 
-    } catch(e) { console.error(e); }
+    try { await updateDoc(doc(db, "ventas", idVenta), { estado: nuevoEstado, modificadoPor: state.currentUser.email, fechaModificacion: new Date().toISOString() }); if(window.mostrarToast) window.mostrarToast('Actualizado', `Pedido ${nuevoEstado}`, nuevoEstado === 'listo' ? 'emerald' : 'amber'); } catch(e) {}
 }
 
 async function editarPedido(idVenta) {
@@ -127,12 +110,10 @@ async function editarPedido(idVenta) {
         try {
             const r = doc(db, "ventas", idVenta); const s = await getDoc(r);
             if(s.exists()) {
-                state.carrito = s.data().items; 
-                window.ticketEditadoOriginal = true; // Activa la bandera de Modificado para la siguiente venta
-                await deleteDoc(r);
+                state.carrito = s.data().items; window.ticketEditadoOriginal = true; await deleteDoc(r);
                 if (window.actualizarCarritoUI) window.actualizarCarritoUI(); window.switchView('ventas');
-                if(window.mostrarToast) window.mostrarToast('En Caja', 'Modifica el pedido.', 'sky');
+                if(window.mostrarToast) window.mostrarToast('En Caja', 'Edita y vuelve a cobrar.', 'sky');
             }
-        } catch(err) { console.error(err); }
+        } catch(e) {}
     });
 }
