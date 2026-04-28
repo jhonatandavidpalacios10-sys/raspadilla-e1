@@ -11,34 +11,27 @@ export function initAuth() {
         const loginScreen = document.getElementById('login-screen'); 
         const appContainer = document.getElementById('app-container');
         
-        // Limpiar escuchadores anteriores si existen
         if (userUnsubscribe) { userUnsubscribe(); userUnsubscribe = null; }
         if (sysUnsubscribe) { sysUnsubscribe(); sysUnsubscribe = null; }
 
-        // 1. Escuchar el estado de Pago/Bloqueo y LOGO GLOBAL del sistema
+        // 1. Escuchar el estado del sistema y el LOGO GLOBAL
         sysUnsubscribe = onSnapshot(doc(db, "configuracion", "estado_sistema"), (sysDoc) => {
             if (sysDoc.exists()) {
                 const data = sysDoc.data();
                 isSystemLocked = data.cerrado === true;
                 
-                // ACTUALIZACIÓN DE LOGO EN TIEMPO REAL
-                if (data.logoUrl) {
-                    actualizarLogoGlobal(data.logoUrl);
-                }
+                if (data.logoUrl) actualizarLogoGlobal(data.logoUrl);
             } else {
                 isSystemLocked = false;
             }
             
-            // Si hay un usuario logueado, re-verificamos su acceso por si acabas de apagar/encender el sistema
-            if (state.currentUser) {
-                verificarBloqueoSistema(state.currentUser);
-            }
+            if (state.currentUser) verificarBloqueoSistema(state.currentUser);
         });
 
         if (user) {
             state.currentUser = user;
 
-            // 2. Escucha en TIEMPO REAL los cambios en tu propio documento de usuario
+            // 2. Escucha en TIEMPO REAL los permisos y rol
             userUnsubscribe = onSnapshot(doc(db, "usuarios", user.uid), async (userDoc) => {
                 let r = 'vendedor', l = 'Sin Local', lId = '';
                 let userData = null;
@@ -50,91 +43,77 @@ export function initAuth() {
                     lId = userData.localId || ''; 
                 }
                 
-                // Si eres el DUEÑO PRINCIPAL, tu rol está blindado por código
                 if (user.uid === MASTER_UID) { r = 'master'; l = 'Dueño Supremo'; }
                 
                 state.userRole = r; state.userLocal = l; state.userLocalId = lId;
                 
-                // Actualizar nombres en la pantalla
                 ['user-local-display', 'user-local-display-desktop', 'user-local-display-mobile'].forEach(id => { 
                     const el = document.getElementById(id); 
                     if(el) el.textContent = `${l} - ${user.email.split('@')[0]}`; 
                 });
                 
-                // Refrescar qué menús puedes ver en ese exacto segundo
                 aplicarPermisosVisuales(userData);
-                verificarBloqueoSistema(user); // RE-VERIFICAR CUANDO SE CARGA EL ROL EXACTO
+                verificarBloqueoSistema(user);
             });
 
-            // Asegurar que el usuario exista en la BD (último acceso)
             await setDoc(doc(db, "usuarios", user.uid), { email: user.email, ultimoAcceso: new Date().toISOString() }, { merge: true });
             
             if(loginScreen && appContainer) { 
                 loginScreen.classList.add('opacity-0'); 
                 setTimeout(() => { 
                     loginScreen.classList.add('hidden'); 
-                    // Delegamos la visualización final a verificarBloqueoSistema
                     verificarBloqueoSistema(user);
                 }, 300); 
             }
         } else {
             state.currentUser = null; state.userRole = null;
-            quitarError404(); // Resetear el bloqueo si se cierra sesión
+            quitarError404();
             if(loginScreen && appContainer) { 
                 appContainer.classList.add('opacity-0'); 
-                setTimeout(() => { appContainer.classList.add('hidden'); loginScreen.classList.remove('hidden'); setTimeout(() => loginScreen.classList.remove('opacity-0'), 50); }, 300); 
+                setTimeout(() => { 
+                    appContainer.classList.add('hidden'); 
+                    loginScreen.classList.remove('hidden'); 
+                    setTimeout(() => loginScreen.classList.remove('opacity-0'), 50); 
+                }, 300); 
             }
         }
     });
 }
 
-// ==========================================
-// NUEVA FUNCIÓN: ACTUALIZADOR DE LOGO GLOBAL
-// ==========================================
 function actualizarLogoGlobal(url) {
-    // 1. Cambiar los logos principales (Login y Cabecera Móvil)
     const logosImg = document.querySelectorAll('img[alt="IcePOS Logo"], img[alt="IcePOS"]');
     logosImg.forEach(img => {
-        img.src = url;
-        img.style.objectFit = 'contain';
-        // Quitar la sombra celeste que venía por defecto si el logo tiene su propio diseño
+        img.src = url; img.style.objectFit = 'contain';
         img.classList.remove('drop-shadow-[0_0_15px_rgba(14,165,233,0.3)]');
+        if(img.parentElement.classList.contains('bg-sky-500/20')) {
+            img.parentElement.classList.replace('bg-sky-500/20', 'bg-transparent');
+        }
     });
-
-    // 2. Cambiar el ícono de copo de nieve del menú lateral de PC por el logo
-    const sidebarLogoContainer = document.querySelector('.bg-sky-600.rounded-xl.items-center.justify-center.mb-6');
-    if (sidebarLogoContainer) {
-        sidebarLogoContainer.innerHTML = `<img src="${url}" class="w-full h-full object-contain p-1 drop-shadow-md" alt="Logo Franquicia">`;
-        sidebarLogoContainer.classList.replace('bg-sky-600', 'bg-transparent'); 
-        sidebarLogoContainer.classList.remove('shadow-lg', 'shadow-sky-500/30');
+    const sidebarIcon = document.querySelector('nav .bg-sky-600.rounded-xl i[data-lucide="snowflake"]');
+    if (sidebarIcon) {
+        const container = sidebarIcon.parentElement;
+        container.innerHTML = `<img src="${url}" class="w-full h-full object-contain p-1" alt="Logo">`;
+        container.classList.replace('bg-sky-600', 'bg-transparent');
+        container.classList.remove('shadow-lg', 'shadow-sky-500/30');
     }
 }
 
-// Función que inyecta la pantalla técnica de Error si el sistema está cerrado
 async function verificarBloqueoSistema(user) {
     const appContainer = document.getElementById('app-container');
     const loginScreen = document.getElementById('login-screen');
-    
-    // Comprobación de seguridad primaria
     let isMaster = (user.uid === MASTER_UID) || (String(state.userRole).trim().toLowerCase() === 'master');
 
-    // Si la pantalla de login aún no se oculta, no hacer transiciones para evitar parpadeos
     if (loginScreen && !loginScreen.classList.contains('hidden')) return;
 
-    // DOBLE VERIFICACIÓN: Si el sistema está bloqueado pero state.userRole no cargó a tiempo, consultamos directo a la BD.
     if (isSystemLocked && !isMaster) {
         try {
             const userDoc = await getDoc(doc(db, "usuarios", user.uid));
             if (userDoc.exists() && String(userDoc.data().rol).trim().toLowerCase() === 'master') {
-                isMaster = true;
-                state.userRole = 'master'; // Sincroniza y salva la sesión
+                isMaster = true; state.userRole = 'master';
             }
-        } catch (error) {
-            console.error("Error al re-verificar rol maestro:", error);
-        }
+        } catch (error) {}
     }
     
-    // Si está bloqueado y DEFINITIVAMENTE NO es la cuenta Master, mostramos el Error de Servidor (503)
     if (isSystemLocked && !isMaster) {
         mostrarError404();
     } else {
@@ -149,101 +128,46 @@ async function verificarBloqueoSistema(user) {
 function mostrarError404() {
     let errorDiv = document.getElementById('error-404-screen');
     if (!errorDiv) {
-        errorDiv = document.createElement('div');
-        errorDiv.id = 'error-404-screen';
-        // Diseño que simula una desconexión crítica del servidor en la nube
+        errorDiv = document.createElement('div'); errorDiv.id = 'error-404-screen';
         errorDiv.className = 'fixed inset-0 z-[300] bg-[#090b14] flex flex-col items-center justify-center text-center p-6 transition-opacity duration-300';
         errorDiv.innerHTML = `
-            <div class="flex flex-col items-center max-w-lg text-center font-sans">
-                <div class="mb-8 relative">
-                    <div class="absolute inset-0 bg-red-600 blur-[60px] opacity-20 rounded-full animate-pulse"></div>
-                    <svg class="w-32 h-32 text-slate-800 relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path>
-                    </svg>
-                    <div class="absolute bottom-4 right-4 bg-[#090b14] rounded-full p-1 border-4 border-[#090b14] z-20">
-                        <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                    </div>
-                </div>
-                
+            <div class="flex flex-col items-center max-w-lg font-sans">
+                <div class="mb-8 relative"><div class="absolute inset-0 bg-red-600 blur-[60px] opacity-20 rounded-full animate-pulse"></div><svg class="w-32 h-32 text-slate-800 relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg><div class="absolute bottom-4 right-4 bg-[#090b14] rounded-full p-1 border-4 border-[#090b14] z-20"><svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width=\"2.5\" d=\"M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z\"></path></svg></div></div>
                 <h1 class="text-4xl md:text-5xl font-black text-white mb-4 tracking-tight drop-shadow-md">503 Service Unavailable</h1>
-                
-                <div class="bg-slate-900/50 border border-slate-800 rounded-xl p-6 w-full text-left mb-8 shadow-2xl backdrop-blur-sm">
-                    <p class="text-red-400 font-mono text-sm mb-3 flex items-center gap-2">
-                        <span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
-                        ERR_CONNECTION_TIMED_OUT
-                    </p>
-                    <p class="text-slate-400 text-sm leading-relaxed mb-4">No se pudo establecer conexión con los servidores principales. El nodo de la base de datos ha rechazado la solicitud por tiempo de espera agotado o problemas de enrutamiento en la red.</p>
-                    <div class="pt-4 border-t border-slate-800/80 bg-slate-950/30 p-3 rounded-lg">
-                        <p class="text-xs text-slate-500 font-mono leading-relaxed">
-                            Host: api.db-cluster-south.com<br>
-                            Status: <span class="text-red-500">Disconnected (Code 404)</span><br>
-                            Timeout: 30000ms<br>
-                            Trace ID: ${Math.random().toString(36).substr(2, 9).toUpperCase()}
-                        </p>
-                    </div>
-                </div>
-                
-                <button id="btn-logout-404" class="px-8 py-3.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl font-bold border border-slate-700 transition-colors shadow-lg flex items-center gap-2">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-                    Volver e intentar de nuevo
-                </button>
+                <div class="bg-slate-900/50 border border-slate-800 rounded-xl p-6 w-full text-left mb-8 shadow-2xl backdrop-blur-sm"><p class="text-red-400 font-mono text-sm mb-3 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>ERR_CONNECTION_TIMED_OUT</p><p class="text-slate-400 text-sm leading-relaxed mb-4">No se pudo establecer conexión con los servidores principales. El nodo de la base de datos ha rechazado la solicitud por tiempo de espera agotado o problemas de enrutamiento en la red.</p><div class="pt-4 border-t border-slate-800/80 bg-slate-950/30 p-3 rounded-lg"><p class="text-xs text-slate-500 font-mono leading-relaxed">Host: api.db-cluster-south.com<br>Status: <span class="text-red-500">Disconnected (Code 404)</span><br>Timeout: 30000ms<br>Trace ID: ${Math.random().toString(36).substr(2, 9).toUpperCase()}</p></div></div>
+                <button id="btn-logout-404" class="px-8 py-3.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl font-bold border border-slate-700 transition-colors shadow-lg flex items-center gap-2"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>Volver e intentar de nuevo</button>
             </div>
         `;
         document.body.appendChild(errorDiv);
         document.getElementById('btn-logout-404').addEventListener('click', logout);
     }
-    errorDiv.classList.remove('hidden');
-    document.getElementById('app-container')?.classList.add('hidden');
-    document.getElementById('app-container')?.classList.add('opacity-0');
+    errorDiv.classList.remove('hidden'); document.getElementById('app-container')?.classList.add('hidden'); document.getElementById('app-container')?.classList.add('opacity-0');
 }
 
-function quitarError404() {
-    const errorDiv = document.getElementById('error-404-screen');
-    if (errorDiv) {
-        errorDiv.classList.add('hidden');
-    }
-}
+function quitarError404() { document.getElementById('error-404-screen')?.classList.add('hidden'); }
 
 function aplicarPermisosVisuales(userDocData) {
     const r = state.userRole;
     const permisosVendedor = userDocData?.permisos || []; 
-
-    const views = {
-        'nav-ventas': document.getElementById('nav-ventas'),
-        'nav-pedidos': document.getElementById('nav-pedidos'),
-        'nav-inventario': document.getElementById('nav-inventario'),
-        'nav-caja': document.getElementById('nav-caja'),
-        'nav-analisis': document.getElementById('nav-analisis'),
-        'nav-usuarios': document.getElementById('nav-usuarios'),
-        'nav-respaldo': document.getElementById('nav-respaldo')
-    };
+    const views = { 'nav-ventas': document.getElementById('nav-ventas'), 'nav-pedidos': document.getElementById('nav-pedidos'), 'nav-inventario': document.getElementById('nav-inventario'), 'nav-caja': document.getElementById('nav-caja'), 'nav-analisis': document.getElementById('nav-analisis'), 'nav-usuarios': document.getElementById('nav-usuarios'), 'nav-respaldo': document.getElementById('nav-respaldo') };
 
     if (r === 'master') {
         Object.values(views).forEach(v => v && v.classList.remove('hidden'));
-    } 
-    else if (r === 'admin' || r === 'Administrador') {
+    } else if (r === 'admin' || r === 'Administrador') {
         Object.values(views).forEach(v => v && v.classList.remove('hidden'));
         if (views['nav-respaldo']) views['nav-respaldo'].classList.add('hidden');
-        
         const viewRespaldo = document.getElementById('view-respaldo');
         if (viewRespaldo && !viewRespaldo.classList.contains('hidden')) window.switchView('ventas');
-    } 
-    else {
+    } else {
         const defaultVendedor = ['nav-ventas', 'nav-pedidos', 'nav-inventario'];
-        
         for (const [id, el] of Object.entries(views)) {
             if (!el) continue;
-            
             const hasAccess = permisosVendedor.length > 0 ? permisosVendedor.includes(id) : defaultVendedor.includes(id);
-            
-            if (hasAccess) {
-                el.classList.remove('hidden');
-            } else {
+            if (hasAccess) el.classList.remove('hidden');
+            else {
                 el.classList.add('hidden');
                 const viewSection = document.getElementById(id.replace('nav-', 'view-'));
-                if (viewSection && !viewSection.classList.contains('hidden')) {
-                    window.switchView('ventas');
-                }
+                if (viewSection && !viewSection.classList.contains('hidden')) window.switchView('ventas');
             }
         }
     }
