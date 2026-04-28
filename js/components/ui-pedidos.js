@@ -4,15 +4,16 @@ import { state } from '../core/store.js'; import { getTodayDateStr } from '../ut
 let unsubscribePedidos = null;
 let pedidosInicializado = false;
 let pedidosGlobales = []; // Guarda todos los del día
-let filtroLocalPedidos = 'todas'; // Controlado por el Select de Admin
+let filtroLocalPedidos = 'todas'; // Controlado por el Select del Master/Admin
 
 export function initPedidos() { 
     if (pedidosInicializado) return;
     pedidosInicializado = true;
 
+    // Asignar función global para el evento "change" del select
     window.cambiarLocalPedidos = function(val) {
         filtroLocalPedidos = val;
-        renderPedidosUI(); // Vuelve a dibujar con el nuevo filtro local en JS
+        renderPedidosUI(); // Solo actualiza la vista (no gasta lecturas en Firestore)
     };
 
     const listaPendientes = document.getElementById('pedidos-pendientes-list');
@@ -32,7 +33,7 @@ function iniciarEscuchaPedidos() {
     if(unsubscribePedidos) unsubscribePedidos();
     const hoy = getTodayDateStr(); 
     
-    // MAGIA: Traemos TODOS los del día sin importar el local. El filtro se hace en JS abajo.
+    // MAGIA: Traemos TODOS los pedidos del día a la RAM
     const q = query(collection(db, "ventas"), where("fechaStr", "==", hoy));
     
     unsubscribePedidos = onSnapshot(q, (snapshot) => {
@@ -46,16 +47,16 @@ function renderPedidosUI() {
     let pendientes = [], listos = [];
     
     pedidosGlobales.forEach(v => {
-        // FILTRO JS: Evita que ventas viejas sin localId se escondan mágicamente
+        // FILTRO JS MULTI-SEDE
         const isAdmin = (state.userRole === 'admin' || state.userRole === 'master');
-        const miSedeId = state.userLocalId || ""; // El ID del vendedor
+        const miSedeId = state.userLocalId || ""; 
         
         let mostrar = false;
         if (isAdmin) {
-            // Admin ve lo que elija en el select. Si elige 'todas', ve TODO (incluso las viejas sin local)
+            // Admin ve lo que elija en el select. Si elige 'todas', ve TODO.
             mostrar = (filtroLocalPedidos === 'todas' || v.localId === filtroLocalPedidos);
         } else {
-            // Vendedor ve solo las de su sede (O las que no tienen sede si es una BD vieja y queremos que se vea)
+            // Vendedor ve solo las de su sede (O las que no tienen sede por si son viejas)
             mostrar = (!v.localId || v.localId === miSedeId);
         }
 
@@ -65,7 +66,6 @@ function renderPedidosUI() {
         }
     });
 
-    // Ordenar
     pendientes.sort((a,b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
     listos.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
 
@@ -84,10 +84,7 @@ function generarHTMLPedido(v, esListo = false) {
     const num = v.id.split('-')[1] || '---';
     const editBdge = v.editado ? `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] px-1 rounded uppercase font-bold ml-2 animate-pulse">Modificado</span>` : '';
     
-    // Mostramos de qué local viene si eres admin
-    const badgeLocal = (state.userRole === 'admin' || state.userRole === 'master') && v.localNombre 
-        ? `<div class="text-[9px] text-slate-400 mt-1 uppercase font-bold"><i data-lucide="store" class="w-3 h-3 inline"></i> ${v.localNombre}</div>` 
-        : '';
+    const badgeLocal = (state.userRole === 'admin' || state.userRole === 'master') && v.localNombre ? `<div class="text-[9px] text-slate-400 mt-1 uppercase font-bold"><i data-lucide="store" class="w-3 h-3 inline"></i> ${v.localNombre}</div>` : '';
 
     let actionBtn = esListo ? '' : `<div class="flex gap-2 mt-3 pt-3 border-t border-slate-700/50"><button data-action="rechazar-pedido" data-id="${v.id}" class="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors border border-transparent hover:border-red-500/30" title="Rechazar y borrar"><i data-lucide="x" class="w-4 h-4"></i></button><button data-action="editar-pedido" data-id="${v.id}" class="p-2 text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 rounded-lg transition-colors border border-transparent hover:border-amber-500/30" title="Devolver a Caja"><i data-lucide="edit" class="w-4 h-4"></i></button><button data-action="despachar-pedido" data-id="${v.id}" class="flex-1 bg-emerald-600/20 hover:bg-emerald-600 border border-emerald-500/50 hover:border-emerald-500 text-emerald-400 hover:text-white rounded-lg py-2 text-xs font-bold transition-all shadow-lg flex justify-center items-center gap-1"><i data-lucide="check-circle" class="w-4 h-4"></i> Despachar</button></div>`;
 
