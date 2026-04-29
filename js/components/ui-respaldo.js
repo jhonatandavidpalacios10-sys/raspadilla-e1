@@ -3,17 +3,19 @@ import { db, collection, getDocs, doc, writeBatch, setDoc, getDoc, onSnapshot } 
 let sysEstadoUnsubscribe = null;
 
 export function initRespaldo() { 
-    // Botones de Backup
     document.getElementById('btn-exportar-backup')?.addEventListener('click', exportBackup);
     document.getElementById('btn-importar-backup')?.addEventListener('click', () => {
         document.getElementById('importFileInput').click();
     });
     document.getElementById('importFileInput')?.addEventListener('change', handleImportBackup);
 
-    // Botón Global de Control de Servidor (Master)
+    // Funciones globales expuestas para el HTML
     window.toggleSistemaLock = toggleSistemaLock;
+    window.subirLogoApp = subirLogoApp;
+    window.resetLogoApp = resetLogoApp;
+    window.cambiarNombreApp = cambiarNombreApp;
 
-    // Escuchar el estado actual para iluminar el botón del Master en tiempo real
+    // Escuchar el estado actual para UI Master
     if (sysEstadoUnsubscribe) sysEstadoUnsubscribe();
     sysEstadoUnsubscribe = onSnapshot(doc(db, "configuracion", "estado_sistema"), (docSnap) => {
         const btn = document.getElementById('btn-toggle-sistema');
@@ -22,63 +24,124 @@ export function initRespaldo() {
         if (!btn || !txt) return;
 
         if (docSnap.exists() && docSnap.data().cerrado === true) {
-            // Diseño de SISTEMA CAÍDO
             txt.textContent = "Desconectado (Error 503)";
-            txt.className = "text-sm font-bold text-red-500 animate-pulse";
-            
-            btn.innerHTML = '<i data-lucide="power" class="w-5 h-5"></i> Reactivar Conexión de Red';
+            txt.className = "text-xs font-bold text-red-500 animate-pulse";
+            btn.innerHTML = '<i data-lucide="power" class="w-5 h-5"></i> Reactivar Conexión';
             btn.className = "w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex justify-center items-center gap-2 relative z-10 shadow-lg shadow-emerald-500/20";
         } else {
-            // Diseño de SISTEMA EN LÍNEA
             txt.textContent = "En Línea";
-            txt.className = "text-sm font-bold text-emerald-400";
-            
-            btn.innerHTML = '<i data-lucide="alert-octagon" class="w-5 h-5"></i> Suspender Sistema';
+            txt.className = "text-xs font-bold text-emerald-400";
+            btn.innerHTML = '<i data-lucide="alert-octagon" class="w-5 h-5"></i> Suspender';
             btn.className = "w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold flex justify-center items-center gap-2 relative z-10 shadow-lg shadow-red-500/20";
         }
         if (window.lucide) window.lucide.createIcons();
     });
 }
 
-// Función que escribe en Firebase el estado de cerrado o abierto para provocar el Error 404/503
+// -----------------------------------------------------
+// NOMBRE Y LOGO (IDENTIDAD CORPORATIVA)
+// -----------------------------------------------------
+
+async function cambiarNombreApp() {
+    const inputNombre = document.getElementById('input-nombre-app');
+    if(!inputNombre) return;
+    
+    const nuevoNombre = inputNombre.value.trim();
+    if (!nuevoNombre) {
+        if(window.mostrarToast) window.mostrarToast("Error", "Ingresa un nombre válido.", "amber");
+        return;
+    }
+
+    const btn = document.getElementById('btn-cambiar-nombre');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Guardando...';
+    if(window.lucide) window.lucide.createIcons();
+    btn.disabled = true;
+
+    try {
+        await setDoc(doc(db, "configuracion", "estado_sistema"), { 
+            nombreApp: nuevoNombre,
+            fechaNombre: new Date().toISOString()
+        }, { merge: true });
+
+        if(window.mostrarToast) window.mostrarToast("Éxito", "Nombre de aplicación actualizado globalmente.", "emerald");
+        inputNombre.value = ''; // Limpiar el input
+    } catch (err) {
+        console.error(err);
+        if(window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo guardar el nombre.", "red");
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        if(window.lucide) window.lucide.createIcons();
+    }
+}
+
+async function subirLogoApp(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 800 * 1024) {
+        if(window.mostrarAlerta) window.mostrarAlerta("Imagen muy pesada", "El logo debe pesar menos de 800KB para guardarse gratuitamente.", "amber");
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+        const base64 = event.target.result;
+        try {
+            if(window.mostrarToast) window.mostrarToast("Procesando", "Actualizando imagen corporativa...", "sky");
+            await setDoc(doc(db, "configuracion", "estado_sistema"), { 
+                logoUrl: base64,
+                fechaLogo: new Date().toISOString()
+            }, { merge: true });
+            if(window.mostrarToast) window.mostrarToast("Éxito", "Logo actualizado globalmente", "emerald");
+        } catch (err) {
+            console.error(err);
+            if(window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo guardar la imagen.", "red");
+        }
+    };
+    reader.readAsDataURL(file);
+}
+
+async function resetLogoApp() {
+    if(!window.mostrarConfirmacion) return;
+    window.mostrarConfirmacion("¿Restaurar el nombre y logo originales del sistema?", async () => {
+        await setDoc(doc(db, "configuracion", "estado_sistema"), { 
+            logoUrl: "assets/img/logo.svg",
+            nombreApp: "IcePOS"
+        }, { merge: true });
+        window.location.reload();
+    });
+}
+
+// -----------------------------------------------------
+// BLOQUEO 503
+// -----------------------------------------------------
 async function toggleSistemaLock() {
     if(!window.mostrarConfirmacion) return;
-    
     const ref = doc(db, "configuracion", "estado_sistema");
     const snap = await getDoc(ref);
     let isCurrentlyClosed = false;
     
-    if (snap.exists()) {
-        isCurrentlyClosed = snap.data().cerrado;
-    }
+    if (snap.exists()) isCurrentlyClosed = snap.data().cerrado;
 
     const mensajeAlerta = isCurrentlyClosed 
-        ? "¿Reconectar los servidores? Todos los dispositivos en las franquicias volverán a tener acceso al sistema inmediatamente."
-        : "¿Estás seguro de provocar un Error de Conexión? Esto expulsará a TODOS los vendedores y administradores en todos los locales, mostrando una pantalla técnica de error. Solo tú (Dueño Supremo) podrás seguir usando el sistema.";
+        ? "¿Reconectar los servidores? Todos los dispositivos volverán a tener acceso al sistema inmediatamente."
+        : "¿Estás seguro de provocar un Error de Conexión? Esto expulsará a TODOS en todos los locales. Solo tú podrás seguir usando el sistema.";
 
     window.mostrarConfirmacion(mensajeAlerta, async () => {
         try {
-            await setDoc(ref, { 
-                cerrado: !isCurrentlyClosed,
-                fechaModificacion: new Date().toISOString()
-            }, { merge: true });
-            
-            if(window.mostrarToast) {
-                window.mostrarToast(
-                    "Estado de Red Modificado", 
-                    !isCurrentlyClosed ? "El sistema ha sido bloqueado en todas las franquicias." : "Servidores restaurados con éxito.", 
-                    !isCurrentlyClosed ? "amber" : "emerald"
-                );
-            }
+            await setDoc(ref, { cerrado: !isCurrentlyClosed, fechaModificacion: new Date().toISOString() }, { merge: true });
+            if(window.mostrarToast) window.mostrarToast("Estado Modificado", !isCurrentlyClosed ? "Sistema bloqueado globalmente." : "Servidores restaurados.", !isCurrentlyClosed ? "amber" : "emerald");
         } catch (error) {
-            console.error(error);
-            if(window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo comunicar el cambio a los servidores.", "red");
+            if(window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo comunicar con los servidores.", "red");
         }
     });
 }
 
-// --- LOGICA NORMAL DE BACKUP ---
-
+// -----------------------------------------------------
+// BACKUP Y RESTAURACIÓN
+// -----------------------------------------------------
 async function exportBackup() {
     const chkInv = document.getElementById('chkExpInv')?.checked; 
     const chkVentas = document.getElementById('chkExpVentas')?.checked; 
@@ -106,14 +169,13 @@ async function exportBackup() {
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData));
         const downloadAnchorNode = document.createElement('a');
         downloadAnchorNode.setAttribute("href",     dataStr);
-        downloadAnchorNode.setAttribute("download", `IcePOS_Backup_${new Date().toISOString().split('T')[0]}.json`);
+        downloadAnchorNode.setAttribute("download", `Backup_${new Date().toISOString().split('T')[0]}.json`);
         document.body.appendChild(downloadAnchorNode);
         downloadAnchorNode.click();
         downloadAnchorNode.remove();
         
-        if(window.mostrarToast) window.mostrarToast('Éxito', 'Archivo descargado en tu dispositivo', 'emerald');
+        if(window.mostrarToast) window.mostrarToast('Éxito', 'Archivo descargado', 'emerald');
     } catch (e) {
-        console.error(e);
         if(window.mostrarAlerta) window.mostrarAlerta('Error Crítico', 'No se pudo generar el archivo.', 'red');
     }
 }
