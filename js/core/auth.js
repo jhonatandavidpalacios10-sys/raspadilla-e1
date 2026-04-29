@@ -28,6 +28,9 @@ export function initAuth() {
             }
             
             if (state.currentUser) verificarBloqueoSistema(state.currentUser);
+        }, (error) => {
+            console.warn("Aviso: No se pudo leer configuración global.", error);
+            isSystemLocked = false;
         });
 
         if (user) {
@@ -56,9 +59,16 @@ export function initAuth() {
                 
                 aplicarPermisosVisuales(userData);
                 verificarBloqueoSistema(user);
+            }, (error) => {
+                console.warn("Aviso: No se pudo leer perfil de usuario.", error);
             });
 
-            await setDoc(doc(db, "usuarios", user.uid), { email: user.email, ultimoAcceso: new Date().toISOString() }, { merge: true });
+            // FIX: Envolver en Try/Catch. Si un Vendedor no tiene permiso de escritura, se ignora y el Login avanza.
+            try {
+                await setDoc(doc(db, "usuarios", user.uid), { email: user.email, ultimoAcceso: new Date().toISOString() }, { merge: true });
+            } catch (err) {
+                console.warn("Registro de último acceso denegado (Seguridad Firebase activa).", err);
+            }
             
             if(loginScreen && appContainer) { 
                 loginScreen.classList.add('opacity-0'); 
@@ -101,10 +111,7 @@ function actualizarLogoGlobal(url) {
 }
 
 function actualizarNombreAppGlobal(nombre) {
-    // Cambia el título de la pestaña del navegador
     document.title = `${nombre} - Sistema Franquicias`;
-    
-    // Cambia todos los textos en la interfaz que tengan la clase .app-name-display (Agregaremos esta clase en el index luego)
     const appNameElements = document.querySelectorAll('.app-name-display');
     appNameElements.forEach(el => el.textContent = nombre);
 }
