@@ -19,25 +19,19 @@ export function initAnalisis() {
     document.getElementById('filterStartDate').value = d.toISOString().split('T')[0]; 
     document.getElementById('filterEndDate').value = d.toISOString().split('T')[0];
     
-    // Inyectar opciones de filtro de Locales (Solo Admin/Master)
-    const sel = document.getElementById('analisisLocalFilter');
-    if(sel && state.locales) {
-        if (state.userRole === 'admin' || state.userRole === 'master') {
-            let op = '<option value="todas">Todas las Sedes</option>';
-            state.locales.forEach(l => op += `<option value="${l.id}">${l.nombre}</option>`);
-            sel.innerHTML = op;
-            sel.classList.remove('hidden');
-        } else {
-            // Vendedores no ven el filtro, se auto-aplica su local
-            sel.innerHTML = `<option value="${state.userLocalId}">${state.userLocal}</option>`;
-            sel.classList.add('hidden');
-        }
-    }
+    // El select de locales es llenado automáticamente por ui-usuarios.js
 
     // Eventos
     document.getElementById('filterStartDate')?.addEventListener('change', updateAnalysisRange);
     document.getElementById('filterEndDate')?.addEventListener('change', updateAnalysisRange);
     document.getElementById('analisisLocalFilter')?.addEventListener('change', updateAnalysisRange);
+    
+    document.getElementById('btn-filtro-hoy')?.addEventListener('click', () => setAnalysisRange('hoy'));
+    document.getElementById('btn-filtro-semana')?.addEventListener('click', () => setAnalysisRange('semana'));
+    document.getElementById('btn-filtro-mes')?.addEventListener('click', () => setAnalysisRange('mes'));
+    
+    document.getElementById('btn-mes-prev')?.addEventListener('click', () => changeAnalysisMonth(-1));
+    document.getElementById('btn-mes-next')?.addEventListener('click', () => changeAnalysisMonth(1));
 
     updateAnalysisRange(); 
 }
@@ -46,7 +40,6 @@ async function updateAnalysisRange() {
     const fS = document.getElementById('filterStartDate').value; 
     const fE = document.getElementById('filterEndDate').value;
     
-    // El filtro aplica el valor seleccionado para admins, o el local del vendedor
     let lF = document.getElementById('analisisLocalFilter')?.value || 'todas';
     if (state.userRole === 'vendedor') {
         lF = state.userLocalId || '';
@@ -54,7 +47,6 @@ async function updateAnalysisRange() {
 
     if (!fS || !fE) return;
 
-    // Mostrar loader temporal
     const cSum = document.getElementById('analysisRangeSummary');
     if(cSum) cSum.innerHTML = '<div class="col-span-4 text-center py-2"><i data-lucide="loader-2" class="w-5 h-5 animate-spin mx-auto text-sky-500"></i></div>';
     if(window.lucide) window.lucide.createIcons();
@@ -68,28 +60,40 @@ async function updateAnalysisRange() {
         analysisData = []; 
         analysisGastos = [];
         
-        // Procesar ventas (Ignoramos las rechazadas/anuladas)
+        // Procesar ventas asegurando compatibilidad con registros antiguos sin local
         sV.forEach(d => { 
             const v = d.data(); 
-            // Filtro local JS
-            if (lF !== 'todas' && v.localId !== lF) return; 
-            if (v.estado !== 'rechazado') analysisData.push({ id: d.id, ...v }); 
+            let mostrar = false;
+            if (state.userRole === 'admin' || state.userRole === 'master') {
+                mostrar = (lF === 'todas') || (v.localId === lF);
+            } else {
+                mostrar = (v.localId === lF) || (!v.localId);
+            }
+            
+            if (mostrar && v.estado !== 'rechazado') analysisData.push({ id: d.id, ...v }); 
         });
         
         // Procesar gastos
         sG.forEach(d => { 
             const g = d.data(); 
-            if (lF !== 'todas' && g.localId !== lF && g.localId !== '') return;
-            analysisGastos.push({ id: d.id, ...g }); 
+            let mostrar = false;
+            if (state.userRole === 'admin' || state.userRole === 'master') {
+                mostrar = (lF === 'todas') || (g.localId === lF) || (g.localId === '');
+            } else {
+                mostrar = (g.localId === lF) || (g.localId === '') || (!g.localId);
+            }
+            if (mostrar) analysisGastos.push({ id: d.id, ...g }); 
         });
 
         // Totales globales
-        let ing = 0, cost = 0, efe = 0, yap = 0, gas = 0;
+        let ing = 0, cost = 0, efe = 0, yap = 0, tar = 0, gas = 0;
         analysisData.forEach(v => { 
             ing += parseFloat(v.total||0); 
-            cost += parseFloat(v.costo_total || v.costoTotal || 0); 
             efe += parseFloat(v.pago_efectivo || v.pagoEfectivo || 0); 
             yap += parseFloat(v.pago_yape || v.pagoYape || 0); 
+            if (String(v.metodo_pago).toLowerCase() === 'tarjeta' || String(v.metodoFinal).toLowerCase() === 'tarjeta') {
+                tar += parseFloat(v.total||0);
+            }
         });
         
         analysisGastos.forEach(g => { gas += parseFloat(g.monto||0); });
@@ -97,30 +101,30 @@ async function updateAnalysisRange() {
         // Actualizar UI de Tarjetas Superiores
         if(cSum) {
             cSum.innerHTML = `
-                <div class="bg-slate-900 rounded-xl p-3 md:p-4 border border-slate-700 text-center cursor-pointer hover:border-sky-500 transition-colors" onclick="window.showBreakdown('BRUTO', null, ${ing}, ${efe}, ${yap})">
+                <div class="bg-slate-900 rounded-xl p-3 md:p-4 border border-slate-700 text-center cursor-pointer hover:border-sky-500 transition-colors shadow-sm" onclick="window.showBreakdown('BRUTO', null, ${ing}, ${efe}, ${yap}, ${tar}, ${gas})">
                     <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
                         <i data-lucide="trending-up" class="w-3.5 h-3.5 text-sky-400"></i>
-                        <p class="text-[10px] md:text-[11px] text-slate-400 uppercase font-bold tracking-wider">Ingresos Brutos</p>
+                        <p class="text-[10px] md:text-[11px] text-slate-400 uppercase font-bold tracking-wider">Ingresos</p>
                     </div>
                     <p class="text-sm md:text-xl font-black text-white" id="tot-ingresos">${formatMoney(ing)}</p>
                 </div>
-                <div class="bg-slate-900 rounded-xl p-3 md:p-4 border border-slate-700 text-center cursor-pointer hover:border-emerald-500 transition-colors" onclick="window.showBreakdown('GANANCIA', null, ${ing}, ${efe}, ${yap}, ${gas})">
+                <div class="bg-slate-900 rounded-xl p-3 md:p-4 border border-slate-700 text-center cursor-pointer hover:border-emerald-500 transition-colors shadow-sm" onclick="window.showBreakdown('GANANCIA', null, ${ing}, ${efe}, ${yap}, ${tar}, ${gas})">
                     <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
                         <i data-lucide="pie-chart" class="w-3.5 h-3.5 text-emerald-400"></i>
                         <p class="text-[10px] md:text-[11px] text-slate-400 uppercase font-bold tracking-wider">Ganancia Neta</p>
                     </div>
                     <p class="text-sm md:text-xl font-black text-emerald-400" id="tot-neta">${formatMoney(ing - gas)}</p>
                 </div>
-                <div class="bg-slate-900 rounded-xl p-3 md:p-4 border border-slate-700 text-center">
+                <div class="bg-slate-900 rounded-xl p-3 md:p-4 border border-slate-700 text-center shadow-sm">
                     <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
                         <i data-lucide="trending-down" class="w-3.5 h-3.5 text-red-400"></i>
                         <p class="text-[10px] md:text-[11px] text-slate-400 uppercase font-bold tracking-wider">Gastos</p>
                     </div>
                     <p class="text-sm md:text-xl font-bold text-red-400" id="tot-gastos">${formatMoney(gas)}</p>
                 </div>
-                <div class="bg-slate-900 rounded-xl p-3 md:p-4 border border-slate-700 text-center">
+                <div class="bg-slate-900 rounded-xl p-3 md:p-4 border border-slate-700 text-center shadow-sm">
                     <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
-                        <i data-lucide="credit-card" class="w-3.5 h-3.5 text-purple-400"></i>
+                        <i data-lucide="list-checks" class="w-3.5 h-3.5 text-purple-400"></i>
                         <p class="text-[10px] md:text-[11px] text-slate-400 uppercase font-bold tracking-wider">Transacciones</p>
                     </div>
                     <p class="text-sm md:text-xl font-bold text-white">${analysisData.length}</p>
@@ -151,7 +155,6 @@ function setAnalysisRange(tipo) {
 }
 
 function changeAnalysisMonth(delta) {
-    // CORRECCIÓN BUG CALENDARIO: Evitamos que salte de mes fijando el día a 1 primero
     currentDateAnalysis.setDate(1); 
     currentDateAnalysis.setMonth(currentDateAnalysis.getMonth() + delta);
     renderCalendar();
@@ -163,7 +166,6 @@ function renderCalendar() {
     const lbl = document.getElementById('calendarMonthLabel'); 
     
     if(lbl) {
-        // Formato: "Mes Año" (Ej. Abril 2026)
         lbl.textContent = currentDateAnalysis.toLocaleDateString('es-ES', {month:'long', year:'numeric'}).replace(/^\w/, c => c.toUpperCase());
     }
     
@@ -174,21 +176,22 @@ function renderCalendar() {
     const fDay = new Date(y, m, 1).getDay(); 
     const daysInM = new Date(y, m + 1, 0).getDate();
     
-    // Espacios vacíos antes del primer día del mes
     for (let i = 0; i < fDay; i++) grid.innerHTML += `<div class="p-1 md:p-2 bg-slate-900/30 rounded-lg md:rounded-xl border border-transparent"></div>`;
     
     for (let d = 1; d <= daysInM; d++) {
         const dStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         
-        // Ventas y Gastos de ese día específico
         const vDay = analysisData.filter(v => v.fechaStr === dStr);
         const gDay = analysisGastos.filter(g => g.fechaStr === dStr);
         
-        let tIng = 0, tEfe = 0, tYap = 0, tGas = 0;
+        let tIng = 0, tEfe = 0, tYap = 0, tTar = 0, tGas = 0;
         vDay.forEach(v => { 
             tIng += parseFloat(v.total||0); 
             tEfe += parseFloat(v.pago_efectivo || v.pagoEfectivo || 0); 
             tYap += parseFloat(v.pago_yape || v.pagoYape || 0); 
+            if (String(v.metodo_pago).toLowerCase() === 'tarjeta' || String(v.metodoFinal).toLowerCase() === 'tarjeta') {
+                tTar += parseFloat(v.total||0);
+            }
         });
         gDay.forEach(g => { tGas += parseFloat(g.monto||0); });
 
@@ -217,15 +220,14 @@ function renderCalendar() {
             </div>
         `;
         
-        div.onclick = () => showDayDetails(dStr, vDay, gDay, tIng, tEfe, tYap, tGas);
+        div.onclick = () => showDayDetails(dStr, vDay, gDay, tIng, tEfe, tYap, tTar, tGas);
         grid.appendChild(div);
     }
 }
 
-function showDayDetails(dStr, ventas, gastos, tIng, tEfe, tYap, tGas) {
-    window.currentSelectedDayObj = { dStr, ventas, gastos, tIng, tEfe, tYap, tGas };
+function showDayDetails(dStr, ventas, gastos, tIng, tEfe, tYap, tTar, tGas) {
+    window.currentSelectedDayObj = { dStr, ventas, gastos, tIng, tEfe, tYap, tTar, tGas };
     
-    // Formatear la fecha para que se vea legible
     const fSplit = dStr.split('-');
     const dateObj = new Date(fSplit[0], fSplit[1]-1, fSplit[2]);
     const fechaLegible = dateObj.toLocaleDateString('es-ES', {weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'});
@@ -246,7 +248,6 @@ function showDayDetails(dStr, ventas, gastos, tIng, tEfe, tYap, tGas) {
     
     let lHtml = '';
     
-    // Renderizar Ventas del Día
     ventas.forEach(v => {
         const time = v.timestamp ? new Date(v.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
         const num = v.id.split('-')[1] || '--';
@@ -279,7 +280,6 @@ function showDayDetails(dStr, ventas, gastos, tIng, tEfe, tYap, tGas) {
             </div>`;
     });
     
-    // Renderizar Gastos del Día
     gastos.forEach(g => { 
         const time = g.timestamp ? new Date(g.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
         const localInfo = g.localNombre && g.localNombre !== 'Global' ? ` • <span class="text-[9px] uppercase tracking-wider">${g.localNombre}</span>` : '';
@@ -305,45 +305,54 @@ function showDayDetails(dStr, ventas, gastos, tIng, tEfe, tYap, tGas) {
 }
 
 /**
- * Desglose detallado de Finanzas (Como en la imagen de referencia)
- * @param {string} type - 'BRUTO' o 'GANANCIA'
- * @param {object} dayObj - Objeto del día (si se clicó en el detalle del día)
- * @param {number} gIng - Total global de Ingresos del rango seleccionado (opcional)
- * @param {number} gEfe - Total global de Efectivo del rango seleccionado (opcional)
- * @param {number} gYap - Total global de Yape del rango seleccionado (opcional)
- * @param {number} gGas - Total global de Gastos del rango seleccionado (opcional)
+ * Reconstruye el modal interno de detalle de ingresos exactamente como la imagen proporcionada.
  */
-function showBreakdown(type, dayObj, gIng = null, gEfe = null, gYap = null, gGas = null) {
+function showBreakdown(type, dayObj, gIng = null, gEfe = null, gYap = null, gTar = null, gGas = null) {
     const m = document.getElementById('breakdownModal'); 
     if(!m) return;
     
     const cL = document.getElementById('brkCategoriesList'); 
     cL.innerHTML = '';
     
-    // Determinar de dónde sacamos los datos (Del rango global o de un día específico)
     let dVentas = dayObj ? dayObj.ventas : analysisData;
     let tIng = dayObj ? dayObj.tIng : gIng;
     let tEfe = dayObj ? dayObj.tEfe : gEfe;
     let tYap = dayObj ? dayObj.tYap : gYap;
+    let tTar = dayObj ? dayObj.tTar : gTar;
     let tGas = dayObj ? dayObj.tGas : gGas;
     
-    const fechaText = dayObj ? dayObj.dStr : `${document.getElementById('filterStartDate').value} a ${document.getElementById('filterEndDate').value}`;
+    const fechaText = dayObj ? dayObj.dStr : `${document.getElementById('filterStartDate').value} - ${document.getElementById('filterEndDate').value}`;
+    
+    // Obtenemos el contenedor de las tarjetas de métodos de pago
+    const paymentContainer = document.getElementById('brkEfectivo').parentElement.parentElement;
     
     if (type === 'BRUTO') {
         document.getElementById('brkTitle').innerHTML = `
             <div class="flex flex-col">
                 <span class="text-lg font-bold text-white">Desglose de Ingresos (Bruto)</span>
-                <span class="text-[10px] text-slate-400 font-normal">${fechaText}</span>
+                <span class="text-[10px] text-slate-400 font-normal mt-0.5">${fechaText}</span>
             </div>
         `;
         
-        // Bloques Superiores: Efectivo, Yape, Tarjeta
-        document.getElementById('brkEfectivo').textContent = formatMoney(tEfe); 
-        document.getElementById('brkYape').textContent = formatMoney(tYap);
+        // Estructura idéntica a image_b2943b.png (Efectivo, Yape, Tarjeta)
+        paymentContainer.innerHTML = `
+            <div class="flex justify-between items-center bg-slate-900 p-3 rounded-xl border border-slate-700 shadow-sm mb-2">
+                <span class="text-sm font-bold text-white flex items-center"><i data-lucide="banknote" class="w-4 h-4 inline mr-2 text-emerald-400"></i> Efectivo</span>
+                <span class="font-black text-white text-base">${formatMoney(tEfe)}</span>
+            </div>
+            <div class="flex justify-between items-center bg-slate-900 p-3 rounded-xl border border-slate-700 shadow-sm mb-2">
+                <span class="text-sm font-bold text-white flex items-center"><i data-lucide="alert-circle" class="w-4 h-4 inline mr-2 text-purple-400"></i> Yape / Plin</span>
+                <span class="font-black text-white text-base">${formatMoney(tYap)}</span>
+            </div>
+            <div class="flex justify-between items-center bg-slate-900 p-3 rounded-xl border border-slate-700 shadow-sm">
+                <span class="text-sm font-bold text-white flex items-center"><i data-lucide="credit-card" class="w-4 h-4 inline mr-2 text-sky-400"></i> Tarjeta</span>
+                <span class="font-black text-white text-base">${formatMoney(tTar)}</span>
+            </div>
+        `;
         
-        // Cálculos por categoría (Desglose Inferior)
         let catTotals = {};
         
+        // Calcular agrupaciones por nombre de categoría
         dVentas.forEach(v => { 
             v.items?.forEach(i => { 
                 const catStr = String(i.categoria || 'otros').toLowerCase();
@@ -352,21 +361,21 @@ function showBreakdown(type, dayObj, gIng = null, gEfe = null, gYap = null, gGas
             }); 
         });
         
-        let htmlCats = `<p class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Desglose por Categorías</p>`;
+        let htmlCats = `<p class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3 mt-4">Desglose por Categorías</p>`;
         
-        // Mapeamos íconos para cada categoría estándar
         for (const [catName, totalCat] of Object.entries(catTotals)) {
+            // Asignación inteligente de íconos según categoría (similar a la foto)
             let icon = 'tag';
-            let color = 'slate';
-            if (catName === 'vaso') { icon = 'cup-soda'; color = 'sky'; }
-            if (catName === 'extra') { icon = 'plus-circle'; color = 'amber'; }
-            if (catName === 'ajuste') { icon = 'receipt'; color = 'purple'; }
+            if (catName.includes('cerveza') || catName.includes('vaso')) icon = 'cup-soda';
+            if (catName.includes('vodka') || catName.includes('ron') || catName.includes('vino')) icon = 'wine';
+            if (catName.includes('extra') || catName.includes('tabaco') || catName.includes('snack')) icon = 'package';
+            if (catName.includes('gaseosa')) icon = 'droplets';
             
             htmlCats += `
-                <div class="flex justify-between items-center bg-slate-900/50 p-2.5 rounded-lg border border-slate-700/50 mb-1.5 group hover:border-${color}-500/50 transition-colors">
-                    <div class="flex items-center gap-2">
-                        <i data-lucide="${icon}" class="w-3.5 h-3.5 text-${color}-400 opacity-70"></i>
-                        <span class="text-xs text-slate-300 capitalize">${catName}</span>
+                <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded-xl border border-slate-700/50 mb-2">
+                    <div class="flex items-center gap-3">
+                        <i data-lucide="${icon}" class="w-4 h-4 text-slate-400"></i>
+                        <span class="text-sm font-bold text-white capitalize">${catName}</span>
                     </div>
                     <span class="text-sm text-emerald-400 font-bold">${formatMoney(totalCat)}</span>
                 </div>
@@ -380,17 +389,20 @@ function showBreakdown(type, dayObj, gIng = null, gEfe = null, gYap = null, gGas
         document.getElementById('brkTitle').innerHTML = `
             <div class="flex flex-col">
                 <span class="text-lg font-bold text-white">Análisis de Ganancia</span>
-                <span class="text-[10px] text-slate-400 font-normal">${fechaText}</span>
+                <span class="text-[10px] text-slate-400 font-normal mt-0.5">${fechaText}</span>
             </div>
         `;
         
-        // Usamos los espacios superiores para el resumen de ingreso vs egreso
-        document.getElementById('brkEfectivo').parentElement.querySelector('span:first-child').textContent = 'Total Ingresado';
-        document.getElementById('brkEfectivo').textContent = formatMoney(tIng); 
-        
-        document.getElementById('brkYape').parentElement.querySelector('span:first-child').innerHTML = '<span class="text-red-400">Total Gastos/Retiros</span>';
-        document.getElementById('brkYape').parentElement.classList.replace('border-slate-700', 'border-red-500/30');
-        document.getElementById('brkYape').innerHTML = `<span class="text-red-400">-${formatMoney(tGas)}</span>`;
+        paymentContainer.innerHTML = `
+            <div class="flex justify-between items-center bg-slate-900 p-3 rounded-xl border border-slate-700 shadow-sm mb-2">
+                <span class="text-sm font-bold text-white flex items-center"><i data-lucide="trending-up" class="w-4 h-4 inline mr-2 text-sky-400"></i> Ingreso Total</span>
+                <span class="font-black text-white text-base">${formatMoney(tIng)}</span>
+            </div>
+            <div class="flex justify-between items-center bg-red-500/10 p-3 rounded-xl border border-red-500/30 shadow-sm">
+                <span class="text-sm font-bold text-red-400 flex items-center"><i data-lucide="trending-down" class="w-4 h-4 inline mr-2 text-red-400"></i> Gastos/Retiros</span>
+                <span class="font-black text-red-400 text-base">-${formatMoney(tGas)}</span>
+            </div>
+        `;
         
         cL.innerHTML = `
             <div class="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-xl mt-4 flex justify-between items-center">
@@ -411,12 +423,8 @@ function showBreakdown(type, dayObj, gIng = null, gEfe = null, gYap = null, gGas
 
 function closeBreakdownModal() { 
     const m = document.getElementById('breakdownModal'); 
-    m.classList.add('opacity-0'); 
-    setTimeout(() => {
-        m.classList.add('hidden');
-        // Reset estilos de Yape por si se cambiaron en "Ganancia"
-        document.getElementById('brkYape').parentElement.classList.replace('border-red-500/30', 'border-slate-700');
-        document.getElementById('brkEfectivo').parentElement.querySelector('span:first-child').innerHTML = '<i data-lucide="banknote" class="w-4 h-4 inline mr-1 text-emerald-400"></i> Efectivo';
-        document.getElementById('brkYape').parentElement.querySelector('span:first-child').innerHTML = '<i data-lucide="smartphone" class="w-4 h-4 inline mr-1 text-purple-400"></i> Yape / Plin';
-    }, 300); 
+    if(m) {
+        m.classList.add('opacity-0'); 
+        setTimeout(() => m.classList.add('hidden'), 300); 
+    }
 }
