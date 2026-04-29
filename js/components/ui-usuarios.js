@@ -1,4 +1,4 @@
-import { db, collection, getDocs, doc, updateDoc, deleteDoc, setDoc, secondaryAuth, createUserWithEmailAndPassword, updatePassword, signInWithEmailAndPassword, query, where } from '../core/firebase-setup.js';
+import { db, collection, getDocs, doc, updateDoc, deleteDoc, setDoc, getDoc, secondaryAuth, createUserWithEmailAndPassword, updatePassword, signInWithEmailAndPassword, query, where } from '../core/firebase-setup.js';
 import { state } from '../core/store.js';
 
 let listaUsuariosEl, listaLocalesEl, selectLocalUsuario; 
@@ -178,6 +178,15 @@ async function ejecutarEditarUsuario() {
             pass_visible: newPass, 
             permisos: permisosArray 
         });
+        
+        // Actualizar Directorio Público si el nombre cambió
+        if (newUsername !== oldUsername) {
+            await setDoc(doc(db, "directorio_login", newUsername), {
+                username: newUsername,
+                email: currentEmail
+            });
+            if (oldUsername) await deleteDoc(doc(db, "directorio_login", oldUsername));
+        }
         
         if(window.mostrarToast) window.mostrarToast('Éxito', 'Cuenta actualizada correctamente', 'emerald');
         const m = document.getElementById('modal-editar-usuario'); 
@@ -418,12 +427,6 @@ async function guardarNuevoUsuario(e) {
         // 2. Generar Correo Único y Oculto (A prueba de choques de Firebase Auth)
         const randomSuffix = Math.random().toString(36).substring(2, 6);
         const secretEmail = `${rawName}_${randomSuffix}@raspadillas.com`;
-
-        // 3. Crear en Firebase Auth
-        const userCredential = await createUserWithEmailAndPassword(secondaryAuth, secretEmail, pass); 
-        const nuevoUID = userCredential.user.uid; 
-        await secondaryAuth.signOut();
-        
         // 4. Guardar en Base de Datos
         await setDoc(doc(db, "usuarios", nuevoUID), { 
             username: rawName,       // <- Lo que ve el dueño y usa el cajero para loguearse
@@ -436,6 +439,12 @@ async function guardarNuevoUsuario(e) {
             activo: true, 
             permisos: permisosArray 
         }); 
+        
+        // 5. Guardar en el Directorio Público (Para que el Login funcione libremente)
+        await setDoc(doc(db, "directorio_login", rawName), {
+            username: rawName,
+            email: secretEmail
+        });
         
         if(window.mostrarToast) window.mostrarToast('Éxito', 'Cuenta creada con éxito', 'emerald'); 
         cerrarModalUsuario(); 
@@ -464,7 +473,14 @@ async function eliminarUsuario(uid, isActivo) {
             // Solo los Masters deberían poder ver y clickear esto según la UI
             if (state.userRole !== 'master') return;
             window.mostrarConfirmacion("¿Eliminar DEFINITIVAMENTE del sistema? Esto no se puede deshacer.", async () => { 
-                await deleteDoc(doc(db, "usuarios", uid)); 
+                // Limpiar del directorio público también
+                const uRef = doc(db, "usuarios", uid);
+                const uSnap = await getDoc(uRef);
+                if (uSnap.exists() && uSnap.data().username) {
+                    await deleteDoc(doc(db, "directorio_login", uSnap.data().username));
+                }
+
+                await deleteDoc(uRef); 
                 cargarUsuariosYLocales(); 
                 if(window.mostrarToast) window.mostrarToast('Eliminado', 'Registro borrado permanentemente.', 'emerald'); 
             }); 
