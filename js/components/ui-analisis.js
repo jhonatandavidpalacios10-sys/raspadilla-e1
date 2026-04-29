@@ -11,8 +11,13 @@ let unsubscribeVentas = null;
 let unsubscribeGastos = null;
 let readyV = false;
 let readyG = false;
+let analisisInicializado = false; // CANDADO AÑADIDO
 
 export function initAnalisis() {
+    // FIX CRÍTICO: Prevenir duplicación de eventos al rotar turnos
+    if (analisisInicializado) return;
+    analisisInicializado = true;
+
     window.updateAnalysisRange = updateAnalysisRange; 
     window.setAnalysisRange = setAnalysisRange; 
     window.changeAnalysisMonth = changeAnalysisMonth; 
