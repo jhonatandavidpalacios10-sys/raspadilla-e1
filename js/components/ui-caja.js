@@ -1,4 +1,4 @@
-import { db, collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, deleteDoc } from '../core/firebase-setup.js';
+import { db, collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, writeBatch, increment } from '../core/firebase-setup.js';
 import { getTodayDateStr, formatMoney } from '../utils/helpers.js'; 
 import { state } from '../core/store.js';
 
@@ -168,7 +168,7 @@ function renderArqueoCaja() {
 
     // Renderizado UI
     if (allItems.length === 0) {
-        list.innerHTML = '<div class="col-span-full bg-slate-800 border border-slate-700 rounded-xl p-6 text-center text-slate-500 shadow-sm"><i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 opacity-50"></i><p class="text-sm font-bold">No hay operaciones registradas aún.</p></div>';
+        list.innerHTML = '<div class="col-span-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 text-center text-slate-500 shadow-sm"><i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 opacity-50"></i><p class="text-sm font-bold">No hay operaciones registradas aún.</p></div>';
     } else {
         let html = '';
         allItems.forEach(item => {
@@ -176,9 +176,9 @@ function renderArqueoCaja() {
             
             // Botones de acción dinámicos
             const btnActions = isAdmin ? `
-                <div class="flex gap-1.5 mt-2 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity justify-end border-t border-slate-700/50 pt-2">
-                    <button onclick="window.editarOperacionCaja('${item.tipo}', '${item.id}', ${item.tipo === 'venta' ? item.total : item.monto})" class="text-slate-400 hover:text-amber-400 hover:bg-slate-700/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
-                    <button onclick="window.eliminarOperacionCaja('${item.tipo}', '${item.id}')" class="text-slate-400 hover:text-red-400 hover:bg-slate-700/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> ${item.tipo === 'venta' ? 'Anular' : 'Borrar'}</button>
+                <div class="flex gap-1.5 mt-2 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity justify-end border-t border-slate-200 dark:border-slate-700/50 pt-2">
+                    <button onclick="window.editarOperacionCaja('${item.tipo}', '${item.id}', ${item.tipo === 'venta' ? item.total : item.monto})" class="text-slate-500 hover:text-amber-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 dark:hover:bg-slate-700/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
+                    <button onclick="window.eliminarOperacionCaja('${item.tipo}', '${item.id}')" class="text-slate-500 hover:text-red-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 dark:hover:bg-slate-700/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> ${item.tipo === 'venta' ? 'Anular' : 'Borrar'}</button>
                 </div>
             ` : '';
 
@@ -186,44 +186,44 @@ function renderArqueoCaja() {
                 const isRechazado = item.estado === 'rechazado';
                 const numItems = item.items ? item.items.length : 0;
                 const mp = String(item.metodo_pago || item.metodoFinal || 'EFECTIVO').toUpperCase();
-                const opacity = isRechazado ? 'opacity-40 grayscale' : '';
-                const amountColor = isRechazado ? 'text-slate-500 line-through' : 'text-emerald-400';
+                const opacity = isRechazado ? 'opacity-50 grayscale' : '';
+                const amountColor = isRechazado ? 'text-slate-400 line-through' : 'text-emerald-500';
                 const sign = isRechazado ? '' : '+';
                 
                 html += `
-                <div class="bg-slate-800/50 border border-slate-700 p-3 rounded-xl hover:border-slate-600 transition-all group shadow-sm ${opacity}">
+                <div class="bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 p-3 rounded-xl hover:border-slate-300 dark:hover:border-slate-600 transition-all group shadow-sm ${opacity}">
                     <div class="flex justify-between items-start">
                         <div class="flex items-center gap-3">
-                            <div class="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0 border border-emerald-500/20">
+                            <div class="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center text-emerald-500 shrink-0 border border-emerald-200 dark:border-emerald-500/20">
                                 <i data-lucide="shopping-cart" class="w-4 h-4"></i>
                             </div>
                             <div>
-                                <p class="text-sm font-bold text-slate-800 dark:text-white">Venta POS ${isRechazado ? '<span class="text-[9px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded uppercase ml-2">Anulada</span>' : ''}</p>
+                                <p class="text-sm font-bold text-slate-800 dark:text-white">Venta POS ${isRechazado ? '<span class="text-[9px] bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400 px-1.5 py-0.5 rounded uppercase ml-2 border border-red-200 dark:border-transparent">Anulada</span>' : ''}</p>
                                 <p class="text-[10px] text-slate-500">${numItems} item(s) ${item.localNombre && item.localNombre !== 'Sin Local' ? `• ${item.localNombre}` : ''}</p>
                             </div>
                         </div>
                         <div class="text-right">
                             <p class="font-black ${amountColor} text-sm">${sign} ${formatMoney(item.total)}</p>
-                            <p class="text-[9px] text-slate-500 mt-0.5 font-bold">${hora} • <span class="${mp === 'YAPE' ? 'text-purple-400' : (mp === 'EFECTIVO' ? 'text-emerald-400' : 'text-sky-400')}">${mp}</span></p>
+                            <p class="text-[9px] text-slate-400 dark:text-slate-500 mt-0.5 font-bold">${hora} • <span class="${mp === 'YAPE' ? 'text-purple-500' : (mp === 'EFECTIVO' ? 'text-emerald-500' : 'text-sky-500')}">${mp}</span></p>
                         </div>
                     </div>
                     ${btnActions}
                 </div>`;
             } else {
                 html += `
-                <div class="bg-red-500/5 border border-red-500/20 p-3 rounded-xl hover:border-red-500/40 transition-all group shadow-sm">
+                <div class="bg-red-50 dark:bg-red-500/5 border border-red-200 dark:border-red-500/20 p-3 rounded-xl hover:border-red-300 dark:hover:border-red-500/40 transition-all group shadow-sm">
                     <div class="flex justify-between items-start">
                         <div class="flex items-center gap-3">
-                            <div class="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center text-red-400 shrink-0 border border-red-500/20">
+                            <div class="w-8 h-8 rounded-full bg-red-100 dark:bg-red-500/10 flex items-center justify-center text-red-500 shrink-0 border border-red-200 dark:border-red-500/20">
                                 <i data-lucide="trending-down" class="w-4 h-4"></i>
                             </div>
                             <div>
-                                <p class="text-sm font-bold text-red-400">Gasto Registrado</p>
+                                <p class="text-sm font-bold text-red-500">Gasto Registrado</p>
                                 <p class="text-[10px] text-slate-500">${item.descripcion} ${item.localNombre && item.localNombre !== 'Global' ? `• ${item.localNombre}` : ''}</p>
                             </div>
                         </div>
                         <div class="text-right">
-                            <p class="font-black text-red-400 text-sm">- ${formatMoney(item.monto)}</p>
+                            <p class="font-black text-red-500 text-sm">- ${formatMoney(item.monto)}</p>
                             <p class="text-[9px] text-red-400/70 mt-0.5 font-bold">${hora}</p>
                         </div>
                     </div>
@@ -244,33 +244,77 @@ function renderArqueoCaja() {
     const netEl = document.getElementById('caja-neta');
     if(netEl) { 
         netEl.textContent = formatMoney(cN); 
-        netEl.className = cN >= 0 ? "text-xl md:text-2xl font-black text-emerald-400" : "text-xl md:text-2xl font-black text-red-400"; 
+        netEl.className = cN >= 0 ? "text-xl md:text-2xl font-black text-emerald-500" : "text-xl md:text-2xl font-black text-red-500"; 
     }
     
     if(window.lucide) window.lucide.createIcons();
 }
 
-// -----------------------------------------------------------------
-// EDICIÓN Y ELIMINACIÓN DE REGISTROS
-// -----------------------------------------------------------------
+// ========================================================
+// EDICIÓN Y ANULACIÓN CON REEMBOLSO DE STOCK Y CAJA
+// ========================================================
 async function eliminarOperacionCaja(tipo, id) {
     if (state.userRole !== 'master' && state.userRole !== 'admin') return;
     
     if (window.mostrarConfirmacion) {
-        window.mostrarConfirmacion(`¿Estás seguro de ${tipo === 'venta' ? 'anular' : 'eliminar'} este registro?`, async () => {
+        window.mostrarConfirmacion(`¿Estás seguro de ${tipo === 'venta' ? 'anular esta venta? (El stock se devolverá)' : 'eliminar este gasto?'}`, async () => {
             try {
                 if (tipo === 'venta') {
-                    await updateDoc(doc(db, "ventas", id), { 
+                    const vRef = doc(db, "ventas", id);
+                    const vSnap = await getDoc(vRef);
+                    
+                    if (!vSnap.exists()) return;
+                    const vData = vSnap.data();
+
+                    if (vData.estado === 'rechazado') {
+                        if(window.mostrarToast) window.mostrarToast('Aviso', 'Esta venta ya fue anulada previamente.', 'amber');
+                        return;
+                    }
+
+                    const batch = writeBatch(db);
+
+                    // 1. Marcar ticket como anulado
+                    batch.update(vRef, { 
                         estado: 'rechazado',
                         anuladoPor: state.currentUser.email,
                         fechaAnulacion: new Date().toISOString()
                     });
+
+                    // 2. Restar de la caja acumulada del día (Evita descuadres financieros)
+                    const locId = vData.localId || 'general';
+                    const fStr = vData.fechaStr;
+                    const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+
+                    batch.set(cRef, {
+                        total_ingresos: increment(-(vData.total || 0)),
+                        total_costos: increment(-(vData.costoTotal || vData.costo_total || 0)),
+                        total_efectivo: increment(-(vData.pagoEfectivo || vData.pago_efectivo || 0)),
+                        total_yape: increment(-(vData.pagoYape || vData.pago_yape || 0)),
+                        cantidad_ventas: increment(-1)
+                    }, { merge: true });
+
+                    // 3. Devolver los productos al inventario
+                    if (vData.items) {
+                        vData.items.forEach(item => {
+                            if (item.productoId !== 'AJUSTE') {
+                                const pRef = doc(db, "productos", item.productoId);
+                                batch.update(pRef, { stock: increment(item.cantidad) });
+                            }
+                        });
+                    }
+
+                    await batch.commit();
+
+                    // Refrescar Inventario local para que la UI de Ventas tenga el nuevo stock real
+                    if (window.cargarInventarioDesdeFirebase) {
+                        await window.cargarInventarioDesdeFirebase();
+                    }
+
                 } else if (tipo === 'gasto') {
                     await deleteDoc(doc(db, "gastos", id));
                 }
                 
-                if (window.mostrarToast) window.mostrarToast('Completado', 'El registro ha sido retirado de los totales.', 'emerald');
-                // No llamamos a renderArqueoCaja() porque onSnapshot detectará el cambio y lo hará solo
+                if (window.mostrarToast) window.mostrarToast('Completado', 'Operación anulada y balances corregidos.', 'emerald');
             } catch (err) {
                 console.error(err);
                 if (window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo completar la acción.", "red");
@@ -294,15 +338,63 @@ async function editarOperacionCaja(tipo, id, montoActual) {
 
     try {
         if (tipo === 'venta') {
-            await updateDoc(doc(db, "ventas", id), { 
+            const vRef = doc(db, "ventas", id);
+            const vSnap = await getDoc(vRef);
+            if (!vSnap.exists()) return;
+            
+            const vData = vSnap.data();
+
+            if (vData.estado === 'rechazado') {
+                if(window.mostrarToast) window.mostrarToast('Aviso', 'No puedes editar una venta que ya fue anulada.', 'amber');
+                return;
+            }
+
+            // Identificar método de pago original para no descuadrar Yape o Efectivo
+            let nEfe = 0, nYap = 0;
+            const mp = String(vData.metodo_pago || vData.metodoFinal || 'efectivo').toLowerCase();
+
+            if (mp === 'yape') {
+                nYap = nuevoMonto;
+            } else if (mp === 'mixto') {
+                // En edición rápida asume que la diferencia/total es efectivo (puedes expandir esta lógica luego)
+                nEfe = nuevoMonto; 
+            } else {
+                nEfe = nuevoMonto;
+            }
+
+            // Calcular diferencia para ajustar el acumulado diario
+            const diffTotal = nuevoMonto - (vData.total || 0);
+            const diffEfe = nEfe - (vData.pagoEfectivo || vData.pago_efectivo || 0);
+            const diffYap = nYap - (vData.pagoYape || vData.pago_yape || 0);
+
+            const batch = writeBatch(db);
+
+            // Actualizar ticket
+            batch.update(vRef, { 
                 total: nuevoMonto,
-                pago_efectivo: nuevoMonto,
-                pagoEfectivo: nuevoMonto,
-                pago_yape: 0,
-                pagoYape: 0,
+                pago_efectivo: nEfe,
+                pagoEfectivo: nEfe,
+                pago_yape: nYap,
+                pagoYape: nYap,
+                metodoFinal: mp === 'mixto' ? 'efectivo' : mp, // Normalizar si era mixto
                 editado: true,
-                editadoPor: state.currentUser.email
+                editadoPor: state.currentUser.email,
+                fechaEdicion: new Date().toISOString()
             });
+
+            // Actualizar caja diaria
+            const locId = vData.localId || 'general';
+            const fStr = vData.fechaStr;
+            const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+
+            batch.set(cRef, {
+                total_ingresos: increment(diffTotal),
+                total_efectivo: increment(diffEfe),
+                total_yape: increment(diffYap)
+            }, { merge: true });
+
+            await batch.commit();
+
         } else if (tipo === 'gasto') {
             await updateDoc(doc(db, "gastos", id), { 
                 monto: nuevoMonto,
@@ -310,8 +402,7 @@ async function editarOperacionCaja(tipo, id, montoActual) {
             });
         }
         
-        if (window.mostrarToast) window.mostrarToast('Modificado', 'Los totales han sido recalculados.', 'sky');
-        // Actualización instantánea gracias a onSnapshot
+        if (window.mostrarToast) window.mostrarToast('Modificado', 'Totales y reportes diarios recalculados al centavo.', 'sky');
     } catch(e) {
         console.error(e);
         if(window.mostrarAlerta) window.mostrarAlerta("Fallo de conexión", "No se guardaron los cambios.", "red");
