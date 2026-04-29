@@ -30,7 +30,7 @@ function getSavedAccounts() {
 function saveAccount(email, pass) {
     let accs = getSavedAccounts();
     const username = email.split('@')[0];
-    const encodedPass = btoa(pass); 
+    const encodedPass = btoa(pass); // Ofuscación básica para localStorage
     const existingIdx = accs.findIndex(a => a.email === email);
     
     if (existingIdx >= 0) {
@@ -88,7 +88,8 @@ function renderProfiles() {
 // ---------------------------------------------------
 
 document.addEventListener("DOMContentLoaded", () => {
-    initAuth(); let datosCargados = false;
+    initAuth(); 
+    let datosCargados = false;
     
     renderProfiles();
 
@@ -131,17 +132,24 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    // Escuchador del Estado de Autenticación
     onAuthStateChanged(auth, async (user) => {
         if (user && !datosCargados) {
-            // FIX: Envolver inicio de módulos en try-catch. Si uno falla, la UI general no se congelará.
+            // FIX: Try-catch general para evitar que un módulo roto congele toda la app en la pantalla de login
             try {
-                initVentas(); initCaja(); initPedidos(); initAnalisis(); initRespaldo();
-                await initUsuarios(); await initInventario(); 
+                initVentas(); 
+                initCaja(); 
+                initPedidos(); 
+                initAnalisis(); 
+                initRespaldo();
+                await initUsuarios(); 
+                await initInventario(); 
                 cargarUsuariosYLocales(); 
                 datosCargados = true;
             } catch(e) {
-                console.error("Error inicializando componentes:", e);
-                datosCargados = true; // Forzamos true para que avance aunque falle un componente menor
+                console.error("Error inicializando componentes modulares:", e);
+                // Forzamos a true para que deje al usuario entrar, aunque alguna parte no cargue bien
+                datosCargados = true; 
             }
         } else if (!user) { 
             datosCargados = false; 
@@ -149,10 +157,13 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    const lf = document.getElementById('login-form'); const bs = document.getElementById('btn-submit-login');
+    const lf = document.getElementById('login-form'); 
+    const bs = document.getElementById('btn-submit-login');
+    
     if (lf) {
         lf.addEventListener('submit', async (e) => {
-            e.preventDefault(); document.getElementById('login-error').classList.add('hidden');
+            e.preventDefault(); 
+            document.getElementById('login-error').classList.add('hidden');
             const ot = bs.innerHTML; 
             bs.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Conectando...'; 
             bs.disabled = true;
@@ -176,13 +187,16 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
     
+    // Función de Cerrar Sesión
     const hL = async () => { 
         try { 
             await logout(); 
             if(lf) lf.reset(); 
             if(bs) { bs.innerHTML = 'Ingresar al Sistema'; bs.disabled = false; } 
             if(window.switchView) window.switchView('ventas'); 
-        } catch (e) { console.error(e); } 
+        } catch (e) { 
+            console.error("Error cerrando sesión:", e); 
+        } 
     };
     
     document.getElementById('btn-logout-desktop')?.addEventListener('click', hL); 
