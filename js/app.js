@@ -7,6 +7,7 @@ import { initPedidos } from './components/ui-pedidos.js';
 import { initAnalisis } from './components/ui-analisis.js'; 
 import { initRespaldo } from './components/ui-respaldo.js';
 import { auth, onAuthStateChanged, db, doc, getDoc } from './core/firebase-setup.js';
+import { state } from './core/store.js';
 
 // ---- REGISTRO DEL SERVICE WORKER (Background Sync & Offline) ----
 if ('serviceWorker' in navigator) {
@@ -142,6 +143,15 @@ document.addEventListener("DOMContentLoaded", () => {
     onAuthStateChanged(auth, async (user) => {
         if (user && !datosCargados) {
             try {
+                // SOLUCIÓN AL BUG DE PANTALLAS VACÍAS (Condición de Carrera)
+                // Esperamos a que auth.js termine de descargar el perfil y los permisos
+                // antes de que los módulos intenten filtrar la información.
+                let intentos = 0;
+                while (!state.currentUser && intentos < 50) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    intentos++;
+                }
+
                 // 1. OBTENER IDENTIDAD PRIMERO (Crucial para filtros de sedes y roles)
                 await initUsuarios(); 
                 await cargarUsuariosYLocales(); 
