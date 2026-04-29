@@ -6,7 +6,7 @@ import { initUsuarios, cargarUsuariosYLocales } from './components/ui-usuarios.j
 import { initPedidos } from './components/ui-pedidos.js'; 
 import { initAnalisis } from './components/ui-analisis.js'; 
 import { initRespaldo } from './components/ui-respaldo.js';
-import { auth, onAuthStateChanged } from './core/firebase-setup.js';
+import { auth, onAuthStateChanged, db, collection, query, where, getDocs } from './core/firebase-setup.js';
 
 // ---- REGISTRO DEL SERVICE WORKER (Background Sync & Offline) ----
 if ('serviceWorker' in navigator) {
@@ -27,14 +27,14 @@ function getSavedAccounts() {
     try { return JSON.parse(localStorage.getItem('icepos_accounts')) || []; } catch(e) { return []; }
 }
 
-function saveAccount(email, pass) {
+function saveAccount(email, username, pass) {
     let accs = getSavedAccounts();
-    const username = email.split('@')[0];
     const encodedPass = btoa(pass); // Ofuscación básica para localStorage
     const existingIdx = accs.findIndex(a => a.email === email);
     
     if (existingIdx >= 0) {
         accs[existingIdx].pass = encodedPass;
+        accs[existingIdx].username = username;
     } else {
         accs.push({ email, username, pass: encodedPass });
     }
@@ -65,11 +65,11 @@ function renderProfiles() {
 
         list.innerHTML = accs.map(a => `
             <div class="relative group">
-                <button data-action="quick-login" data-email="${a.email}" data-pass="${a.pass}" class="flex flex-col items-center gap-2 p-3 bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-500 rounded-xl transition-all w-20 sm:w-24 active:scale-95">
-                    <div class="w-10 h-10 bg-sky-500 text-white rounded-full flex items-center justify-center shrink-0 shadow-lg shadow-sky-500/30">
+                <button data-action="quick-login" data-email="${a.email}" data-username="${a.username}" data-pass="${a.pass}" class="flex flex-col items-center gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-500 rounded-xl transition-all w-20 sm:w-24 active:scale-95 shadow-sm">
+                    <div class="w-10 h-10 bg-sky-500 text-white rounded-full flex items-center justify-center shrink-0 shadow-md shadow-sky-500/30">
                         <i data-lucide="user" class="w-5 h-5"></i>
                     </div>
-                    <span class="text-[10px] sm:text-xs font-bold text-slate-800 dark:text-white truncate w-full text-center">${a.username}</span>
+                    <span class="text-[10px] sm:text-xs font-bold text-slate-800 dark:text-white truncate w-full text-center capitalize">${a.username}</span>
                 </button>
                 <button data-action="remove-profile" data-email="${a.email}" class="absolute -top-1.5 -right-1.5 bg-red-500 hover:bg-red-600 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg">
                     <i data-lucide="x" class="w-3 h-3"></i>
@@ -176,11 +176,36 @@ document.addEventListener("DOMContentLoaded", () => {
             try { 
                 const inputUser = document.getElementById('login-username');
                 const rawUser = inputUser.value.trim().toLowerCase();
-                const finalEmail = rawUser.includes('@') ? rawUser : rawUser + '@raspadillas.com';
                 const pass = document.getElementById('login-password').value;
                 
+                let finalEmail = '';
+                let displayUsername = rawUser;
+
+                // 1. LÓGICA DE BÚSQUEDA INTELIGENTE
+                if (rawUser.includes('@')) {
+                    // Si el usuario forzó escribir un correo, lo usamos tal cual
+                    finalEmail = rawUser;
+                    displayUsername = rawUser.split('@')[0];
+                } else {
+                    // Buscamos cuál es el correo real oculto de este usuario
+                    const qUser = query(collection(db, "usuarios"), where("username", "==", rawUser), where("activo", "==", true));
+                    const userSnap = await getDocs(qUser);
+
+                    if (!userSnap.empty) {
+                        // Encontramos la cuenta nueva/segura
+                        finalEmail = userSnap.docs[0].data().email;
+                        displayUsername = userSnap.docs[0].data().username;
+                    } else {
+                        // SALVAVIDAS: Fallback para cuentas antiguas creadas antes de la actualización
+                        finalEmail = rawUser + '@raspadillas.com';
+                    }
+                }
+                
+                // 2. Ejecutar Login con el correo real
                 await login(finalEmail, pass); 
-                saveAccount(finalEmail, pass);
+                
+                // 3. Guardar en perfiles locales para inicio rápido
+                saveAccount(finalEmail, displayUsername, pass);
 
                 setTimeout(() => { bs.innerHTML = ot; bs.disabled = false; }, 1000); 
             } catch (err) { 
