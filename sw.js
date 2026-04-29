@@ -1,42 +1,78 @@
-const CACHE_NAME = 'icepos-v4-pro-final';
-const urlsToCache = [
-    './', './index.html', './styles.css', './manifest.json', 
-    './js/app.js', './js/core/firebase-setup.js', './js/core/store.js', 
-    './js/core/auth.js', './js/utils/helpers.js',
-    './js/components/ui-ventas.js', './js/components/ui-inventario.js', 
-    './js/components/ui-caja.js', './js/components/ui-usuarios.js', 
-    './js/components/ui-pedidos.js', './js/components/ui-analisis.js', 
-    './js/components/ui-respaldo.js'
+const CACHE_NAME = 'icepos-franquicias-v2';
+const ASSETS_TO_CACHE = [
+  '/',
+  '/index.html',
+  '/assets/css/styles.css',
+  '/assets/css/tema-rosado-pastel.css',
+  '/assets/img/logo.svg',
+  '/js/app.js',
+  '/js/core/auth.js',
+  '/js/core/firebase-setup.js',
+  '/js/core/store.js',
+  '/js/components/ui-ventas.js',
+  '/js/components/ui-inventario.js',
+  '/js/components/ui-caja.js',
+  '/js/components/ui-usuarios.js',
+  '/js/components/ui-pedidos.js',
+  '/js/components/ui-analisis.js',
+  '/js/components/ui-respaldo.js',
+  '/js/utils/helpers.js',
+  'https://cdn.tailwindcss.com',
+  'https://unpkg.com/lucide@latest'
 ];
 
-self.addEventListener('install', e => { 
-    self.skipWaiting(); 
-    e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(urlsToCache))); 
+// Instalar y almacenar en caché
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      console.log('SW: Archivos almacenados en caché exitosamente.');
+      return cache.addAll(ASSETS_TO_CACHE);
+    })
+  );
 });
 
-self.addEventListener('activate', e => { 
-    e.waitUntil(
-        caches.keys().then(keys => Promise.all(
-            keys.map(k => { if(k !== CACHE_NAME) return caches.delete(k); })
-        ))
-    ); 
-});
-
-// Estrategia: Stale-While-Revalidate (Rápido y siempre actualizado)
-self.addEventListener('fetch', e => {
-    // Ignorar Firebase y APIs
-    if (e.request.url.includes('firestore') || e.request.url.includes('identitytoolkit') || e.request.url.includes('googleapis')) return;
-    
-    e.respondWith(
-        caches.match(e.request).then(cachedResponse => {
-            const fetchPromise = fetch(e.request).then(networkResponse => {
-                caches.open(CACHE_NAME).then(cache => {
-                    cache.put(e.request, networkResponse.clone());
-                });
-                return networkResponse;
-            }).catch(() => console.warn('Modo Offline: Usando caché estática'));
-            
-            return cachedResponse || fetchPromise;
+// Limpiar cachés antiguos si hay una nueva versión
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cacheName) => {
+          if (cacheName !== CACHE_NAME) {
+            console.log('SW: Limpiando caché antigua', cacheName);
+            return caches.delete(cacheName);
+          }
         })
-    );
+      );
+    })
+  );
+  self.clients.claim();
+});
+
+// Estrategia: Stale-While-Revalidate (Primero caché, luego red)
+self.addEventListener('fetch', (event) => {
+  // Ignorar peticiones a Firestore (Firebase se encarga de ellas con su propia persistencia)
+  if (event.request.url.includes('firestore.googleapis.com')) {
+    return; 
+  }
+
+  event.respondWith(
+    caches.match(event.request).then((cachedResponse) => {
+      const fetchPromise = fetch(event.request).then((networkResponse) => {
+        // Actualizar la caché silenciosamente
+        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+        return networkResponse;
+      }).catch(() => {
+        // Si no hay red, no hacer nada especial, solo usar caché
+      });
+
+      // Retorna la caché inmediatamente si existe, si no, espera la red
+      return cachedResponse || fetchPromise;
+    })
+  );
 });
