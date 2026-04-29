@@ -102,6 +102,9 @@ export function initVentas() {
     // --- Filtros de Búsqueda ---
     document.getElementById('searchInput')?.addEventListener('input', renderProductosVenta);
     document.getElementById('posCategoryFilter')?.addEventListener('change', renderProductosVenta);
+
+    // FIX: Forzar el primer renderizado para que los productos aparezcan de inmediato al abrir la app
+    renderProductosVenta();
 }
 
 // ========================================================
