@@ -9,12 +9,14 @@ export function initCaja() {
     document.getElementById('btn-registrar-gasto')?.addEventListener('click', abrirModalGasto);
     document.getElementById('btn-cerrar-modal-gasto')?.addEventListener('click', cerrarModalGasto);
 
-    // Exponer funciones de edición/eliminación al entorno global para poder llamarlas desde el HTML inyectado
+    // Exponer funciones de edición/eliminación al entorno global para poder llamarlas desde el HTML
     window.eliminarOperacionCaja = eliminarOperacionCaja;
     window.editarOperacionCaja = editarOperacionCaja;
 
     // Cargar automáticamente los datos de la fecha actual
-    cargarArqueoCaja(state.userRole === 'vendedor' ? state.userLocalId : 'todas');
+    let filtroInicial = 'todas';
+    if (state.userRole === 'vendedor') filtroInicial = state.userLocalId || '';
+    cargarArqueoCaja(filtroInicial);
 }
 
 function abrirModalGasto() {
@@ -40,8 +42,10 @@ function abrirModalGasto() {
 
 function cerrarModalGasto() { 
     const m = document.getElementById('modal-gasto'); 
-    m.classList.add('opacity-0'); 
-    setTimeout(() => m.classList.add('hidden'), 300); 
+    if(m) {
+        m.classList.add('opacity-0'); 
+        setTimeout(() => m.classList.add('hidden'), 300); 
+    }
 }
 
 async function guardarGasto(e) {
@@ -84,7 +88,7 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
     const list = document.getElementById('caja-historial-list'); 
     if(!list) return;
     
-    list.innerHTML = '<div class="flex justify-center p-8"><i data-lucide="loader-2" class="w-8 h-8 animate-spin text-sky-500"></i></div>'; 
+    list.innerHTML = '<div class="col-span-full flex justify-center p-8"><i data-lucide="loader-2" class="w-8 h-8 animate-spin text-sky-500"></i></div>'; 
     if(window.lucide) window.lucide.createIcons();
     
     const hoy = getTodayDateStr();
@@ -99,37 +103,43 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
         let total = 0, gastosTotal = 0, efe = 0, yape = 0; 
         let allItems = [];
 
-        // Procesar Ventas
+        // Procesar Ventas (Con corrección de filtro para ventas antiguas sin local)
         snapVentas.forEach(d => {
             const v = d.data();
             
-            // Lógica de filtrado
-            if (state.userRole === 'vendedor') {
-                if (v.localId && v.localId !== state.userLocalId) return; 
+            let mostrar = false;
+            if (state.userRole === 'admin' || state.userRole === 'master') {
+                mostrar = (filtroLocal === 'todas') || (v.localId === filtroLocal);
             } else {
-                if (filtroLocal !== 'todas' && v.localId !== filtroLocal) return; 
+                mostrar = (v.localId === state.userLocalId) || (!v.localId);
             }
             
-            if (v.estado !== 'rechazado') {
+            if (mostrar && v.estado !== 'rechazado') {
                 total += parseFloat(v.total || 0); 
                 efe += parseFloat(v.pago_efectivo || v.pagoEfectivo || 0); 
                 yape += parseFloat(v.pago_yape || v.pagoYape || 0);
             }
-            allItems.push({ tipo: 'venta', id: d.id, ...v });
+            
+            if (mostrar) {
+                allItems.push({ tipo: 'venta', id: d.id, ...v });
+            }
         });
 
-        // Procesar Gastos
+        // Procesar Gastos (Con corrección de filtro)
         snapGastos.forEach(d => {
             const g = d.data();
             
-            if (state.userRole === 'vendedor') {
-                if (g.localId && g.localId !== state.userLocalId && g.localId !== '') return;
+            let mostrar = false;
+            if (state.userRole === 'admin' || state.userRole === 'master') {
+                mostrar = (filtroLocal === 'todas') || (g.localId === filtroLocal) || (g.localId === '');
             } else {
-                if (filtroLocal !== 'todas' && g.localId !== filtroLocal && g.localId !== '') return; 
+                mostrar = (g.localId === state.userLocalId) || (g.localId === '') || (!g.localId);
             }
             
-            gastosTotal += parseFloat(g.monto || 0);
-            allItems.push({ tipo: 'gasto', id: d.id, ...g });
+            if (mostrar) {
+                gastosTotal += parseFloat(g.monto || 0);
+                allItems.push({ tipo: 'gasto', id: d.id, ...g });
+            }
         });
 
         // Ordenar cronológicamente (más recientes primero)
@@ -137,7 +147,7 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
 
         // Renderizado del Historial de Movimientos
         if (allItems.length === 0) {
-            list.innerHTML = '<div class="bg-slate-900 border border-slate-800 rounded-xl p-6 text-center text-slate-500"><i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 opacity-50"></i><p class="text-sm font-bold">No hay operaciones registradas aún.</p></div>';
+            list.innerHTML = '<div class="col-span-full bg-slate-900 border border-slate-800 rounded-xl p-6 text-center text-slate-500"><i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 opacity-50"></i><p class="text-sm font-bold">No hay operaciones registradas aún.</p></div>';
         } else {
             let html = '';
             const isAdmin = state.userRole === 'master' || state.userRole === 'admin';
@@ -147,9 +157,9 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
                 
                 // Botones de acción dinámicos para administradores
                 const btnActions = isAdmin ? `
-                    <div class="flex gap-1.5 mt-2 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity justify-end border-t border-slate-800 pt-2">
-                        <button onclick="window.editarOperacionCaja('${item.tipo}', '${item.id}', ${item.tipo === 'venta' ? item.total : item.monto})" class="text-slate-400 hover:text-amber-400 hover:bg-slate-800 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
-                        <button onclick="window.eliminarOperacionCaja('${item.tipo}', '${item.id}')" class="text-slate-400 hover:text-red-400 hover:bg-slate-800 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> ${item.tipo === 'venta' ? 'Anular' : 'Borrar'}</button>
+                    <div class="flex gap-1.5 mt-2 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity justify-end border-t border-slate-800/50 pt-2">
+                        <button onclick="window.editarOperacionCaja('${item.tipo}', '${item.id}', ${item.tipo === 'venta' ? item.total : item.monto})" class="text-slate-400 hover:text-amber-400 hover:bg-slate-800/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
+                        <button onclick="window.eliminarOperacionCaja('${item.tipo}', '${item.id}')" class="text-slate-400 hover:text-red-400 hover:bg-slate-800/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> ${item.tipo === 'venta' ? 'Anular' : 'Borrar'}</button>
                     </div>
                 ` : '';
 
@@ -162,7 +172,7 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
                     const sign = isRechazado ? '' : '+';
                     
                     html += `
-                    <div class="bg-slate-900 border border-slate-800 p-3 rounded-xl hover:border-slate-700 transition-all group ${opacity}">
+                    <div class="bg-slate-800/50 border border-slate-700 p-3 rounded-xl hover:border-slate-600 transition-all group shadow-sm ${opacity}">
                         <div class="flex justify-between items-start">
                             <div class="flex items-center gap-3">
                                 <div class="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0">
@@ -170,32 +180,32 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
                                 </div>
                                 <div>
                                     <p class="text-sm font-bold text-white">Venta POS ${isRechazado ? '<span class="text-[9px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded uppercase ml-2">Anulada</span>' : ''}</p>
-                                    <p class="text-[10px] text-slate-400">${numItems} item(s) ${item.localNombre ? `• ${item.localNombre}` : ''}</p>
+                                    <p class="text-[10px] text-slate-400">${numItems} item(s) ${item.localNombre && item.localNombre !== 'Sin Local' ? `• ${item.localNombre}` : ''}</p>
                                 </div>
                             </div>
                             <div class="text-right">
                                 <p class="font-black ${amountColor} text-sm">${sign} ${formatMoney(item.total)}</p>
-                                <p class="text-[9px] text-slate-500 mt-0.5 font-medium">${hora} • ${mp}</p>
+                                <p class="text-[9px] text-slate-500 mt-0.5 font-bold">${hora} • <span class="${mp === 'YAPE' ? 'text-purple-400' : (mp === 'EFECTIVO' ? 'text-emerald-400' : 'text-sky-400')}">${mp}</span></p>
                             </div>
                         </div>
                         ${btnActions}
                     </div>`;
                 } else {
                     html += `
-                    <div class="bg-slate-900 border border-slate-800 p-3 rounded-xl hover:border-slate-700 transition-all group">
+                    <div class="bg-red-500/5 border border-red-500/20 p-3 rounded-xl hover:border-red-500/40 transition-all group shadow-sm">
                         <div class="flex justify-between items-start">
                             <div class="flex items-center gap-3">
                                 <div class="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center text-red-400 shrink-0">
                                     <i data-lucide="trending-down" class="w-4 h-4"></i>
                                 </div>
                                 <div>
-                                    <p class="text-sm font-bold text-white">Gasto Registrado</p>
+                                    <p class="text-sm font-bold text-red-400">Gasto Registrado</p>
                                     <p class="text-[10px] text-slate-400">${item.descripcion} ${item.localNombre && item.localNombre !== 'Global' ? `• ${item.localNombre}` : ''}</p>
                                 </div>
                             </div>
                             <div class="text-right">
                                 <p class="font-black text-red-400 text-sm">- ${formatMoney(item.monto)}</p>
-                                <p class="text-[9px] text-slate-500 mt-0.5 font-medium">${hora}</p>
+                                <p class="text-[9px] text-red-400/70 mt-0.5 font-bold">${hora}</p>
                             </div>
                         </div>
                         ${btnActions}
@@ -221,7 +231,7 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
         if(window.lucide) window.lucide.createIcons();
     } catch (err) {
         console.error(err);
-        list.innerHTML = '<p class="text-red-400 text-sm text-center p-4">Error cargando el arqueo.</p>';
+        list.innerHTML = '<p class="col-span-full text-red-400 text-sm text-center p-4">Error cargando el arqueo.</p>';
     }
 }
 
@@ -236,7 +246,7 @@ async function eliminarOperacionCaja(tipo, id) {
         window.mostrarConfirmacion(`¿Estás seguro de ${tipo === 'venta' ? 'anular' : 'eliminar'} este registro?`, async () => {
             try {
                 if (tipo === 'venta') {
-                    // Solo marcamos como anulado por seguridad fiscal
+                    // Marcamos como anulado por seguridad fiscal (no se borra físicamente)
                     await updateDoc(doc(db, "ventas", id), { 
                         estado: 'rechazado',
                         anuladoPor: state.currentUser.email,
@@ -276,7 +286,7 @@ async function editarOperacionCaja(tipo, id, montoActual) {
         if (tipo === 'venta') {
             await updateDoc(doc(db, "ventas", id), { 
                 total: nuevoMonto,
-                pago_efectivo: nuevoMonto, // Por simplicidad, se asigna al total (se podría refinar luego)
+                pago_efectivo: nuevoMonto, // Por simplicidad, se asigna al total en efectivo
                 pagoEfectivo: nuevoMonto,
                 pago_yape: 0,
                 pagoYape: 0,
