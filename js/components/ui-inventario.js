@@ -20,16 +20,16 @@ export async function initInventario() {
     const tabs = document.querySelectorAll('#tabs-insumos button');
     tabs.forEach((tab, index) => {
         tab.addEventListener('click', () => {
-            tabs.forEach(t => t.classList.replace('text-emerald-400', 'text-slate-500'));
-            tabs.forEach(t => t.classList.remove('border-emerald-400', 'border-b-2'));
-            tab.classList.replace('text-slate-500', 'text-emerald-400'); 
-            tab.classList.add('border-emerald-400', 'border-b-2');
+            tabs.forEach(t => t.classList.replace('text-emerald-500', 'text-slate-500'));
+            tabs.forEach(t => t.classList.remove('border-emerald-500', 'border-b-2'));
+            tab.classList.replace('text-slate-500', 'text-emerald-500'); 
+            tab.classList.add('border-emerald-500', 'border-b-2');
             categoriaActual = ['vaso', 'sabor', 'extra'][index]; 
             renderInventarioUI(categoriaActual);
         });
     });
 
-    // --- NUEVO: Eventos Ingreso de Mercadería (Stock) ---
+    // --- Eventos Ingreso de Mercadería (Stock) ---
     document.getElementById('btn-ingreso-stock')?.addEventListener('click', abrirModalIngresoStock);
     document.getElementById('btn-cerrar-modal-ingreso')?.addEventListener('click', () => {
         const m = document.getElementById('modal-ingreso-stock'); m.classList.add('opacity-0'); setTimeout(() => m.classList.add('hidden'), 300);
@@ -122,7 +122,6 @@ async function procesarIngresoStock(e) {
     const prodId = document.getElementById('ingreso-producto').value;
     const cant = parseInt(document.getElementById('ingreso-cantidad').value);
     const costo = parseFloat(document.getElementById('ingreso-costo').value);
-    const localAfectado = document.getElementById('ingreso-local').value;
 
     if (!prodId || isNaN(cant) || cant <= 0 || isNaN(costo) || costo < 0) {
         if(window.mostrarToast) window.mostrarToast('Error', 'Verifica los datos ingresados.', 'amber');
@@ -137,9 +136,18 @@ async function procesarIngresoStock(e) {
         // 1. Sumar Stock en la base de datos
         await updateDoc(doc(db, "productos", prodId), { stock: increment(cant) });
         
-        // 2. Registrar el Gasto automáticamente en la Caja
+        // 2. Registrar el Gasto automáticamente (Seguridad de Sede)
         if (costo > 0) {
-            const nombreL = localAfectado === 'ambas' ? 'Global' : (state.locales.find(x => x.id === localAfectado)?.nombre || 'Sede');
+            let localAfectado = document.getElementById('ingreso-local')?.value || '';
+            let nombreL = 'Sede';
+
+            // FIX: Forzamos la asignación al local del vendedor para evitar gastos huérfanos
+            if (state.userRole !== 'master' && state.userRole !== 'admin') {
+                localAfectado = state.userLocalId || '';
+                nombreL = state.userLocal || 'Mi Local';
+            } else {
+                nombreL = localAfectado === 'ambas' ? 'Global' : (state.locales.find(x => x.id === localAfectado)?.nombre || 'Sede');
+            }
             
             await addDoc(collection(db, "gastos"), { 
                 monto: costo, 
@@ -230,27 +238,27 @@ export function renderInventarioUI(cat) {
     }
     
     items.forEach(p => {
-        const stkStr = p.stock !== null && p.stock !== '' && p.stock !== undefined ? `<span class="font-mono text-emerald-400 font-bold">${p.stock}</span>` : '<i data-lucide="infinity" class="w-4 h-4 mx-auto text-slate-500"></i>';
+        const stkStr = p.stock !== null && p.stock !== '' && p.stock !== undefined ? `<span class="font-mono text-emerald-500 font-bold">${p.stock}</span>` : '<i data-lucide="infinity" class="w-4 h-4 mx-auto text-slate-500"></i>';
         
         let badgeLocal = '';
         if (p.localId && p.localId !== 'global') {
             const nLoc = state.locales.find(l => l.id === p.localId)?.nombre || 'Sede';
-            badgeLocal = `<span class="ml-2 bg-slate-700 text-slate-300 text-[9px] px-1.5 py-0.5 rounded uppercase">${nLoc}</span>`;
+            badgeLocal = `<span class="ml-2 bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 text-[9px] px-1.5 py-0.5 rounded uppercase border border-slate-200 dark:border-slate-600">${nLoc}</span>`;
         } else if (state.userRole === 'master' || state.userRole === 'admin') {
-            badgeLocal = `<span class="ml-2 bg-sky-500/20 text-sky-400 text-[9px] px-1.5 py-0.5 rounded uppercase">Global</span>`;
+            badgeLocal = `<span class="ml-2 bg-sky-50 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-500/30 text-[9px] px-1.5 py-0.5 rounded uppercase">Global</span>`;
         }
 
         const tr = document.createElement('tr'); 
-        tr.className = 'hover:bg-slate-800/50 transition-colors group border-b border-slate-700/50 last:border-0';
+        tr.className = 'hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group border-b border-slate-200 dark:border-slate-700/50 last:border-0';
         tr.innerHTML = `
-            <td class="p-3 text-sm text-white font-bold">${p.nombre} ${badgeLocal}</td>
-            <td class="p-3 text-xs text-slate-400 uppercase">${p.categoria}</td>
-            <td class="p-3 text-sm text-sky-400 font-bold text-right">${p.categoria === 'sabor' ? '-' : formatMoney(p.precio)}</td>
+            <td class="p-3 text-sm text-slate-800 dark:text-white font-bold">${p.nombre} ${badgeLocal}</td>
+            <td class="p-3 text-xs text-slate-500 uppercase">${p.categoria}</td>
+            <td class="p-3 text-sm text-sky-600 dark:text-sky-500 font-bold text-right">${p.categoria === 'sabor' ? '-' : formatMoney(p.precio)}</td>
             <td class="p-3 text-center">${stkStr}</td>
             <td class="p-3 text-center">
                 <div class="flex justify-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onclick="window.editarProducto('${p.id}')" class="text-slate-400 hover:text-sky-400 bg-slate-900 border border-slate-700 hover:border-sky-500/50 p-1.5 rounded transition-colors"><i data-lucide="edit-2" class="w-4 h-4"></i></button>
-                    <button onclick="window.eliminarProducto('${p.id}')" class="text-slate-400 hover:text-red-400 bg-slate-900 border border-slate-700 hover:border-red-500/50 p-1.5 rounded transition-colors"><i data-lucide="trash" class="w-4 h-4"></i></button>
+                    <button onclick="window.editarProducto('${p.id}')" class="text-slate-400 hover:text-sky-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-300 dark:hover:border-sky-500/50 p-1.5 rounded transition-colors"><i data-lucide="edit-2" class="w-4 h-4"></i></button>
+                    <button onclick="window.eliminarProducto('${p.id}')" class="text-slate-400 hover:text-red-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-red-300 dark:hover:border-red-500/50 p-1.5 rounded transition-colors"><i data-lucide="trash" class="w-4 h-4"></i></button>
                 </div>
             </td>
         `;
