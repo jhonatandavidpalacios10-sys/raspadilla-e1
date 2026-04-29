@@ -6,7 +6,7 @@ import { initUsuarios, cargarUsuariosYLocales } from './components/ui-usuarios.j
 import { initPedidos } from './components/ui-pedidos.js'; 
 import { initAnalisis } from './components/ui-analisis.js'; 
 import { initRespaldo } from './components/ui-respaldo.js';
-import { auth, onAuthStateChanged, db, collection, query, where, getDocs } from './core/firebase-setup.js';
+import { auth, onAuthStateChanged, db, doc, getDoc } from './core/firebase-setup.js';
 
 // ---- REGISTRO DEL SERVICE WORKER (Background Sync & Offline) ----
 if ('serviceWorker' in navigator) {
@@ -185,15 +185,15 @@ document.addEventListener("DOMContentLoaded", () => {
                     finalEmail = rawUser;
                     displayUsername = rawUser.split('@')[0];
                 } else {
-                    // BUSCAMOS EN EL DIRECTORIO PÚBLICO
-                    const qUser = query(collection(db, "directorio_login"), where("username", "==", rawUser));
-                    const userSnap = await getDocs(qUser);
+                    // BUSCAMOS EN EL DIRECTORIO PÚBLICO MEDIANTE GETDOC DIRECTO
+                    const dirRef = doc(db, "directorio_login", rawUser);
+                    const dirSnap = await getDoc(dirRef);
 
-                    if (!userSnap.empty) {
-                        finalEmail = userSnap.docs[0].data().email;
-                        displayUsername = userSnap.docs[0].data().username;
+                    if (dirSnap.exists()) {
+                        finalEmail = dirSnap.data().email;
+                        displayUsername = dirSnap.data().username;
                     } else {
-                        // SALVAVIDAS: Fallback para cuentas antiguas
+                        // SALVAVIDAS: Fallback para cuentas antiguas no migradas
                         finalEmail = rawUser + '@raspadillas.com';
                     }
                 }
@@ -206,6 +206,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 setTimeout(() => { bs.innerHTML = ot; bs.disabled = false; }, 1000); 
             } catch (err) { 
+                console.error("Error de autenticación:", err);
                 document.getElementById('login-error').classList.remove('hidden'); 
                 bs.innerHTML = ot; 
                 bs.disabled = false; 
