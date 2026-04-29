@@ -1,10 +1,11 @@
-import { db, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, increment } from '../core/firebase-setup.js';
+import { db, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, increment, onSnapshot } from '../core/firebase-setup.js';
 import { state } from '../core/store.js'; 
 import { formatMoney, getTodayDateStr } from '../utils/helpers.js';
 import { renderProductosVenta } from './ui-ventas.js';
 
 let listaInventarioEl; 
 let categoriaActual = 'vaso';
+let unsubscribeInventario = null;
 
 export async function initInventario() {
     listaInventarioEl = document.getElementById('inventario-list');
@@ -37,14 +38,25 @@ export async function initInventario() {
     document.getElementById('form-ingreso-stock')?.addEventListener('submit', procesarIngresoStock);
 
     // Funciones globales
-    window.cargarInventarioDesdeFirebase = async () => {
-        try {
-            const s = await getDocs(collection(db, "productos")); 
-            state.productos = [];
-            s.forEach(d => state.productos.push({ id: d.id, ...d.data() }));
-            renderInventarioUI(categoriaActual); 
-            renderProductosVenta();
-        } catch(e) { console.error("Error cargando inventario:", e); }
+    window.cargarInventarioDesdeFirebase = () => {
+        return new Promise((resolve, reject) => {
+            if (unsubscribeInventario) unsubscribeInventario();
+            try {
+                unsubscribeInventario = onSnapshot(collection(db, "productos"), (snapshot) => {
+                    state.productos = [];
+                    snapshot.forEach(d => state.productos.push({ id: d.id, ...d.data() }));
+                    renderInventarioUI(categoriaActual); 
+                    if (window.renderProductosVenta) window.renderProductosVenta();
+                    resolve(); // Resuelve la promesa en la primera carga para no bloquear la app
+                }, (error) => {
+                    console.error("Error escuchando inventario:", error);
+                    reject(error);
+                });
+            } catch(e) { 
+                console.error("Error configurando inventario:", e); 
+                reject(e);
+            }
+        });
     };
     
     window.editarProducto = (id) => {
