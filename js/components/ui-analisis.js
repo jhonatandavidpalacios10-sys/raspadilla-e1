@@ -19,13 +19,19 @@ export function initAnalisis() {
     window.showBreakdown = showBreakdown; 
     window.closeBreakdownModal = closeBreakdownModal;
     
-    // Configurar fechas por defecto (Hoy)
-    const d = new Date(); 
-    document.getElementById('filterStartDate').value = d.toISOString().split('T')[0]; 
-    document.getElementById('filterEndDate').value = d.toISOString().split('T')[0];
+    // Configurar fechas por defecto (Mes actual en lugar de solo hoy para mejor vista de calendario)
+    const d = new Date();
+    const firstDay = new Date(d.getFullYear(), d.getMonth(), 1);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    
+    document.getElementById('filterStartDate').value = firstDay.toISOString().split('T')[0]; 
+    document.getElementById('filterEndDate').value = lastDay.toISOString().split('T')[0];
 
     // Eventos
-    document.getElementById('filterStartDate')?.addEventListener('change', updateAnalysisRange);
+    document.getElementById('filterStartDate')?.addEventListener('change', () => {
+        currentDateAnalysis = new Date(document.getElementById('filterStartDate').value + "T00:00:00");
+        updateAnalysisRange();
+    });
     document.getElementById('filterEndDate')?.addEventListener('change', updateAnalysisRange);
     document.getElementById('analisisLocalFilter')?.addEventListener('change', processAndRenderAnalysis); // En vivo desde RAM
     
@@ -128,30 +134,30 @@ function processAndRenderAnalysis() {
     const cSum = document.getElementById('analysisRangeSummary');
     if(cSum) {
         cSum.innerHTML = `
-            <div class="bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-700 text-center cursor-pointer hover:border-sky-500 transition-colors shadow-sm" onclick="window.showBreakdown('BRUTO', null, ${ing}, ${efe}, ${yap}, ${tar}, ${gas})">
+            <div class="bg-white dark:bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-200 dark:border-slate-700 text-center cursor-pointer hover:border-sky-500 transition-colors shadow-sm" onclick="window.showBreakdown('BRUTO', null, ${ing}, ${efe}, ${yap}, ${tar}, ${gas})">
                 <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
-                    <i data-lucide="trending-up" class="w-3.5 h-3.5 text-sky-400"></i>
+                    <i data-lucide="trending-up" class="w-3.5 h-3.5 text-sky-500"></i>
                     <p class="text-[10px] md:text-[11px] text-slate-500 uppercase font-bold tracking-wider">Ingresos</p>
                 </div>
                 <p class="text-sm md:text-xl font-black text-slate-800 dark:text-white" id="tot-ingresos">${formatMoney(ing)}</p>
             </div>
-            <div class="bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-700 text-center cursor-pointer hover:border-emerald-500 transition-colors shadow-sm" onclick="window.showBreakdown('GANANCIA', null, ${ing}, ${efe}, ${yap}, ${tar}, ${gas})">
+            <div class="bg-white dark:bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-200 dark:border-slate-700 text-center cursor-pointer hover:border-emerald-500 transition-colors shadow-sm" onclick="window.showBreakdown('GANANCIA', null, ${ing}, ${efe}, ${yap}, ${tar}, ${gas})">
                 <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
-                    <i data-lucide="pie-chart" class="w-3.5 h-3.5 text-emerald-400"></i>
+                    <i data-lucide="pie-chart" class="w-3.5 h-3.5 text-emerald-500"></i>
                     <p class="text-[10px] md:text-[11px] text-slate-500 uppercase font-bold tracking-wider">Ganancia Neta</p>
                 </div>
                 <p class="text-sm md:text-xl font-black text-emerald-500" id="tot-neta">${formatMoney(ing - gas)}</p>
             </div>
-            <div class="bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-700 text-center shadow-sm">
+            <div class="bg-white dark:bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-200 dark:border-slate-700 text-center shadow-sm">
                 <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
-                    <i data-lucide="trending-down" class="w-3.5 h-3.5 text-red-400"></i>
+                    <i data-lucide="trending-down" class="w-3.5 h-3.5 text-red-500"></i>
                     <p class="text-[10px] md:text-[11px] text-slate-500 uppercase font-bold tracking-wider">Gastos</p>
                 </div>
                 <p class="text-sm md:text-xl font-bold text-red-500" id="tot-gastos">${formatMoney(gas)}</p>
             </div>
-            <div class="bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-700 text-center shadow-sm">
+            <div class="bg-white dark:bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-200 dark:border-slate-700 text-center shadow-sm">
                 <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
-                    <i data-lucide="list-checks" class="w-3.5 h-3.5 text-purple-400"></i>
+                    <i data-lucide="list-checks" class="w-3.5 h-3.5 text-purple-500"></i>
                     <p class="text-[10px] md:text-[11px] text-slate-500 uppercase font-bold tracking-wider">Transacciones</p>
                 </div>
                 <p class="text-sm md:text-xl font-bold text-slate-800 dark:text-white">${filteredVentas.length}</p>
@@ -186,20 +192,38 @@ function setAnalysisRange(tipo) {
     let fS = new Date(d); 
     let fE = new Date(d);
     
-    if(tipo === 'semana') fS.setDate(d.getDate() - 6);
-    if(tipo === 'mes') fS.setDate(d.getDate() - 29);
+    if(tipo === 'hoy') {
+        // Mantiene ambas fechas en hoy
+    } else if(tipo === 'semana') {
+        fS.setDate(d.getDate() - 6);
+    } else if(tipo === 'mes') {
+        fS = new Date(d.getFullYear(), d.getMonth(), 1);
+        fE = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    }
     
     document.getElementById('filterStartDate').value = fS.toISOString().split('T')[0];
     document.getElementById('filterEndDate').value = fE.toISOString().split('T')[0];
+    currentDateAnalysis = new Date(fS);
     updateAnalysisRange();
 }
 
 function changeAnalysisMonth(delta) {
+    // 1. Cambiar el mes interno
     currentDateAnalysis.setDate(1); 
     currentDateAnalysis.setMonth(currentDateAnalysis.getMonth() + delta);
-    // Para que el calendario refleje los datos del nuevo mes, en RAM usamos los ya descargados,
-    // pero idealmente el usuario ajusta el filtro de fechas. Renderizaremos visualmente el grid de todas formas.
-    processAndRenderAnalysis();
+    
+    // 2. Calcular el primer y último día del nuevo mes
+    const y = currentDateAnalysis.getFullYear();
+    const m = currentDateAnalysis.getMonth();
+    const firstDay = new Date(y, m, 1);
+    const lastDay = new Date(y, m + 1, 0);
+    
+    // 3. Modificar los filtros de fecha visibles
+    document.getElementById('filterStartDate').value = firstDay.toISOString().split('T')[0];
+    document.getElementById('filterEndDate').value = lastDay.toISOString().split('T')[0];
+    
+    // 4. Forzar descarga de los datos del nuevo mes desde Firebase
+    updateAnalysisRange();
 }
 
 function renderCalendar(filteredVentas, filteredGastos) {
@@ -218,7 +242,7 @@ function renderCalendar(filteredVentas, filteredGastos) {
     const fDay = new Date(y, m, 1).getDay(); 
     const daysInM = new Date(y, m + 1, 0).getDate();
     
-    for (let i = 0; i < fDay; i++) grid.innerHTML += `<div class="p-1 md:p-2 bg-slate-900/30 rounded-lg md:rounded-xl border border-transparent"></div>`;
+    for (let i = 0; i < fDay; i++) grid.innerHTML += `<div class="p-1 md:p-2 bg-slate-100 dark:bg-slate-900/30 rounded-lg md:rounded-xl border border-transparent"></div>`;
     
     for (let d = 1; d <= daysInM; d++) {
         const dStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
@@ -234,17 +258,17 @@ function renderCalendar(filteredVentas, filteredGastos) {
         const hasData = tIng > 0 || tGas > 0;
         const neto = tIng - tGas;
         
-        const colorClass = hasData ? (neto >= 0 ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-red-500/30 bg-red-500/10') : 'border-slate-700/50 bg-slate-900/50';
+        const colorClass = hasData ? (neto >= 0 ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10' : 'border-red-200 bg-red-50 dark:border-red-500/30 dark:bg-red-500/10') : 'border-slate-200 bg-white dark:border-slate-700/50 dark:bg-slate-900/50';
         const ring = isToday ? 'ring-2 ring-sky-500' : '';
         const textColor = neto >= 0 ? 'text-emerald-500' : 'text-red-500';
 
         const div = document.createElement('div');
-        div.className = `p-2 md:p-3 border rounded-lg md:rounded-xl cursor-pointer hover:border-sky-500 transition-colors flex flex-col justify-between min-h-[60px] md:min-h-[85px] relative overflow-hidden ${colorClass} ${ring} group`;
+        div.className = `p-2 md:p-3 border rounded-lg md:rounded-xl cursor-pointer hover:border-sky-500 transition-colors flex flex-col justify-between min-h-[60px] md:min-h-[85px] relative overflow-hidden ${colorClass} ${ring} group shadow-sm`;
         
         let pointIndicators = '';
         if (hasData) {
-            if (tIng > 0) pointIndicators += `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>`;
-            if (tGas > 0) pointIndicators += `<span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>`;
+            if (tIng > 0) pointIndicators += `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-sm"></span>`;
+            if (tGas > 0) pointIndicators += `<span class="w-1.5 h-1.5 rounded-full bg-red-500 shadow-sm"></span>`;
         }
 
         div.innerHTML = `
@@ -299,7 +323,7 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
         const localInfo = v.localNombre ? ` • <span class="text-[9px] uppercase tracking-wider">${v.localNombre}</span>` : '';
         const metodoPago = String(v.metodo_pago || v.metodoFinal || 'Efectivo').toUpperCase();
         
-        let iHtml = `<div id="det-${v.id}" class="hidden mt-3 pt-3 border-t border-slate-700/50 space-y-1.5">`;
+        let iHtml = `<div id="det-${v.id}" class="hidden mt-3 pt-3 border-t border-slate-200 dark:border-slate-700/50 space-y-1.5">`;
         v.items?.forEach(i => { 
             iHtml += `<div class="flex justify-between text-xs items-center"><p class="text-slate-500 pr-2 leading-tight"><span class="text-sky-500 font-bold">${i.cantidad}x</span> ${i.nombre}</p><p class="text-[10px] text-emerald-500 font-bold">${formatMoney(i.precio * i.cantidad)}</p></div>`; 
         });
@@ -307,19 +331,19 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
         // Botones de acción dinámicos para administradores (Igual que en Caja)
         if (isAdmin) {
             iHtml += `
-            <div class="flex gap-1.5 mt-3 justify-end border-t border-slate-700/30 pt-2">
-                <button onclick="window.editarOperacionCaja('venta', '${v.id}', ${v.total})" class="text-slate-500 hover:text-amber-500 hover:bg-slate-900 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
-                <button onclick="window.eliminarOperacionCaja('venta', '${v.id}')" class="text-slate-500 hover:text-red-500 hover:bg-slate-900 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Anular</button>
+            <div class="flex gap-1.5 mt-3 justify-end border-t border-slate-200 dark:border-slate-700/30 pt-2">
+                <button onclick="window.editarOperacionCaja('venta', '${v.id}', ${v.total})" class="text-slate-500 hover:text-amber-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
+                <button onclick="window.eliminarOperacionCaja('venta', '${v.id}')" class="text-slate-500 hover:text-red-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Anular</button>
             </div>
             `;
         }
         iHtml += `</div>`;
         
         lHtml += `
-            <div class="bg-slate-800 p-3.5 rounded-xl border border-slate-700 flex flex-col cursor-pointer hover:border-emerald-500/50 transition-colors group mb-2 shadow-sm" onclick="if(event.target.closest('button')) return; document.getElementById('det-${v.id}').classList.toggle('hidden')">
+            <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col cursor-pointer hover:border-emerald-500/50 transition-colors group mb-2 shadow-sm" onclick="if(event.target.closest('button')) return; document.getElementById('det-${v.id}').classList.toggle('hidden')">
                 <div class="flex justify-between items-center">
                     <div class="flex items-center gap-3">
-                        <div class="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500 shrink-0"><i data-lucide="shopping-cart" class="w-4 h-4"></i></div>
+                        <div class="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center text-emerald-500 shrink-0 border border-emerald-200 dark:border-emerald-500/20"><i data-lucide="shopping-cart" class="w-4 h-4"></i></div>
                         <div>
                             <p class="text-xs font-bold text-slate-800 dark:text-white">Venta POS <span class="text-[9px] text-slate-400 font-normal ml-1">#${num}</span></p>
                             <p class="text-[10px] text-slate-500">${cantItems} item(s) ${localInfo}</p>
@@ -341,19 +365,19 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
         let gHtml = `<div id="det-${g.id}" class="hidden mt-3 pt-2">`;
         if (isAdmin) {
             gHtml += `
-            <div class="flex gap-1.5 justify-end border-t border-red-500/20 pt-2">
-                <button onclick="window.editarOperacionCaja('gasto', '${g.id}', ${g.monto})" class="text-slate-500 hover:text-amber-500 hover:bg-slate-900 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
-                <button onclick="window.eliminarOperacionCaja('gasto', '${g.id}')" class="text-slate-500 hover:text-red-500 hover:bg-slate-900 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Borrar</button>
+            <div class="flex gap-1.5 justify-end border-t border-red-200 dark:border-red-500/20 pt-2">
+                <button onclick="window.editarOperacionCaja('gasto', '${g.id}', ${g.monto})" class="text-slate-500 hover:text-amber-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
+                <button onclick="window.eliminarOperacionCaja('gasto', '${g.id}')" class="text-slate-500 hover:text-red-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Borrar</button>
             </div>
             `;
         }
         gHtml += `</div>`;
 
         lHtml += `
-            <div class="bg-red-500/5 p-3.5 rounded-xl border border-red-500/20 flex flex-col cursor-pointer hover:border-red-500/40 transition-colors group mb-2 shadow-sm" onclick="if(event.target.closest('button')) return; document.getElementById('det-${g.id}').classList.toggle('hidden')">
+            <div class="bg-red-50 dark:bg-red-500/5 p-3.5 rounded-xl border border-red-200 dark:border-red-500/20 flex flex-col cursor-pointer hover:border-red-300 dark:hover:border-red-500/40 transition-colors group mb-2 shadow-sm" onclick="if(event.target.closest('button')) return; document.getElementById('det-${g.id}').classList.toggle('hidden')">
                 <div class="flex justify-between items-center">
                     <div class="flex items-center gap-3">
-                        <div class="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 shrink-0"><i data-lucide="trending-down" class="w-4 h-4"></i></div>
+                        <div class="w-8 h-8 rounded-full bg-red-100 dark:bg-red-500/10 flex items-center justify-center text-red-500 shrink-0 border border-red-200 dark:border-red-500/20"><i data-lucide="trending-down" class="w-4 h-4"></i></div>
                         <div>
                             <p class="text-xs font-bold text-red-500">Gasto</p>
                             <p class="text-[10px] text-slate-500">${g.descripcion} ${localInfo}</p>
@@ -361,7 +385,7 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
                     </div>
                     <div class="text-right">
                         <p class="text-sm font-black text-red-500">- ${formatMoney(g.monto)}</p>
-                        <p class="text-[9px] text-red-400/50 font-bold mt-0.5">${time}</p>
+                        <p class="text-[9px] text-red-400/70 font-bold mt-0.5">${time}</p>
                     </div>
                 </div>
                 ${gHtml}
@@ -402,15 +426,15 @@ function showBreakdown(type, dayObj, gIng = null, gEfe = null, gYap = null, gTar
         `;
         
         paymentContainer.innerHTML = `
-            <div class="flex justify-between items-center bg-slate-800 p-3 rounded-xl border border-slate-700 shadow-sm mb-2">
+            <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mb-2">
                 <span class="text-sm font-bold text-slate-800 dark:text-white flex items-center"><i data-lucide="banknote" class="w-4 h-4 inline mr-2 text-emerald-500"></i> Efectivo</span>
                 <span class="font-black text-slate-800 dark:text-white text-base">${formatMoney(tEfe)}</span>
             </div>
-            <div class="flex justify-between items-center bg-slate-800 p-3 rounded-xl border border-slate-700 shadow-sm mb-2">
+            <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mb-2">
                 <span class="text-sm font-bold text-slate-800 dark:text-white flex items-center"><i data-lucide="alert-circle" class="w-4 h-4 inline mr-2 text-purple-500"></i> Yape / Plin</span>
                 <span class="font-black text-slate-800 dark:text-white text-base">${formatMoney(tYap)}</span>
             </div>
-            <div class="flex justify-between items-center bg-slate-800 p-3 rounded-xl border border-slate-700 shadow-sm">
+            <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
                 <span class="text-sm font-bold text-slate-800 dark:text-white flex items-center"><i data-lucide="credit-card" class="w-4 h-4 inline mr-2 text-sky-500"></i> Tarjeta</span>
                 <span class="font-black text-slate-800 dark:text-white text-base">${formatMoney(tTar)}</span>
             </div>
@@ -449,7 +473,7 @@ function showBreakdown(type, dayObj, gIng = null, gEfe = null, gYap = null, gTar
             if (catName.includes('gaseosa')) icon = 'droplets';
             
             htmlCats += `
-                <div class="flex justify-between items-center bg-slate-900/50 p-3 rounded-xl border border-slate-700/50 mb-2">
+                <div class="flex justify-between items-center bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-200 dark:border-slate-700/50 mb-2 shadow-sm">
                     <div class="flex items-center gap-3">
                         <i data-lucide="${icon}" class="w-4 h-4 text-slate-500"></i>
                         <span class="text-sm font-bold text-slate-800 dark:text-white capitalize">${catName}</span>
@@ -471,21 +495,21 @@ function showBreakdown(type, dayObj, gIng = null, gEfe = null, gYap = null, gTar
         `;
         
         paymentContainer.innerHTML = `
-            <div class="flex justify-between items-center bg-slate-800 p-3 rounded-xl border border-slate-700 shadow-sm mb-2">
+            <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mb-2">
                 <span class="text-sm font-bold text-slate-800 dark:text-white flex items-center"><i data-lucide="trending-up" class="w-4 h-4 inline mr-2 text-sky-500"></i> Ingreso Total</span>
                 <span class="font-black text-slate-800 dark:text-white text-base">${formatMoney(tIng)}</span>
             </div>
-            <div class="flex justify-between items-center bg-red-500/10 p-3 rounded-xl border border-red-500/30 shadow-sm">
+            <div class="flex justify-between items-center bg-red-50 dark:bg-red-500/10 p-3 rounded-xl border border-red-200 dark:border-red-500/30 shadow-sm">
                 <span class="text-sm font-bold text-red-500 flex items-center"><i data-lucide="trending-down" class="w-4 h-4 inline mr-2 text-red-500"></i> Gastos/Retiros</span>
                 <span class="font-black text-red-500 text-base">-${formatMoney(tGas)}</span>
             </div>
         `;
         
         cL.innerHTML = `
-            <div class="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-xl mt-4 flex justify-between items-center shadow-sm">
+            <div class="bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 p-4 rounded-xl mt-4 flex justify-between items-center shadow-sm">
                 <div>
                     <p class="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">Caja Neta Real</p>
-                    <p class="text-xs text-emerald-600/70">Dinero disponible tras egresos</p>
+                    <p class="text-xs text-emerald-600/70 dark:text-emerald-500/70">Dinero disponible tras egresos</p>
                 </div>
                 <span class="text-2xl font-black text-emerald-500">${formatMoney(tIng - tGas)}</span>
             </div>
