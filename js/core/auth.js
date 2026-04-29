@@ -20,7 +20,6 @@ export function initAuth() {
                 const data = sysDoc.data();
                 isSystemLocked = data.cerrado === true;
                 
-                // ACTUALIZACIÓN DE IDENTIDAD EN TIEMPO REAL
                 if (data.logoUrl) actualizarLogoGlobal(data.logoUrl);
                 if (data.nombreApp) actualizarNombreAppGlobal(data.nombreApp);
             } else {
@@ -63,7 +62,7 @@ export function initAuth() {
                 console.warn("Aviso: No se pudo leer perfil de usuario.", error);
             });
 
-            // FIX: Envolver en Try/Catch. Si un Vendedor no tiene permiso de escritura, se ignora y el Login avanza.
+            // Actualizamos último acceso de forma segura (sin bloquear el login si falla)
             try {
                 await setDoc(doc(db, "usuarios", user.uid), { email: user.email, ultimoAcceso: new Date().toISOString() }, { merge: true });
             } catch (err) {
@@ -167,16 +166,37 @@ function quitarError404() { document.getElementById('error-404-screen')?.classLi
 function aplicarPermisosVisuales(userDocData) {
     const r = state.userRole;
     const permisosVendedor = userDocData?.permisos || []; 
-    const views = { 'nav-ventas': document.getElementById('nav-ventas'), 'nav-pedidos': document.getElementById('nav-pedidos'), 'nav-inventario': document.getElementById('nav-inventario'), 'nav-caja': document.getElementById('nav-caja'), 'nav-analisis': document.getElementById('nav-analisis'), 'nav-usuarios': document.getElementById('nav-usuarios'), 'nav-respaldo': document.getElementById('nav-respaldo') };
+    const views = { 
+        'nav-ventas': document.getElementById('nav-ventas'), 
+        'nav-pedidos': document.getElementById('nav-pedidos'), 
+        'nav-inventario': document.getElementById('nav-inventario'), 
+        'nav-caja': document.getElementById('nav-caja'), 
+        'nav-analisis': document.getElementById('nav-analisis'), 
+        'nav-usuarios': document.getElementById('nav-usuarios'), 
+        'nav-respaldo': document.getElementById('nav-respaldo') 
+    };
+
+    // --- NUEVO: Control de elementos y filtros internos (.solo-admin, .solo-master) ---
+    const adminElements = document.querySelectorAll('.solo-admin');
+    const masterElements = document.querySelectorAll('.solo-master');
 
     if (r === 'master') {
         Object.values(views).forEach(v => v && v.classList.remove('hidden'));
+        adminElements.forEach(el => el.classList.remove('hidden'));
+        masterElements.forEach(el => el.classList.remove('hidden'));
     } else if (r === 'admin' || r === 'Administrador') {
         Object.values(views).forEach(v => v && v.classList.remove('hidden'));
         if (views['nav-respaldo']) views['nav-respaldo'].classList.add('hidden');
+        
+        adminElements.forEach(el => el.classList.remove('hidden'));
+        masterElements.forEach(el => el.classList.add('hidden'));
+        
         const viewRespaldo = document.getElementById('view-respaldo');
         if (viewRespaldo && !viewRespaldo.classList.contains('hidden')) window.switchView('ventas');
     } else {
+        adminElements.forEach(el => el.classList.add('hidden'));
+        masterElements.forEach(el => el.classList.add('hidden'));
+        
         const defaultVendedor = ['nav-ventas', 'nav-pedidos', 'nav-inventario'];
         for (const [id, el] of Object.entries(views)) {
             if (!el) continue;
