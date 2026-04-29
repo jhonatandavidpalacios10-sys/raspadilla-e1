@@ -65,9 +65,9 @@ async function updateAnalysisRange() {
             const v = d.data(); 
             let mostrar = false;
             if (state.userRole === 'admin' || state.userRole === 'master') {
-                mostrar = (lF === 'todas') || (v.localId === lF);
+                mostrar = (lF === 'todas') || (v.localId === lF) || (lF === 'todas' && !v.localId);
             } else {
-                mostrar = (v.localId === lF) || (!v.localId);
+                mostrar = (v.localId === state.userLocalId) || (!v.localId);
             }
             
             if (mostrar && v.estado !== 'rechazado') analysisData.push({ id: d.id, ...v }); 
@@ -78,9 +78,9 @@ async function updateAnalysisRange() {
             const g = d.data(); 
             let mostrar = false;
             if (state.userRole === 'admin' || state.userRole === 'master') {
-                mostrar = (lF === 'todas') || (g.localId === lF) || (g.localId === '');
+                mostrar = (lF === 'todas') || (g.localId === lF) || (g.localId === '') || (lF === 'todas' && !g.localId);
             } else {
-                mostrar = (g.localId === lF) || (g.localId === '') || (!g.localId);
+                mostrar = (g.localId === state.userLocalId) || (g.localId === '') || (!g.localId);
             }
             if (mostrar) analysisGastos.push({ id: d.id, ...g }); 
         });
