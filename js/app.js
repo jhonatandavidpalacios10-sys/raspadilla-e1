@@ -142,22 +142,24 @@ document.addEventListener("DOMContentLoaded", () => {
     onAuthStateChanged(auth, async (user) => {
         if (user && !datosCargados) {
             try {
-                // 1. Inicializar eventos base de UI (Tienen candados, no se duplican)
+                // 1. OBTENER IDENTIDAD PRIMERO (Crucial para filtros de sedes y roles)
                 await initUsuarios(); 
-                await initInventario(); 
+                await cargarUsuariosYLocales(); 
+                
+                // 2. INICIALIZAR VISTAS (Preparar el DOM y exponer funciones globales)
                 initVentas(); 
                 initPedidos(); 
                 initRespaldo();
                 initCaja(); 
                 initAnalisis(); 
                 
-                // 2. FORZAR CARGA DE DATOS EN CADA LOGIN (Resuelve el bug de pantalla vacía)
-                await cargarUsuariosYLocales(); 
+                // 3. CARGAR INVENTARIO AL FINAL (Así window.renderProductosVenta ya existe cuando Firebase responda)
+                await initInventario(); 
+                
+                // 4. DOBLE SEGURO: Forzar re-dibujado visual explícito (Garantiza que la UI despierte)
                 if (typeof window.cargarInventarioDesdeFirebase === 'function') {
                     await window.cargarInventarioDesdeFirebase();
                 }
-                
-                // 3. FORZAR RENDERIZADO VISUAL EXPLÍCITO DE VENTAS
                 if (typeof window.renderProductosVenta === 'function') window.renderProductosVenta();
                 if (typeof window.actualizarCarritoUI === 'function') window.actualizarCarritoUI();
                 
