@@ -109,7 +109,7 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
             
             let mostrar = false;
             if (state.userRole === 'admin' || state.userRole === 'master') {
-                mostrar = (filtroLocal === 'todas') || (v.localId === filtroLocal);
+                mostrar = (filtroLocal === 'todas') || (v.localId === filtroLocal) || (filtroLocal === 'todas' && !v.localId);
             } else {
                 mostrar = (v.localId === state.userLocalId) || (!v.localId);
             }
@@ -131,7 +131,7 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
             
             let mostrar = false;
             if (state.userRole === 'admin' || state.userRole === 'master') {
-                mostrar = (filtroLocal === 'todas') || (g.localId === filtroLocal) || (g.localId === '');
+                mostrar = (filtroLocal === 'todas') || (g.localId === filtroLocal) || (g.localId === '') || (filtroLocal === 'todas' && !g.localId);
             } else {
                 mostrar = (g.localId === state.userLocalId) || (g.localId === '') || (!g.localId);
             }
@@ -147,7 +147,7 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
 
         // Renderizado del Historial de Movimientos
         if (allItems.length === 0) {
-            list.innerHTML = '<div class="col-span-full bg-slate-900 border border-slate-800 rounded-xl p-6 text-center text-slate-500"><i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 opacity-50"></i><p class="text-sm font-bold">No hay operaciones registradas aún.</p></div>';
+            list.innerHTML = '<div class="col-span-full bg-slate-800 border border-slate-700 rounded-xl p-6 text-center text-slate-500 shadow-sm"><i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 opacity-50"></i><p class="text-sm font-bold">No hay operaciones registradas aún.</p></div>';
         } else {
             let html = '';
             const isAdmin = state.userRole === 'master' || state.userRole === 'admin';
@@ -157,9 +157,9 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
                 
                 // Botones de acción dinámicos para administradores
                 const btnActions = isAdmin ? `
-                    <div class="flex gap-1.5 mt-2 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity justify-end border-t border-slate-800/50 pt-2">
-                        <button onclick="window.editarOperacionCaja('${item.tipo}', '${item.id}', ${item.tipo === 'venta' ? item.total : item.monto})" class="text-slate-400 hover:text-amber-400 hover:bg-slate-800/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
-                        <button onclick="window.eliminarOperacionCaja('${item.tipo}', '${item.id}')" class="text-slate-400 hover:text-red-400 hover:bg-slate-800/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> ${item.tipo === 'venta' ? 'Anular' : 'Borrar'}</button>
+                    <div class="flex gap-1.5 mt-2 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity justify-end border-t border-slate-700/50 pt-2">
+                        <button onclick="window.editarOperacionCaja('${item.tipo}', '${item.id}', ${item.tipo === 'venta' ? item.total : item.monto})" class="text-slate-400 hover:text-amber-400 hover:bg-slate-700/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
+                        <button onclick="window.eliminarOperacionCaja('${item.tipo}', '${item.id}')" class="text-slate-400 hover:text-red-400 hover:bg-slate-700/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> ${item.tipo === 'venta' ? 'Anular' : 'Borrar'}</button>
                     </div>
                 ` : '';
 
@@ -175,12 +175,12 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
                     <div class="bg-slate-800/50 border border-slate-700 p-3 rounded-xl hover:border-slate-600 transition-all group shadow-sm ${opacity}">
                         <div class="flex justify-between items-start">
                             <div class="flex items-center gap-3">
-                                <div class="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0">
+                                <div class="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0 border border-emerald-500/20">
                                     <i data-lucide="shopping-cart" class="w-4 h-4"></i>
                                 </div>
                                 <div>
-                                    <p class="text-sm font-bold text-white">Venta POS ${isRechazado ? '<span class="text-[9px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded uppercase ml-2">Anulada</span>' : ''}</p>
-                                    <p class="text-[10px] text-slate-400">${numItems} item(s) ${item.localNombre && item.localNombre !== 'Sin Local' ? `• ${item.localNombre}` : ''}</p>
+                                    <p class="text-sm font-bold text-slate-800 dark:text-white">Venta POS ${isRechazado ? '<span class="text-[9px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded uppercase ml-2">Anulada</span>' : ''}</p>
+                                    <p class="text-[10px] text-slate-500">${numItems} item(s) ${item.localNombre && item.localNombre !== 'Sin Local' ? `• ${item.localNombre}` : ''}</p>
                                 </div>
                             </div>
                             <div class="text-right">
@@ -195,12 +195,12 @@ async function cargarArqueoCaja(filtroLocal = 'todas') {
                     <div class="bg-red-500/5 border border-red-500/20 p-3 rounded-xl hover:border-red-500/40 transition-all group shadow-sm">
                         <div class="flex justify-between items-start">
                             <div class="flex items-center gap-3">
-                                <div class="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center text-red-400 shrink-0">
+                                <div class="w-8 h-8 rounded-full bg-red-500/10 flex items-center justify-center text-red-400 shrink-0 border border-red-500/20">
                                     <i data-lucide="trending-down" class="w-4 h-4"></i>
                                 </div>
                                 <div>
                                     <p class="text-sm font-bold text-red-400">Gasto Registrado</p>
-                                    <p class="text-[10px] text-slate-400">${item.descripcion} ${item.localNombre && item.localNombre !== 'Global' ? `• ${item.localNombre}` : ''}</p>
+                                    <p class="text-[10px] text-slate-500">${item.descripcion} ${item.localNombre && item.localNombre !== 'Global' ? `• ${item.localNombre}` : ''}</p>
                                 </div>
                             </div>
                             <div class="text-right">
