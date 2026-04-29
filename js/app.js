@@ -136,14 +136,14 @@ document.addEventListener("DOMContentLoaded", () => {
     onAuthStateChanged(auth, async (user) => {
         if (user && !datosCargados) {
             try {
-                // 1. PRIMERO cargar usuarios y locales (para que los filtros se llenen de datos)
+                // 1. PRIMERO cargar usuarios y locales
                 await initUsuarios(); 
                 await cargarUsuariosYLocales(); 
                 
-                // 2. DESPUÉS cargar el inventario (que depende de los locales)
+                // 2. DESPUÉS cargar el inventario
                 await initInventario(); 
                 
-                // 3. FINALMENTE inicializar las vistas que dependen de que los filtros ya existan
+                // 3. FINALMENTE inicializar las vistas
                 initVentas(); 
                 initPedidos(); 
                 initRespaldo();
@@ -153,7 +153,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 datosCargados = true;
             } catch(e) {
                 console.error("Error inicializando componentes modulares:", e);
-                // Forzamos a true para que deje al usuario entrar, aunque alguna parte no cargue bien
                 datosCargados = true; 
             }
         } else if (!user) { 
@@ -170,7 +169,7 @@ document.addEventListener("DOMContentLoaded", () => {
             e.preventDefault(); 
             document.getElementById('login-error').classList.add('hidden');
             const ot = bs.innerHTML; 
-            bs.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Conectando...'; 
+            bs.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin inline"></i> Conectando...'; 
             bs.disabled = true;
             
             try { 
@@ -181,30 +180,28 @@ document.addEventListener("DOMContentLoaded", () => {
                 let finalEmail = '';
                 let displayUsername = rawUser;
 
-                // 1. LÓGICA DE BÚSQUEDA INTELIGENTE
+                // 1. LÓGICA DE BÚSQUEDA INTELIGENTE (DIRECTORIO PÚBLICO)
                 if (rawUser.includes('@')) {
-                    // Si el usuario forzó escribir un correo, lo usamos tal cual
                     finalEmail = rawUser;
                     displayUsername = rawUser.split('@')[0];
                 } else {
-                    // Buscamos cuál es el correo real oculto de este usuario
-                    const qUser = query(collection(db, "usuarios"), where("username", "==", rawUser), where("activo", "==", true));
+                    // BUSCAMOS EN EL DIRECTORIO PÚBLICO
+                    const qUser = query(collection(db, "directorio_login"), where("username", "==", rawUser));
                     const userSnap = await getDocs(qUser);
 
                     if (!userSnap.empty) {
-                        // Encontramos la cuenta nueva/segura
                         finalEmail = userSnap.docs[0].data().email;
                         displayUsername = userSnap.docs[0].data().username;
                     } else {
-                        // SALVAVIDAS: Fallback para cuentas antiguas creadas antes de la actualización
+                        // SALVAVIDAS: Fallback para cuentas antiguas
                         finalEmail = rawUser + '@raspadillas.com';
                     }
                 }
                 
-                // 2. Ejecutar Login con el correo real
+                // 2. Ejecutar Login
                 await login(finalEmail, pass); 
                 
-                // 3. Guardar en perfiles locales para inicio rápido
+                // 3. Guardar en perfiles locales
                 saveAccount(finalEmail, displayUsername, pass);
 
                 setTimeout(() => { bs.innerHTML = ot; bs.disabled = false; }, 1000); 
