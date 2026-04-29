@@ -135,16 +135,21 @@ document.addEventListener("DOMContentLoaded", () => {
     // Escuchador del Estado de Autenticación
     onAuthStateChanged(auth, async (user) => {
         if (user && !datosCargados) {
-            // FIX: Try-catch general para evitar que un módulo roto congele toda la app en la pantalla de login
             try {
-                initVentas(); 
-                initCaja(); 
-                initPedidos(); 
-                initAnalisis(); 
-                initRespaldo();
+                // 1. PRIMERO cargar usuarios y locales (para que los filtros se llenen de datos)
                 await initUsuarios(); 
+                await cargarUsuariosYLocales(); 
+                
+                // 2. DESPUÉS cargar el inventario (que depende de los locales)
                 await initInventario(); 
-                cargarUsuariosYLocales(); 
+                
+                // 3. FINALMENTE inicializar las vistas que dependen de que los filtros ya existan
+                initVentas(); 
+                initPedidos(); 
+                initRespaldo();
+                initCaja(); 
+                initAnalisis(); 
+                
                 datosCargados = true;
             } catch(e) {
                 console.error("Error inicializando componentes modulares:", e);
