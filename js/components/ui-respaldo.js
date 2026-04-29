@@ -2,8 +2,13 @@ import { db, collection, getDocs, doc, writeBatch, setDoc, getDoc, onSnapshot } 
 import { state } from '../core/store.js';
 
 let sysEstadoUnsubscribe = null;
+let respaldoInicializado = false; // CANDADO AÑADIDO
 
 export function initRespaldo() { 
+    // FIX CRÍTICO: Prevenir duplicación de eventos al rotar turnos
+    if (respaldoInicializado) return;
+    respaldoInicializado = true;
+
     // Eventos de Backup
     document.getElementById('btn-exportar-backup')?.addEventListener('click', exportBackup);
     document.getElementById('btn-importar-backup')?.addEventListener('click', () => {
