@@ -14,6 +14,10 @@ export function initRespaldo() {
     // Evento Nuevo: Borrado Seguro (Solo Master)
     document.getElementById('btn-borrado-masivo')?.addEventListener('click', iniciarBorradoSeguro);
 
+    // --- FIX CRÍTICO: Conectar el botón de suspensión directamente ---
+    // Esto asegura que el botón siempre responda, sin importar cómo cambie su diseño
+    document.getElementById('btn-toggle-sistema')?.addEventListener('click', toggleSistemaLock);
+
     // Funciones globales expuestas para el HTML
     window.toggleSistemaLock = toggleSistemaLock;
     window.subirLogoApp = subirLogoApp;
@@ -31,13 +35,21 @@ export function initRespaldo() {
         if (docSnap.exists() && docSnap.data().cerrado === true) {
             txt.textContent = "Desconectado (Error 503)";
             txt.className = "text-xs font-bold text-red-500 animate-pulse";
-            btn.innerHTML = '<i data-lucide="power" class="w-5 h-5"></i> Reactivar Conexión';
-            btn.className = "w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex justify-center items-center gap-2 relative z-10 shadow-lg shadow-emerald-500/20 transition-all";
+            
+            // Usamos innerHTML con pointer-events-none para que el icono no absorba el clic
+            btn.innerHTML = '<i data-lucide="power" class="w-5 h-5 pointer-events-none"></i> <span class="pointer-events-none">Reactivar Conexión</span>';
+            
+            // Modificamos solo los colores usando classList (Evita borrar la estructura del botón)
+            btn.classList.remove('bg-red-600', 'hover:bg-red-500', 'shadow-red-500/20');
+            btn.classList.add('bg-emerald-600', 'hover:bg-emerald-500', 'shadow-emerald-500/20');
         } else {
             txt.textContent = "En Línea";
-            txt.className = "text-xs font-bold text-emerald-400";
-            btn.innerHTML = '<i data-lucide="alert-octagon" class="w-5 h-5"></i> Suspender';
-            btn.className = "w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold flex justify-center items-center gap-2 relative z-10 shadow-lg shadow-red-500/20 transition-all";
+            txt.className = "text-xs font-bold text-emerald-500";
+            
+            btn.innerHTML = '<i data-lucide="alert-octagon" class="w-5 h-5 pointer-events-none"></i> <span class="pointer-events-none">Suspender</span>';
+            
+            btn.classList.remove('bg-emerald-600', 'hover:bg-emerald-500', 'shadow-emerald-500/20');
+            btn.classList.add('bg-red-600', 'hover:bg-red-500', 'shadow-red-500/20');
         }
         if (window.lucide) window.lucide.createIcons();
     });
