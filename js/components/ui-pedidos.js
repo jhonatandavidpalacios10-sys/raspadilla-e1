@@ -4,8 +4,8 @@ import { getTodayDateStr } from '../utils/helpers.js';
 
 let unsubscribePedidos = null;
 let pedidosInicializado = false;
-let pedidosGlobales = []; // Guarda todos los del día
-let filtroLocalPedidos = 'todas'; // Controlado por el Select del Master/Admin
+let pedidosGlobales = []; 
+let filtroLocalPedidos = 'todas'; 
 
 export function initPedidos() { 
     if (pedidosInicializado) return;
@@ -16,7 +16,7 @@ export function initPedidos() {
     if (selectFiltro) {
         selectFiltro.addEventListener('change', (e) => {
             filtroLocalPedidos = e.target.value;
-            renderPedidosUI(); // Solo actualiza la vista (no gasta lecturas extras en Firebase)
+            renderPedidosUI(); 
         });
     }
 
@@ -34,18 +34,17 @@ export function initPedidos() {
         });
     }
     
-    // FIX: Dar tiempo a que el perfil de usuario cargue completamente antes de iniciar la escucha
-    // Esto evita que salgan en blanco la primera vez que se abre la aplicación.
-    setTimeout(() => {
-        iniciarEscuchaPedidos(); 
-    }, 800);
+    // Como en app.js ya nos aseguramos de que el perfil y los locales carguen primero,
+    // podemos iniciar la escucha de datos inmediatamente, sin retrasos.
+    iniciarEscuchaPedidos(); 
 }
 
 function iniciarEscuchaPedidos() {
     if(unsubscribePedidos) unsubscribePedidos();
     const hoy = getTodayDateStr(); 
     
-    // MAGIA: Traemos TODOS los pedidos del día a la RAM (Sin filtro de local aquí)
+    // Traemos los pedidos del día (Por reglas de seguridad y rendimiento, 
+    // filtramos en memoria RAM para no hacer consultas compuestas complejas)
     const q = query(collection(db, "ventas"), where("fechaStr", "==", hoy));
     
     unsubscribePedidos = onSnapshot(q, (snapshot) => {
@@ -63,17 +62,22 @@ function renderPedidosUI() {
     let pendientes = [], listos = [];
     
     pedidosGlobales.forEach(v => {
-        // FILTRO JS MULTI-SEDE
+        // FILTRO JS MULTI-SEDE REPARADO
         const isAdmin = (state.userRole === 'admin' || state.userRole === 'master');
         const miSedeId = state.userLocalId || ""; 
         
         let mostrar = false;
         if (isAdmin) {
-            // Admin ve lo que elija en el select. Si elige 'todas', ve TODO.
-            // Si el pedido no tiene localId (antiguo), lo muestra en "todas".
-            mostrar = (filtroLocalPedidos === 'todas' || v.localId === filtroLocalPedidos || (filtroLocalPedidos === 'todas' && !v.localId));
+            if (filtroLocalPedidos === 'todas') {
+                mostrar = true;
+            } else if (filtroLocalPedidos === '') {
+                // Captura exacta para la opción "Sin Asignar / Antiguas"
+                mostrar = !v.localId || v.localId === '';
+            } else {
+                mostrar = v.localId === filtroLocalPedidos;
+            }
         } else {
-            // Vendedor ve solo las de su sede (O las que no tienen sede por si son viejas/globales)
+            // Vendedor ve solo las de su sede (O las globales sin asignar)
             mostrar = (!v.localId || v.localId === miSedeId);
         }
 
@@ -83,7 +87,7 @@ function renderPedidosUI() {
         }
     });
 
-    // Ordenar: Los más antiguos primero (los que llevan más tiempo esperando)
+    // Ordenar: Los más antiguos primero
     pendientes.sort((a,b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
     listos.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
 
