@@ -202,12 +202,15 @@ async function ejecutarCambioEstado(idVenta, nuevoEstado) {
                 cantidad_ventas: increment(-1)
             }, { merge: true });
 
-            // 3. Devolver los productos al inventario
+            // 3. Devolver los productos al inventario (Protección para productos ilimitados)
             if (vData.items) {
                 vData.items.forEach(item => {
                     if (item.productoId !== 'AJUSTE') {
-                        const pRef = doc(db, "productos", item.productoId);
-                        batch.update(pRef, { stock: increment(item.cantidad) });
+                        const p = state.productos.find(x => x.id === item.productoId);
+                        if (p && p.stock !== null) {
+                            const pRef = doc(db, "productos", item.productoId);
+                            batch.update(pRef, { stock: increment(item.cantidad) });
+                        }
                     }
                 });
             }
@@ -251,12 +254,15 @@ async function editarPedido(idVenta) {
                     cantidad_ventas: increment(-1)
                 }, { merge: true });
 
-                // 2. Liberar el stock original
+                // 2. Liberar el stock original (Protección para productos ilimitados)
                 if (vData.items) {
                     vData.items.forEach(item => {
                         if (item.productoId !== 'AJUSTE') {
-                            const pRef = doc(db, "productos", item.productoId);
-                            batch.update(pRef, { stock: increment(item.cantidad) });
+                            const p = state.productos.find(x => x.id === item.productoId);
+                            if (p && p.stock !== null) {
+                                const pRef = doc(db, "productos", item.productoId);
+                                batch.update(pRef, { stock: increment(item.cantidad) });
+                            }
                         }
                     });
                 }
