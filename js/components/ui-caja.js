@@ -9,6 +9,7 @@ let ventasDelDia = [];
 let gastosDelDia = [];
 
 export function initCaja() {
+    // CANDADO: Evita duplicación de listeners si cambia el turno (Bug Fantasma solucionado)
     if(cajaInicializada) return;
     cajaInicializada = true;
 
@@ -32,363 +33,259 @@ function iniciarEscuchaCaja() {
     if(unsubscribeVentasCaja) unsubscribeVentasCaja();
     if(unsubscribeGastosCaja) unsubscribeGastosCaja();
 
-    // Traemos todo lo del día actual a la RAM (Optimizando lecturas)
+    // Traemos todas las ventas del día actual
     const qVentas = query(collection(db, "ventas"), where("fechaStr", "==", hoy));
-    const qGastos = query(collection(db, "gastos"), where("fechaStr", "==", hoy));
-
     unsubscribeVentasCaja = onSnapshot(qVentas, (snapshot) => {
-        ventasDelDia = [];
-        snapshot.forEach(d => { ventasDelDia.push({ id: d.id, ...d.data() }); });
+        ventasDelDia = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         renderArqueoCaja();
     });
 
+    // Traemos todos los gastos/retiros del día actual
+    const qGastos = query(collection(db, "gastos"), where("fechaStr", "==", hoy));
     unsubscribeGastosCaja = onSnapshot(qGastos, (snapshot) => {
-        gastosDelDia = [];
-        snapshot.forEach(d => { gastosDelDia.push({ id: d.id, ...d.data() }); });
+        gastosDelDia = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         renderArqueoCaja();
     });
 }
 
-function abrirModalGasto() {
-    const modal = document.getElementById('modal-gasto'); 
-    if(!modal) return;
-    
-    const select = document.getElementById('gasto-local');
-    if(select && (state.userRole === 'admin' || state.userRole === 'master')) {
-        let opts = '<option value="ambas">Dividir en todas las sedes (Global)</option>';
-        state.locales.forEach(l => opts += `<option value="${l.id}">${l.nombre}</option>`);
-        select.innerHTML = opts; 
-        select.parentElement.classList.remove('hidden');
-    } else if (select) {
-        select.innerHTML = `<option value="${state.userLocalId || ''}">${state.userLocal || 'Mi Local'}</option>`;
-        select.parentElement.classList.add('hidden');
+function renderArqueoCaja() {
+    const localSelect = document.getElementById('filtro-local-caja');
+    const localFiltro = localSelect ? localSelect.value : 'todas';
+
+    // Filtrar por local (si el Admin está viendo locales específicos)
+    let vFiltradas = ventasDelDia;
+    let gFiltrados = gastosDelDia;
+
+    if (localFiltro !== 'todas') {
+        vFiltradas = ventasDelDia.filter(v => v.localId === localFiltro);
+        gFiltrados = gastosDelDia.filter(g => g.localId === localFiltro);
     }
-    
-    document.getElementById('form-gasto').reset();
-    modal.classList.remove('hidden'); 
-    setTimeout(() => modal.classList.remove('opacity-0'), 10);
-    if(window.lucide) window.lucide.createIcons();
+
+    let totalIngresos = 0;
+    let totalEfectivo = 0;
+    let totalYape = 0;
+    let totalGastos = 0;
+
+    vFiltradas.forEach(v => {
+        totalIngresos += parseFloat(v.total || 0);
+        totalEfectivo += parseFloat(v.pago_efectivo || v.pagoEfectivo || 0);
+        totalYape += parseFloat(v.pago_yape || v.pagoYape || 0);
+    });
+
+    gFiltrados.forEach(g => {
+        totalGastos += parseFloat(g.monto || 0);
+    });
+
+    const netoEfectivo = totalEfectivo - totalGastos;
+
+    // Actualizar Panel Superior (Dashboard de Caja)
+    const elIngresos = document.getElementById('caja-total-ingresos');
+    const elEfectivo = document.getElementById('caja-total-efectivo');
+    const elYape = document.getElementById('caja-total-yape');
+    const elGastos = document.getElementById('caja-total-gastos');
+    const elNeto = document.getElementById('caja-neto-efectivo');
+
+    if(elIngresos) elIngresos.textContent = formatMoney(totalIngresos);
+    if(elEfectivo) elEfectivo.textContent = formatMoney(totalEfectivo);
+    if(elYape) elYape.textContent = formatMoney(totalYape);
+    if(elGastos) elGastos.textContent = formatMoney(totalGastos);
+    if(elNeto) elNeto.textContent = formatMoney(netoEfectivo);
+
+    // Pintar tarjetas
+    renderListaOperaciones(vFiltradas, gFiltrados);
 }
 
-function cerrarModalGasto() { 
-    const m = document.getElementById('modal-gasto'); 
-    if(m) {
-        m.classList.add('opacity-0'); 
-        setTimeout(() => m.classList.add('hidden'), 300); 
+function renderListaOperaciones(ventas, gastos) {
+    const lista = document.getElementById('lista-operaciones-caja');
+    if (!lista) return;
+
+    let operaciones = [
+        ...ventas.map(v => ({...v, tipoOp: 'venta', time: v.fechaHora || v.timestamp?.toMillis() || Date.now()})),
+        ...gastos.map(g => ({...g, tipoOp: 'gasto', time: g.fechaHora || g.timestamp?.toMillis() || Date.now()}))
+    ];
+
+    // Ordenar de la más reciente a la más antigua
+    operaciones.sort((a, b) => b.time - a.time);
+
+    if (operaciones.length === 0) {
+        lista.innerHTML = '<div class="text-center text-slate-500 py-8 flex flex-col items-center"><i data-lucide="inbox" class="w-10 h-10 mb-2 opacity-50"></i><p>No hay operaciones registradas aún.</p></div>';
+        if(window.lucide) window.lucide.createIcons();
+        return;
     }
+
+    lista.innerHTML = operaciones.map(op => {
+        const isVenta = op.tipoOp === 'venta';
+        const icon = isVenta ? 'trending-up' : 'trending-down';
+        const color = isVenta ? 'text-emerald-500' : 'text-red-500';
+        const bgIcon = isVenta ? 'bg-emerald-500/10' : 'bg-red-500/10';
+        const titulo = isVenta ? `Venta #${op.id.split('-')[1] || op.id.substring(0,6)}` : `Gasto: ${op.descripcion}`;
+        const monto = isVenta ? formatMoney(op.total) : formatMoney(op.monto);
+        
+        // --- TRAZABILIDAD VISUAL (AUDITORÍA AÑADIDA) ---
+        const autorOriginal = op.cajeroEmail || op.creadoPor || 'Vendedor Anónimo';
+        const autorEdicion = op.editadoPor ? `<span class="text-amber-500 ml-2 font-medium">(Editado por: ${op.editadoPor})</span>` : '';
+        const tagAutor = `<div class="text-[10.5px] text-slate-500 flex items-center mt-1"><i data-lucide="user" class="w-3 h-3 mr-1"></i> Cajero: <b class="ml-1">${autorOriginal}</b> ${autorEdicion}</div>`;
+
+        let badges = '';
+        if (isVenta) {
+            const efe = parseFloat(op.pago_efectivo || op.pagoEfectivo || 0);
+            const yap = parseFloat(op.pago_yape || op.pagoYape || 0);
+            if (efe > 0) badges += `<span class="bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 text-[10px] px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-500/30 mr-1">EFE: ${formatMoney(efe)}</span>`;
+            if (yap > 0) badges += `<span class="bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400 text-[10px] px-2 py-0.5 rounded border border-purple-200 dark:border-purple-500/30">YAP: ${formatMoney(yap)}</span>`;
+        }
+
+        return `
+        <div class="bg-white dark:bg-slate-800 p-4 rounded-xl border ${op.editadoPor ? 'border-amber-300 dark:border-amber-700/50 shadow-amber-500/10' : 'border-slate-200 dark:border-slate-700'} shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 relative transition-all hover:border-sky-300">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${bgIcon} ${color}">
+                    <i data-lucide="${icon}" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <p class="text-sm font-bold text-slate-800 dark:text-white capitalize flex items-center gap-2">
+                        ${titulo}
+                        ${op.editadoPor ? '<i data-lucide="alert-circle" class="w-3 h-3 text-amber-500" title="Ticket Editado"></i>' : ''}
+                    </p>
+                    <div class="mt-1">${badges}</div>
+                    ${tagAutor}
+                </div>
+            </div>
+            <div class="flex flex-col sm:items-end w-full sm:w-auto mt-2 sm:mt-0">
+                <span class="text-lg font-black ${color} mb-2 sm:mb-0">${isVenta ? '+' : '-'}${monto}</span>
+                
+                <!-- Solo administradores o dueños deberían editar/eliminar -->
+                ${(state.userRole === 'admin' || state.userRole === 'master') ? `
+                <div class="flex gap-2 w-full sm:w-auto justify-end">
+                    <button onclick="editarOperacionCaja('${op.id}', '${op.tipoOp}')" class="p-1.5 text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-500/10 rounded transition-colors border border-transparent hover:border-sky-200 dark:hover:border-sky-900" title="Editar Monto">
+                        <i data-lucide="edit" class="w-4 h-4"></i>
+                    </button>
+                    <button onclick="eliminarOperacionCaja('${op.id}', '${op.tipoOp}')" class="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded transition-colors border border-transparent hover:border-red-200 dark:hover:border-red-900" title="Anular Operación">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                </div>
+                ` : ''}
+            </div>
+        </div>`;
+    }).join('');
+
+    if(window.lucide) window.lucide.createIcons();
 }
 
 async function guardarGasto(e) {
     e.preventDefault();
-    const b = document.querySelector('#form-gasto button[type="submit"]'); 
-    const oT = b.innerHTML; 
-    b.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline"></i> Guardando...'; 
-    b.disabled = true;
+    const desc = document.getElementById('input-desc-gasto').value.trim();
+    const monto = parseFloat(document.getElementById('input-monto-gasto').value);
     
+    const localSelect = document.getElementById('filtro-local-caja');
+    const localId = localSelect && localSelect.value !== 'todas' ? localSelect.value : (state.userLocalId || 'general');
+    
+    if (!desc || isNaN(monto) || monto <= 0) return;
+
+    const btn = document.getElementById('btn-submit-gasto');
+    const origText = btn.innerHTML;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline mr-1"></i> Guardando...';
+    btn.disabled = true;
+
     try {
-        const m = parseFloat(document.getElementById('gasto-monto').value); 
-        const d = document.getElementById('gasto-desc').value.trim(); 
-        const l = document.getElementById('gasto-local').value;
-        const nombreL = l === 'ambas' ? 'Global' : (state.locales.find(x => x.id === l)?.nombre || 'Sede');
-        
-        await addDoc(collection(db, "gastos"), { 
-            monto: m, 
-            descripcion: d, 
-            fechaStr: getTodayDateStr(), 
-            timestamp: serverTimestamp(), 
-            localId: l === 'ambas' ? '' : l, 
-            localNombre: nombreL, 
-            registradoPor: state.currentUser.email 
+        const batch = writeBatch(db);
+        const gRef = doc(collection(db, "gastos"));
+        const fStr = getTodayDateStr();
+
+        batch.set(gRef, {
+            descripcion: desc,
+            monto: monto,
+            fechaStr: fStr,
+            fechaHora: Date.now(),
+            timestamp: serverTimestamp(),
+            localId: localId,
+            creadoPor: state.currentUser?.username || state.currentUser?.email || 'Desconocido',
+            tipo: 'gasto'
         });
-        
-        if(window.mostrarToast) window.mostrarToast('Gasto Registrado', `Se descontaron ${formatMoney(m)}`, 'red');
-        cerrarModalGasto(); 
-        // No llamamos a renderArqueoCaja() manualmente porque onSnapshot lo hará al instante
-    } catch(err) {
-        console.error(err);
-        if(window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo guardar el gasto.", "red");
-    } finally { 
-        b.innerHTML = oT; 
-        b.disabled = false; 
+
+        // Actualizar métricas diarias
+        const cRef = doc(db, "caja_diaria", `${fStr}_${localId}`);
+        batch.set(cRef, {
+            total_gastos: increment(monto)
+        }, { merge: true });
+
+        await batch.commit();
+
+        cerrarModalGasto();
+        document.getElementById('form-gasto').reset();
+        if(window.mostrarToast) window.mostrarToast('Gasto Registrado', 'El arqueo se ha actualizado y restado del neto.', 'sky');
+    } catch (error) {
+        console.error("Error al guardar gasto:", error);
+        if(window.mostrarAlerta) window.mostrarAlerta('Error', 'No se pudo guardar el gasto en la nube.', 'red');
+    } finally {
+        btn.innerHTML = origText;
+        btn.disabled = false;
         if(window.lucide) window.lucide.createIcons();
     }
 }
 
-function renderArqueoCaja() {
-    const list = document.getElementById('caja-historial-list'); 
-    if(!list) return;
-    
-    let filtroLocal = document.getElementById('filtro-local-caja')?.value || 'todas';
-    if (state.userRole !== 'master' && state.userRole !== 'admin') {
-        filtroLocal = state.userLocalId || '';
-    }
-
-    let total = 0, gastosTotal = 0, efe = 0, yape = 0; 
-    let allItems = [];
-    const isAdmin = state.userRole === 'master' || state.userRole === 'admin';
-
-    // 1. Procesar Ventas en RAM
-    ventasDelDia.forEach(v => {
-        let mostrar = false;
-        if (isAdmin) {
-            if (filtroLocal === 'todas') mostrar = true;
-            else if (filtroLocal === '') mostrar = !v.localId || v.localId === '';
-            else mostrar = v.localId === filtroLocal;
-        } else {
-            mostrar = (!v.localId || v.localId === state.userLocalId);
-        }
-        
-        if (mostrar && v.estado !== 'rechazado') {
-            total += parseFloat(v.total || 0); 
-            efe += parseFloat(v.pago_efectivo || v.pagoEfectivo || 0); 
-            yape += parseFloat(v.pago_yape || v.pagoYape || 0);
-        }
-        if (mostrar) allItems.push({ tipo: 'venta', ...v });
-    });
-
-    // 2. Procesar Gastos en RAM
-    gastosDelDia.forEach(g => {
-        let mostrar = false;
-        if (isAdmin) {
-            if (filtroLocal === 'todas') mostrar = true;
-            else if (filtroLocal === '') mostrar = !g.localId || g.localId === '';
-            else mostrar = g.localId === filtroLocal;
-        } else {
-            mostrar = (!g.localId || g.localId === state.userLocalId);
-        }
-        
-        if (mostrar) {
-            gastosTotal += parseFloat(g.monto || 0);
-            allItems.push({ tipo: 'gasto', ...g });
-        }
-    });
-
-    // Ordenar cronológicamente (más recientes primero)
-    allItems.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
-
-    // Renderizado UI
-    if (allItems.length === 0) {
-        list.innerHTML = '<div class="col-span-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-6 text-center text-slate-500 shadow-sm"><i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 opacity-50"></i><p class="text-sm font-bold">No hay operaciones registradas aún.</p></div>';
-    } else {
-        let html = '';
-        allItems.forEach(item => {
-            const hora = item.timestamp ? new Date(item.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
-            
-            // Botones de acción dinámicos
-            const btnActions = isAdmin ? `
-                <div class="flex gap-1.5 mt-2 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity justify-end border-t border-slate-200 dark:border-slate-700/50 pt-2">
-                    <button onclick="window.editarOperacionCaja('${item.tipo}', '${item.id}', ${item.tipo === 'venta' ? item.total : item.monto})" class="text-slate-500 hover:text-amber-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 dark:hover:bg-slate-700/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
-                    <button onclick="window.eliminarOperacionCaja('${item.tipo}', '${item.id}')" class="text-slate-500 hover:text-red-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 dark:hover:bg-slate-700/50 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> ${item.tipo === 'venta' ? 'Anular' : 'Borrar'}</button>
-                </div>
-            ` : '';
-
-            if (item.tipo === 'venta') {
-                const isRechazado = item.estado === 'rechazado';
-                const numItems = item.items ? item.items.length : 0;
-                const mp = String(item.metodo_pago || item.metodoFinal || 'EFECTIVO').toUpperCase();
-                const opacity = isRechazado ? 'opacity-50 grayscale' : '';
-                const amountColor = isRechazado ? 'text-slate-400 line-through' : 'text-emerald-500';
-                const sign = isRechazado ? '' : '+';
-                
-                html += `
-                <div class="bg-white dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 p-3 rounded-xl hover:border-slate-300 dark:hover:border-slate-600 transition-all group shadow-sm ${opacity}">
-                    <div class="flex justify-between items-start">
-                        <div class="flex items-center gap-3">
-                            <div class="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center text-emerald-500 shrink-0 border border-emerald-200 dark:border-emerald-500/20">
-                                <i data-lucide="shopping-cart" class="w-4 h-4"></i>
-                            </div>
-                            <div>
-                                <p class="text-sm font-bold text-slate-800 dark:text-white">Venta POS ${isRechazado ? '<span class="text-[9px] bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400 px-1.5 py-0.5 rounded uppercase ml-2 border border-red-200 dark:border-transparent">Anulada</span>' : ''}</p>
-                                <p class="text-[10px] text-slate-500">${numItems} item(s) ${item.localNombre && item.localNombre !== 'Sin Local' ? `• ${item.localNombre}` : ''}</p>
-                            </div>
-                        </div>
-                        <div class="text-right">
-                            <p class="font-black ${amountColor} text-sm">${sign} ${formatMoney(item.total)}</p>
-                            <p class="text-[9px] text-slate-400 dark:text-slate-500 mt-0.5 font-bold">${hora} • <span class="${mp === 'YAPE' ? 'text-purple-500' : (mp === 'EFECTIVO' ? 'text-emerald-500' : 'text-sky-500')}">${mp}</span></p>
-                        </div>
-                    </div>
-                    ${btnActions}
-                </div>`;
-            } else {
-                html += `
-                <div class="bg-red-50 dark:bg-red-500/5 border border-red-200 dark:border-red-500/20 p-3 rounded-xl hover:border-red-300 dark:hover:border-red-500/40 transition-all group shadow-sm">
-                    <div class="flex justify-between items-start">
-                        <div class="flex items-center gap-3">
-                            <div class="w-8 h-8 rounded-full bg-red-100 dark:bg-red-500/10 flex items-center justify-center text-red-500 shrink-0 border border-red-200 dark:border-red-500/20">
-                                <i data-lucide="trending-down" class="w-4 h-4"></i>
-                            </div>
-                            <div>
-                                <p class="text-sm font-bold text-red-500">Gasto Registrado</p>
-                                <p class="text-[10px] text-slate-500">${item.descripcion} ${item.localNombre && item.localNombre !== 'Global' ? `• ${item.localNombre}` : ''}</p>
-                            </div>
-                        </div>
-                        <div class="text-right">
-                            <p class="font-black text-red-500 text-sm">- ${formatMoney(item.monto)}</p>
-                            <p class="text-[9px] text-red-400/70 mt-0.5 font-bold">${hora}</p>
-                        </div>
-                    </div>
-                    ${btnActions}
-                </div>`;
-            }
-        });
-        list.innerHTML = html;
-    }
-    
-    // Actualizar Tarjetas
-    if(document.getElementById('caja-total')) document.getElementById('caja-total').textContent = formatMoney(total);
-    if(document.getElementById('caja-gastos')) document.getElementById('caja-gastos').textContent = formatMoney(gastosTotal);
-    if(document.getElementById('caja-efectivo')) document.getElementById('caja-efectivo').textContent = formatMoney(efe);
-    if(document.getElementById('caja-yape')) document.getElementById('caja-yape').textContent = formatMoney(yape);
-    
-    const cN = total - gastosTotal; 
-    const netEl = document.getElementById('caja-neta');
-    if(netEl) { 
-        netEl.textContent = formatMoney(cN); 
-        netEl.className = cN >= 0 ? "text-xl md:text-2xl font-black text-emerald-500" : "text-xl md:text-2xl font-black text-red-500"; 
-    }
-    
-    if(window.lucide) window.lucide.createIcons();
-}
-
-// ========================================================
-// EDICIÓN Y ANULACIÓN CON REEMBOLSO DE STOCK Y CAJA
-// ========================================================
-async function eliminarOperacionCaja(tipo, id) {
-    if (state.userRole !== 'master' && state.userRole !== 'admin') return;
-    
-    if (window.mostrarConfirmacion) {
-        window.mostrarConfirmacion(`¿Estás seguro de ${tipo === 'venta' ? 'anular esta venta? (El stock se devolverá)' : 'eliminar este gasto?'}`, async () => {
-            try {
-                if (tipo === 'venta') {
-                    const vRef = doc(db, "ventas", id);
-                    const vSnap = await getDoc(vRef);
-                    
-                    if (!vSnap.exists()) return;
-                    const vData = vSnap.data();
-
-                    if (vData.estado === 'rechazado') {
-                        if(window.mostrarToast) window.mostrarToast('Aviso', 'Esta venta ya fue anulada previamente.', 'amber');
-                        return;
-                    }
-
-                    const batch = writeBatch(db);
-
-                    // 1. Marcar ticket como anulado
-                    batch.update(vRef, { 
-                        estado: 'rechazado',
-                        anuladoPor: state.currentUser.email,
-                        fechaAnulacion: new Date().toISOString()
-                    });
-
-                    // 2. Restar de la caja acumulada del día (Evita descuadres financieros)
-                    const locId = vData.localId || 'general';
-                    const fStr = vData.fechaStr;
-                    const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
-
-                    batch.set(cRef, {
-                        total_ingresos: increment(-(vData.total || 0)),
-                        total_costos: increment(-(vData.costoTotal || vData.costo_total || 0)),
-                        total_efectivo: increment(-(vData.pagoEfectivo || vData.pago_efectivo || 0)),
-                        total_yape: increment(-(vData.pagoYape || vData.pago_yape || 0)),
-                        cantidad_ventas: increment(-1)
-                    }, { merge: true });
-
-                    // 3. Devolver los productos al inventario (Protección para productos ilimitados)
-                    if (vData.items) {
-                        vData.items.forEach(item => {
-                            if (item.productoId !== 'AJUSTE') {
-                                const p = state.productos.find(x => x.id === item.productoId);
-                                // Verificamos que el producto exista y maneje stock (que no sea infinito/null)
-                                if (p && p.stock !== null) {
-                                    const pRef = doc(db, "productos", item.productoId);
-                                    batch.update(pRef, { stock: increment(item.cantidad) });
-                                }
-                            }
-                        });
-                    }
-
-                    await batch.commit();
-
-                    // Refrescar Inventario local para que la UI de Ventas tenga el nuevo stock real
-                    if (window.cargarInventarioDesdeFirebase) {
-                        await window.cargarInventarioDesdeFirebase();
-                    }
-
-                } else if (tipo === 'gasto') {
-                    await deleteDoc(doc(db, "gastos", id));
-                }
-                
-                if (window.mostrarToast) window.mostrarToast('Completado', 'Operación anulada y balances corregidos.', 'emerald');
-            } catch (err) {
-                console.error(err);
-                if (window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo completar la acción.", "red");
-            }
-        });
-    }
-}
-
-async function editarOperacionCaja(tipo, id, montoActual) {
-    if (state.userRole !== 'master' && state.userRole !== 'admin') return;
-    
-    const nuevoMontoStr = prompt(`Ingresa el nuevo total (S/) para este ${tipo}:`, montoActual);
-    
-    if (nuevoMontoStr === null || nuevoMontoStr.trim() === "") return;
-    
-    const nuevoMonto = parseFloat(nuevoMontoStr);
-    if (isNaN(nuevoMonto) || nuevoMonto < 0) {
-        if(window.mostrarToast) window.mostrarToast('Dato Inválido', 'El monto ingresado no es correcto.', 'amber');
-        return;
-    }
-
+// LÓGICA RECONSTRUIDA Y BLINDADA MATEMÁTICAMENTE
+async function editarOperacionCaja(id, tipo) {
     try {
         if (tipo === 'venta') {
             const vRef = doc(db, "ventas", id);
             const vSnap = await getDoc(vRef);
             if (!vSnap.exists()) return;
-            
             const vData = vSnap.data();
 
-            if (vData.estado === 'rechazado') {
-                if(window.mostrarToast) window.mostrarToast('Aviso', 'No puedes editar una venta que ya fue anulada.', 'amber');
+            const nuevoMontoStr = prompt(`Venta Original: S/ ${vData.total.toFixed(2)}\nIngresa el NUEVO monto total correcto:`);
+            if (!nuevoMontoStr) return;
+            
+            const nuevoMonto = parseFloat(nuevoMontoStr);
+            if (isNaN(nuevoMonto) || nuevoMonto < 0) {
+                if(window.mostrarAlerta) window.mostrarAlerta('Error', 'Monto inválido', 'red');
                 return;
             }
 
-            // Identificar método de pago original para no descuadrar Yape o Efectivo
-            let nEfe = 0, nYap = 0;
-            const mp = String(vData.metodo_pago || vData.metodoFinal || 'efectivo').toLowerCase();
+            const diffTotal = nuevoMonto - vData.total;
+            if (diffTotal === 0) return; // No hay cambios
 
-            if (mp === 'yape') {
+            let nEfe = parseFloat(vData.pago_efectivo || vData.pagoEfectivo || 0);
+            let nYap = parseFloat(vData.pago_yape || vData.pagoYape || 0);
+            let diffEfe = 0;
+            let diffYap = 0;
+            const mp = (vData.metodoFinal || vData.metodo_pago || 'efectivo').toLowerCase();
+
+            // RESPETAR LA NATURALEZA DEL PAGO ORIGINAL
+            if (mp === 'efectivo') {
+                diffEfe = diffTotal;
+                nEfe = nuevoMonto;
+            } else if (mp === 'yape' || mp === 'transferencia') {
+                diffYap = diffTotal;
                 nYap = nuevoMonto;
             } else if (mp === 'mixto') {
-                // En edición rápida asume que la diferencia/total es efectivo (puedes expandir esta lógica luego)
-                nEfe = nuevoMonto; 
-            } else {
-                nEfe = nuevoMonto;
+                // Al ser mixto, asumimos que el ajuste fue por un vuelto mal dado en efectivo.
+                diffEfe = diffTotal;
+                nEfe = nEfe + diffTotal;
+                
+                // Salvavidas: si le restamos tanto que el efectivo es negativo, jalamos de Yape
+                if (nEfe < 0) {
+                    diffYap = nEfe; 
+                    nYap = nYap + diffYap;
+                    nEfe = 0;
+                }
             }
-
-            // Calcular diferencia para ajustar el acumulado diario
-            const diffTotal = nuevoMonto - (vData.total || 0);
-            const diffEfe = nEfe - (vData.pagoEfectivo || vData.pago_efectivo || 0);
-            const diffYap = nYap - (vData.pagoYape || vData.pago_yape || 0);
 
             const batch = writeBatch(db);
 
-            // Actualizar ticket
             batch.update(vRef, { 
                 total: nuevoMonto,
                 pago_efectivo: nEfe,
                 pagoEfectivo: nEfe,
                 pago_yape: nYap,
                 pagoYape: nYap,
-                metodoFinal: mp === 'mixto' ? 'efectivo' : mp, // Normalizar si era mixto
+                metodoFinal: mp, // Preservar 'mixto' en la BD
                 editado: true,
-                editadoPor: state.currentUser.email,
+                editadoPor: state.currentUser?.username || state.currentUser?.email || 'Desconocido',
                 fechaEdicion: new Date().toISOString()
             });
 
-            // Actualizar caja diaria
+            // Re-cuadrar la Caja Diaria global
             const locId = vData.localId || 'general';
-            const fStr = vData.fechaStr;
+            const fStr = vData.fechaStr || getTodayDateStr();
             const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
 
             batch.set(cRef, {
@@ -400,15 +297,127 @@ async function editarOperacionCaja(tipo, id, montoActual) {
             await batch.commit();
 
         } else if (tipo === 'gasto') {
-            await updateDoc(doc(db, "gastos", id), { 
+            const gRef = doc(db, "gastos", id);
+            const gSnap = await getDoc(gRef);
+            if (!gSnap.exists()) return;
+            
+            const gData = gSnap.data();
+            const nuevoMontoStr = prompt(`Gasto Original: S/ ${gData.monto.toFixed(2)}\nIngresa el NUEVO monto del gasto:`);
+            if (!nuevoMontoStr) return;
+            
+            const nuevoMonto = parseFloat(nuevoMontoStr);
+            if (isNaN(nuevoMonto) || nuevoMonto < 0) return;
+
+            const diffMonto = nuevoMonto - gData.monto;
+            if (diffMonto === 0) return;
+
+            const batch = writeBatch(db);
+
+            batch.update(gRef, { 
                 monto: nuevoMonto,
-                editadoPor: state.currentUser.email
+                editadoPor: state.currentUser?.username || state.currentUser?.email || 'Desconocido',
+                fechaEdicion: new Date().toISOString()
             });
+
+            const locId = gData.localId || 'general';
+            const fStr = gData.fechaStr || getTodayDateStr();
+            const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+
+            batch.set(cRef, {
+                total_gastos: increment(diffMonto)
+            }, { merge: true });
+
+            await batch.commit();
         }
         
-        if (window.mostrarToast) window.mostrarToast('Modificado', 'Totales y reportes diarios recalculados al centavo.', 'sky');
+        if (window.mostrarToast) window.mostrarToast('Modificado', 'Arqueo recalculado al centavo.', 'sky');
     } catch(e) {
         console.error(e);
-        if(window.mostrarAlerta) window.mostrarAlerta("Fallo de conexión", "No se guardaron los cambios.", "red");
+        if(window.mostrarAlerta) window.mostrarAlerta('Error', 'Fallo al editar la operación.', 'red');
+    }
+}
+
+async function eliminarOperacionCaja(id, tipo) {
+    if (!window.confirm(`ATENCIÓN: ¿Estás completamente seguro de ANULAR este registro de ${tipo.toUpperCase()}?`)) return;
+
+    try {
+        const batch = writeBatch(db);
+
+        if (tipo === 'venta') {
+            const vRef = doc(db, "ventas", id);
+            const vSnap = await getDoc(vRef);
+            if (!vSnap.exists()) return;
+            
+            const vData = vSnap.data();
+            const total = vData.total || 0;
+            const efe = parseFloat(vData.pago_efectivo || vData.pagoEfectivo || 0);
+            const yap = parseFloat(vData.pago_yape || vData.pagoYape || 0);
+
+            batch.delete(vRef);
+
+            const locId = vData.localId || 'general';
+            const fStr = vData.fechaStr || getTodayDateStr();
+            const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+
+            batch.set(cRef, {
+                total_ingresos: increment(-total),
+                total_efectivo: increment(-efe),
+                total_yape: increment(-yap)
+            }, { merge: true });
+
+            // Sincronizar de vuelta el stock si la venta se anula
+            if (vData.items) {
+                vData.items.forEach(item => {
+                    if (item.productoId !== 'AJUSTE') {
+                        const pRef = doc(db, "productos", item.productoId);
+                        batch.update(pRef, { stock: increment(item.cantidad) });
+                    }
+                });
+            }
+
+        } else {
+            // Anular un gasto
+            const gRef = doc(db, "gastos", id);
+            const gSnap = await getDoc(gRef);
+            if (!gSnap.exists()) return;
+            
+            const gData = gSnap.data();
+            batch.delete(gRef);
+
+            const locId = gData.localId || 'general';
+            const fStr = gData.fechaStr || getTodayDateStr();
+            const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+
+            batch.set(cRef, {
+                total_gastos: increment(-(gData.monto || 0))
+            }, { merge: true });
+        }
+
+        await batch.commit();
+        
+        // Forzar actualización visual si inventario o carrito están expuestos
+        if (window.cargarInventarioDesdeFirebase) window.cargarInventarioDesdeFirebase();
+        if(window.mostrarToast) window.mostrarToast('Anulado', 'Registro borrado y stock repuesto.', 'red');
+
+    } catch (e) {
+        console.error("Error en anulación:", e);
+        if(window.mostrarAlerta) window.mostrarAlerta('Error', 'Fallo al anular la operación. Verifica tu conexión.', 'red');
+    }
+}
+
+// Utilidades UI para Modales
+function abrirModalGasto() {
+    const m = document.getElementById('modal-gasto');
+    if(m) {
+        m.classList.remove('hidden');
+        setTimeout(() => m.classList.remove('opacity-0'), 10);
+    }
+}
+
+function cerrarModalGasto() {
+    const m = document.getElementById('modal-gasto');
+    if(m) {
+        m.classList.add('opacity-0');
+        setTimeout(() => m.classList.add('hidden'), 300);
     }
 }
