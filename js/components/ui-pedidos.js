@@ -165,10 +165,13 @@ function actualizarEstadoPedido(idVenta, nuevoEstado) {
 
 async function ejecutarCambioEstado(idVenta, nuevoEstado) {
     try { 
+        // TRAZABILIDAD DE AUDITORÍA: Quién despachó o rechazó el pedido
+        const autorCambio = state.currentUser?.username || state.currentUser?.email || 'Desconocido';
+
         if (nuevoEstado === 'listo') {
             await updateDoc(doc(db, "ventas", idVenta), { 
                 estado: nuevoEstado, 
-                modificadoPor: state.currentUser.email, 
+                modificadoPor: autorCambio, 
                 fechaModificacion: new Date().toISOString() 
             }); 
             if(window.mostrarToast) window.mostrarToast('Actualizado', `Pedido despachado`, 'emerald'); 
@@ -185,7 +188,7 @@ async function ejecutarCambioEstado(idVenta, nuevoEstado) {
             // 1. Marcar como rechazado
             batch.update(vRef, { 
                 estado: 'rechazado',
-                modificadoPor: state.currentUser.email,
+                modificadoPor: autorCambio,
                 fechaModificacion: new Date().toISOString()
             });
 
