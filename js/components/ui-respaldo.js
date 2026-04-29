@@ -190,6 +190,7 @@ async function exportBackup() {
                         if (data.localId !== filtroLocal && data.localId) return; // Salta este registro si no pertenece
                     }
                     if (col === 'productos') {
+                        // FIX: Siempre incluye los productos globales en todos los backups
                         if (data.localId !== 'global' && data.localId !== filtroLocal && data.localId) return;
                     }
                 }
