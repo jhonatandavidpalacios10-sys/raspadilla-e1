@@ -58,31 +58,37 @@ function renderProfiles() {
 
     if (accs.length > 0) {
         if(subtitle) subtitle.textContent = "Selecciona tu cuenta";
-        profilesSec.classList.remove('hidden');
-        profilesSec.classList.add('flex');
-        manualSec.classList.add('hidden');
-        btnVolver.classList.remove('hidden');
+        if(profilesSec) {
+            profilesSec.classList.remove('hidden');
+            profilesSec.classList.add('flex');
+        }
+        if(manualSec) manualSec.classList.add('hidden');
+        if(btnVolver) btnVolver.classList.remove('hidden');
 
-        list.innerHTML = accs.map(a => `
-            <div class="relative group">
-                <button data-action="quick-login" data-email="${a.email}" data-username="${a.username}" data-pass="${a.pass}" class="flex flex-col items-center gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-500 rounded-xl transition-all w-20 sm:w-24 active:scale-95 shadow-sm">
-                    <div class="w-10 h-10 bg-sky-500 text-white rounded-full flex items-center justify-center shrink-0 shadow-md shadow-sky-500/30">
-                        <i data-lucide="user" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-[10px] sm:text-xs font-bold text-slate-800 dark:text-white truncate w-full text-center capitalize">${a.username}</span>
-                </button>
-                <button data-action="remove-profile" data-email="${a.email}" class="absolute -top-1.5 -right-1.5 bg-red-500 hover:bg-red-600 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg">
-                    <i data-lucide="x" class="w-3 h-3"></i>
-                </button>
-            </div>
-        `).join('');
+        if(list) {
+            list.innerHTML = accs.map(a => `
+                <div class="relative group">
+                    <button data-action="quick-login" data-email="${a.email}" data-username="${a.username}" data-pass="${a.pass}" class="flex flex-col items-center gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-500 rounded-xl transition-all w-20 sm:w-24 active:scale-95 shadow-sm">
+                        <div class="w-10 h-10 bg-sky-500 text-white rounded-full flex items-center justify-center shrink-0 shadow-md shadow-sky-500/30">
+                            <i data-lucide="user" class="w-5 h-5"></i>
+                        </div>
+                        <span class="text-[10px] sm:text-xs font-bold text-slate-800 dark:text-white truncate w-full text-center capitalize">${a.username}</span>
+                    </button>
+                    <button data-action="remove-profile" data-email="${a.email}" class="absolute -top-1.5 -right-1.5 bg-red-500 hover:bg-red-600 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg">
+                        <i data-lucide="x" class="w-3 h-3"></i>
+                    </button>
+                </div>
+            `).join('');
+        }
         if(window.lucide) window.lucide.createIcons();
     } else {
         if(subtitle) subtitle.textContent = "Punto de Venta Profesional";
-        profilesSec.classList.add('hidden');
-        profilesSec.classList.remove('flex');
-        manualSec.classList.remove('hidden');
-        btnVolver.classList.add('hidden');
+        if(profilesSec) {
+            profilesSec.classList.add('hidden');
+            profilesSec.classList.remove('flex');
+        }
+        if(manualSec) manualSec.classList.remove('hidden');
+        if(btnVolver) btnVolver.classList.add('hidden');
     }
 }
 // ---------------------------------------------------
@@ -136,14 +142,14 @@ document.addEventListener("DOMContentLoaded", () => {
     onAuthStateChanged(auth, async (user) => {
         if (user && !datosCargados) {
             try {
-                // 1. PRIMERO cargar usuarios y locales
+                // 1. PRIMERO cargar usuarios y locales (asegura trazabilidad)
                 await initUsuarios(); 
                 await cargarUsuariosYLocales(); 
                 
                 // 2. DESPUÉS cargar el inventario
                 await initInventario(); 
                 
-                // 3. FINALMENTE inicializar las vistas
+                // 3. FINALMENTE inicializar las vistas con candados seguros
                 initVentas(); 
                 initPedidos(); 
                 initRespaldo();
@@ -171,6 +177,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const ot = bs.innerHTML; 
             bs.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin inline"></i> Conectando...'; 
             bs.disabled = true;
+            if(window.lucide) window.lucide.createIcons(); // Renderiza el spinner de carga
             
             try { 
                 const inputUser = document.getElementById('login-username');
