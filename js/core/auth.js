@@ -14,13 +14,15 @@ export function initAuth() {
         if (userUnsubscribe) { userUnsubscribe(); userUnsubscribe = null; }
         if (sysUnsubscribe) { sysUnsubscribe(); sysUnsubscribe = null; }
 
-        // 1. Escuchar el estado del sistema y el LOGO GLOBAL
+        // 1. Escuchar el estado del sistema, LOGO GLOBAL y NOMBRE DE LA APP
         sysUnsubscribe = onSnapshot(doc(db, "configuracion", "estado_sistema"), (sysDoc) => {
             if (sysDoc.exists()) {
                 const data = sysDoc.data();
                 isSystemLocked = data.cerrado === true;
                 
+                // ACTUALIZACIÓN DE IDENTIDAD EN TIEMPO REAL
                 if (data.logoUrl) actualizarLogoGlobal(data.logoUrl);
+                if (data.nombreApp) actualizarNombreAppGlobal(data.nombreApp);
             } else {
                 isSystemLocked = false;
             }
@@ -96,6 +98,15 @@ function actualizarLogoGlobal(url) {
         container.classList.replace('bg-sky-600', 'bg-transparent');
         container.classList.remove('shadow-lg', 'shadow-sky-500/30');
     }
+}
+
+function actualizarNombreAppGlobal(nombre) {
+    // Cambia el título de la pestaña del navegador
+    document.title = `${nombre} - Sistema Franquicias`;
+    
+    // Cambia todos los textos en la interfaz que tengan la clase .app-name-display (Agregaremos esta clase en el index luego)
+    const appNameElements = document.querySelectorAll('.app-name-display');
+    appNameElements.forEach(el => el.textContent = nombre);
 }
 
 async function verificarBloqueoSistema(user) {
