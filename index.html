@@ -13,7 +13,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="icon" type="image/svg+xml" href="assets/img/logo.svg">
     
-    <!-- Archivo de Estilos Principal -->
+    <!-- Archivos de Estilos -->
     <link rel="stylesheet" href="assets/css/styles.css">
     
     <!-- Tailwind CSS & Lucide Icons -->
@@ -23,24 +23,24 @@
     <!-- Configuración Tailwind Base -->
     <script>
         tailwind.config = {
-            theme: { extend: { colors: { yape: '#742284', bcp: '#ff7a00', tarjeta: '#2563eb' } } }
+            theme: { extend: { colors: { yape: '#8b5cf6', bcp: '#f97316', tarjeta: '#3b82f6' } } }
         }
     </script>
 
-    <!-- SOBRESCRITURA DE TEMA (ROSADO PASTEL) -->
+    <!-- SOBRESCRITURA DE TEMA (DISEÑO PANTONE / PASTEL) -->
     <link rel="stylesheet" href="assets/css/tema-rosado-pastel.css">
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen overflow-hidden font-sans selection:bg-sky-500 selection:text-white flex flex-col md:flex-row">
 
     <!-- CONTENEDOR DE NOTIFICACIONES (TOASTS) -->
-    <div id="toast-container" class="fixed top-4 right-4 md:top-6 md:right-6 z-[200] flex flex-col gap-2 pointer-events-none"></div>
+    <div id="toast-container" class="fixed top-4 right-4 md:top-6 md:right-6 z-[300] flex flex-col gap-2 pointer-events-none"></div>
 
     <!-- PANTALLA DE LOGIN -->
     <div id="login-screen" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900 transition-opacity duration-300 px-4">
         <div class="bg-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-700 flex flex-col items-center">
             
             <!-- Logo Dinámico -->
-            <img src="assets/img/logo.svg" alt="IcePOS Logo" class="w-24 h-24 mb-4 drop-shadow-[0_0_15px_rgba(14,165,233,0.3)]" onerror="this.outerHTML='<div class=\'w-20 h-20 bg-sky-500/20 text-sky-400 rounded-full flex items-center justify-center mb-6 shadow-lg shadow-sky-500/20\'><i data-lucide=\'snowflake\' class=\'w-10 h-10\'></i></div>'">
+            <img src="assets/img/logo.svg" alt="IcePOS Logo" class="w-24 h-24 mb-4" onerror="this.outerHTML='<div class=\'w-20 h-20 bg-sky-500/20 text-sky-400 rounded-full flex items-center justify-center mb-6 shadow-lg shadow-sky-500/20\'><i data-lucide=\'snowflake\' class=\'w-10 h-10\'></i></div>'">
             
             <h1 class="text-2xl font-black text-white mb-2 tracking-tight app-name-display">IcePOS</h1>
             <p class="text-sm text-slate-400 mb-6 text-center" id="login-subtitle">Punto de Venta Profesional</p>
@@ -70,7 +70,7 @@
                         <i data-lucide="alert-circle" class="w-4 h-4 flex-shrink-0"></i>
                         <span>Credenciales incorrectas. Intenta de nuevo.</span>
                     </div>
-                    <button type="submit" id="btn-submit-login" class="w-full py-3.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold transition-all shadow-lg shadow-sky-600/30 mt-2 flex justify-center items-center gap-2">
+                    <button type="submit" id="btn-submit-login" class="w-full py-3.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold transition-all shadow-lg mt-2 flex justify-center items-center gap-2">
                         Ingresar al Sistema
                     </button>
                 </form>
@@ -86,7 +86,7 @@
         
         <!-- MENÚ LATERAL -->
         <nav class="w-full md:w-20 bg-slate-950 flex flex-row md:flex-col items-center py-1 md:py-6 border-t md:border-t-0 md:border-r border-slate-800 z-50 fixed bottom-0 md:relative flex-shrink-0 h-14 sm:h-16 md:h-full justify-between md:justify-start pb-safe">
-            <div class="hidden md:flex w-12 h-12 bg-sky-600 rounded-xl items-center justify-center mb-6 shadow-lg shadow-sky-500/30 flex-shrink-0">
+            <div class="hidden md:flex w-12 h-12 bg-sky-600 rounded-xl items-center justify-center mb-6 shadow-lg flex-shrink-0">
                 <i data-lucide="snowflake" class="text-white w-7 h-7"></i>
             </div>
             
@@ -147,7 +147,9 @@
                 </button>
             </header>
 
-            <!-- VISTA 1: VENTAS (POS) -->
+            <!-- ==============================================
+                 VISTA 1: VENTAS (POS)
+                 ============================================== -->
             <div id="view-ventas" class="view-section flex-1 flex flex-col lg:flex-row h-full overflow-hidden">
                 <section class="flex flex-col h-[55%] lg:h-full lg:flex-1 relative border-b lg:border-b-0 border-slate-800">
                     <header class="p-2 md:p-5 bg-slate-900 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 md:gap-3 z-10 flex-shrink-0">
@@ -209,12 +211,12 @@
                             </label>
                             <label class="cursor-pointer border border-slate-700 bg-slate-900 rounded-lg p-1 md:p-2 flex flex-col items-center justify-center hover:border-purple-500/50 transition-colors group">
                                 <input type="radio" name="metodo_pago" id="radio-yape" value="yape" class="hidden">
-                                <svg class="w-3.5 h-3.5 md:w-4 md:h-4 mb-0.5 md:mb-1 text-slate-400 group-hover:text-purple-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+                                <svg class="w-3.5 h-3.5 md:w-4 md:h-4 mb-0.5 md:mb-1 text-purple-400 group-hover:text-purple-300" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
                                 <span class="text-[9px] md:text-[10px] font-bold text-slate-300">Yape/Plin</span>
                             </label>
                             <label class="cursor-pointer border border-slate-700 bg-slate-900 rounded-lg p-1 md:p-2 flex flex-col items-center justify-center hover:border-sky-500/50 transition-colors group">
                                 <input type="radio" name="metodo_pago" id="radio-mixto" value="mixto" class="hidden">
-                                <i data-lucide="split-square-horizontal" class="w-3.5 h-3.5 md:w-4 md:h-4 mb-0.5 md:mb-1 text-slate-400 group-hover:text-sky-400"></i>
+                                <i data-lucide="split-square-horizontal" class="w-3.5 h-3.5 md:w-4 md:h-4 mb-0.5 md:mb-1 text-sky-400 group-hover:text-sky-300"></i>
                                 <span class="text-[9px] md:text-[10px] font-bold text-slate-300">Mixto</span>
                             </label>
                         </div>
@@ -241,14 +243,16 @@
                             </div>
                         </div>
 
-                        <button id="btn-procesar-cobro" class="w-full py-2.5 md:py-3 rounded-lg md:rounded-xl font-bold text-white text-sm md:text-base bg-sky-600 hover:bg-sky-500 opacity-50 cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-lg" disabled>
+                        <button id="btn-procesar-cobro" class="w-full py-2.5 md:py-3 rounded-lg md:rounded-xl font-bold text-white text-sm md:text-base bg-emerald-600 hover:bg-emerald-500 opacity-50 cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-lg" disabled>
                             <i data-lucide="check-circle-2" class="w-4 h-4 md:w-5 md:h-5"></i> Procesar Venta
                         </button>
                     </footer>
                 </aside>
             </div>
 
-            <!-- VISTA 2: INVENTARIO -->
+            <!-- ==============================================
+                 VISTA 2: INVENTARIO Y STOCK
+                 ============================================== -->
             <div id="view-inventario" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
                     <div>
@@ -259,8 +263,8 @@
                         <button id="btn-ingreso-stock" class="hidden sm:flex px-4 py-2 bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white rounded-lg text-sm font-bold items-center gap-2 transition-colors">
                             <i data-lucide="truck" class="w-4 h-4"></i> Ingreso Mercadería
                         </button>
-                        <button id="btn-nuevo-producto" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-lg">
-                            <i data-lucide="plus" class="w-4 h-4"></i> Añadir
+                        <button id="btn-nuevo-producto" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-lg">
+                            <i data-lucide="plus" class="w-4 h-4"></i> Añadir Ítem
                         </button>
                     </div>
                 </header>
@@ -268,11 +272,11 @@
                 <div class="p-3 md:p-6 flex flex-col flex-1 overflow-hidden">
                     <div id="tabs-insumos" class="flex justify-between md:justify-start gap-4 border-b border-slate-800 mb-4 flex-shrink-0">
                         <div class="flex gap-4">
-                            <button class="pb-2 text-sm font-bold text-emerald-400 border-b-2 border-emerald-400 transition-colors">Vasos</button>
+                            <button class="pb-2 text-sm font-bold text-sky-400 border-b-2 border-sky-400 transition-colors">Vasos</button>
                             <button class="pb-2 text-sm font-bold text-slate-500 hover:text-slate-300 transition-colors">Sabores</button>
                             <button class="pb-2 text-sm font-bold text-slate-500 hover:text-slate-300 transition-colors">Extras</button>
                         </div>
-                        <button id="btn-ingreso-stock-mobile" class="sm:hidden pb-2 text-sm font-bold text-sky-400 border-b-2 border-transparent transition-colors flex items-center gap-1" onclick="document.getElementById('btn-ingreso-stock').click()">
+                        <button id="btn-ingreso-stock-mobile" class="sm:hidden pb-2 text-sm font-bold text-emerald-400 border-b-2 border-transparent transition-colors flex items-center gap-1" onclick="document.getElementById('btn-ingreso-stock').click()">
                             <i data-lucide="truck" class="w-4 h-4"></i> Compras
                         </button>
                     </div>
@@ -294,7 +298,9 @@
                 </div>
             </div>
 
-            <!-- VISTA 3: PEDIDOS (COLA) -->
+            <!-- ==============================================
+                 VISTA 3: PEDIDOS (COLA)
+                 ============================================== -->
             <div id="view-pedidos" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
                     <div>
@@ -325,7 +331,9 @@
                 </div>
             </div>
 
-            <!-- VISTA 4: CAJA (ARQUEO Y GASTOS) -->
+            <!-- ==============================================
+                 VISTA 4: CAJA (ARQUEO Y GASTOS)
+                 ============================================== -->
             <div id="view-caja" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
                     <div>
@@ -344,7 +352,7 @@
                     <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4 mb-6">
                         <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 flex flex-col justify-center shadow-md">
                             <div class="flex justify-between items-center mb-1">
-                                <p class="text-slate-400 text-[10px] font-bold uppercase">POS Bruto (Físico)</p>
+                                <p class="text-slate-400 text-[10px] font-bold uppercase">POS Bruto (Ingresos)</p>
                                 <i data-lucide="pie-chart" class="w-3.5 h-3.5 text-sky-500 opacity-50"></i>
                             </div>
                             <p class="text-lg md:text-xl font-bold text-sky-400" id="caja-total">S/ 0.00</p>
@@ -356,7 +364,7 @@
                             </div>
                             <p class="text-lg md:text-xl font-bold text-red-400" id="caja-gastos">S/ 0.00</p>
                         </div>
-                        <div class="bg-slate-800 p-4 rounded-xl flex flex-col justify-center bg-gradient-to-br border border-emerald-500/30 shadow-lg">
+                        <div class="bg-slate-800 p-4 rounded-xl flex flex-col justify-center border border-emerald-500/30 shadow-lg">
                             <div class="flex justify-between items-center mb-1">
                                 <p class="text-emerald-500/80 text-[10px] font-bold uppercase">CAJA NETA</p>
                                 <i data-lucide="wallet" class="w-4 h-4 text-emerald-400"></i>
@@ -364,7 +372,7 @@
                             <p class="text-xl md:text-2xl font-black text-emerald-400" id="caja-neta">S/ 0.00</p>
                         </div>
                         <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 flex flex-col justify-center shadow-md">
-                            <p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Efectivo Ingresado</p>
+                            <p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Efectivo Físico</p>
                             <p class="text-lg md:text-xl font-bold text-white flex items-center gap-2"><i data-lucide="banknote" class="w-4 h-4 text-emerald-500"></i> <span id="caja-efectivo">S/ 0.00</span></p>
                         </div>
                         <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 flex flex-col justify-center shadow-md">
@@ -378,7 +386,9 @@
                 </div>
             </div>
 
-            <!-- VISTA 5: USUARIOS -->
+            <!-- ==============================================
+                 VISTA 5: USUARIOS (ADMIN)
+                 ============================================== -->
             <div id="view-usuarios" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
                     <div>
@@ -409,7 +419,9 @@
                 </div>
             </div>
 
-            <!-- VISTA 6: ANÁLISIS -->
+            <!-- ==============================================
+                 VISTA 6: ANÁLISIS
+                 ============================================== -->
             <div id="view-analisis" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-y-auto md:overflow-hidden">
                 <div class="flex-1 flex flex-col gap-3 p-3 md:p-4 overflow-visible md:overflow-hidden">
                     <div class="w-full bg-slate-800 rounded-xl border border-slate-700 p-3 shadow-lg flex-shrink-0">
@@ -418,9 +430,9 @@
                                 <div class="flex items-center gap-2"><label class="text-[10px] text-slate-400 font-bold">Desde:</label><input type="date" id="filterStartDate" class="w-28 md:w-32 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white outline-none"></div>
                                 <div class="flex items-center gap-2"><label class="text-[10px] text-slate-400 font-bold">Hasta:</label><input type="date" id="filterEndDate" class="w-28 md:w-32 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white outline-none"></div>
                                 <div class="flex items-center gap-1.5 border-l border-slate-700 pl-3">
-                                    <button id="btn-filtro-hoy" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-[10px] font-medium">Hoy</button>
-                                    <button id="btn-filtro-semana" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-[10px] font-medium">7 Días</button>
-                                    <button id="btn-filtro-mes" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-[10px] font-medium">30 Días</button>
+                                    <button id="btn-filtro-hoy" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-[10px] font-medium transition-colors">Hoy</button>
+                                    <button id="btn-filtro-semana" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-[10px] font-medium transition-colors">7 Días</button>
+                                    <button id="btn-filtro-mes" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-[10px] font-medium transition-colors">30 Días</button>
                                 </div>
                             </div>
                             <div class="flex items-center gap-2">
@@ -435,8 +447,8 @@
                             <div class="flex justify-between items-center mb-3">
                                 <h2 class="text-base font-bold text-white" id="calendarMonthLabel">Mes Año</h2>
                                 <div class="flex gap-2">
-                                    <button id="btn-mes-prev" class="p-1.5 bg-slate-700 hover:bg-slate-600 rounded"><i data-lucide="chevron-left" class="w-4 h-4 text-white"></i></button>
-                                    <button id="btn-mes-next" class="p-1.5 bg-slate-700 hover:bg-slate-600 rounded"><i data-lucide="chevron-right" class="w-4 h-4 text-white"></i></button>
+                                    <button id="btn-mes-prev" class="p-1.5 bg-slate-700 hover:bg-slate-600 rounded transition-colors"><i data-lucide="chevron-left" class="w-4 h-4 text-white"></i></button>
+                                    <button id="btn-mes-next" class="p-1.5 bg-slate-700 hover:bg-slate-600 rounded transition-colors"><i data-lucide="chevron-right" class="w-4 h-4 text-white"></i></button>
                                 </div>
                             </div>
                             <div class="grid grid-cols-7 gap-1 mb-1.5 flex-shrink-0"><div class="text-center text-[9px] font-bold text-slate-500 py-1 uppercase">Dom</div><div class="text-center text-[9px] font-bold text-slate-500 py-1 uppercase">Lun</div><div class="text-center text-[9px] font-bold text-slate-500 py-1 uppercase">Mar</div><div class="text-center text-[9px] font-bold text-slate-500 py-1 uppercase">Mié</div><div class="text-center text-[9px] font-bold text-slate-500 py-1 uppercase">Jue</div><div class="text-center text-[9px] font-bold text-slate-500 py-1 uppercase">Vie</div><div class="text-center text-[9px] font-bold text-slate-500 py-1 uppercase">Sáb</div></div>
@@ -460,7 +472,9 @@
                 </div>
             </div>
 
-            <!-- VISTA 7: RESPALDO (CENTRO DE CONTROL MASTER) -->
+            <!-- ==============================================
+                 VISTA 7: RESPALDO (CENTRO DE CONTROL MASTER)
+                 ============================================== -->
             <div id="view-respaldo" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-y-auto md:overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex-shrink-0">
                     <h1 class="text-xl font-bold text-white">Centro de Control Supremo</h1>
@@ -472,7 +486,7 @@
                     <div class="w-full lg:w-[48%] max-w-sm bg-slate-800 rounded-xl p-5 border border-red-500/30 shadow-lg relative overflow-hidden shrink-0">
                         <div class="w-12 h-12 bg-red-500/20 text-red-500 rounded-xl flex items-center justify-center mb-4 relative z-10"><i data-lucide="power" class="w-6 h-6"></i></div>
                         <h2 class="text-lg font-bold text-white mb-2 relative z-10">Estado del Sistema</h2>
-                        <p class="text-xs text-slate-400 mb-6 relative z-10">Suspende la conexión de base de datos simulando un error 503 para cobrar pagos o mantenimiento.</p>
+                        <p class="text-xs text-slate-400 mb-6 relative z-10">Suspende la conexión simulando un error 503.</p>
                         <div class="p-3 bg-slate-900 rounded-lg border border-slate-700 mb-4 flex items-center justify-between relative z-10">
                             <span class="text-xs font-bold text-slate-300">Conexión:</span>
                             <span id="txt-sys-estado" class="text-xs font-bold text-emerald-400">En Línea</span>
@@ -497,7 +511,7 @@
                         <button id="btn-cambiar-logo" class="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex justify-center items-center gap-2 mb-2 transition-colors">
                             <i data-lucide="upload" class="w-5 h-5"></i> Subir Logo PNG/JPG
                         </button>
-                        <button id="btn-reset-logo" class="w-full py-2 text-[10px] text-slate-500 hover:text-red-400 font-bold uppercase transition-colors">Resetear Valores de Fábrica</button>
+                        <button id="btn-reset-logo" class="w-full py-2 text-[10px] text-slate-500 hover:text-red-400 font-bold uppercase transition-colors">Reset Valores de Fábrica</button>
                     </div>
 
                     <!-- TARJETA EXPORTAR/IMPORTAR -->
@@ -506,7 +520,6 @@
                         <h2 class="text-lg font-bold text-white mb-2">Gestor de Respaldo</h2>
                         
                         <select id="exportLocalFilter" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-xs text-white mb-3 outline-none focus:border-indigo-500">
-                            <!-- Inyectado por JS (Usa los mismos locales) -->
                         </select>
 
                         <div class="space-y-2 mb-4 mt-2">
@@ -521,11 +534,11 @@
                         </div>
                     </div>
 
-                    <!-- PURGA DE DATOS (NUEVO) -->
-                    <div class="w-full lg:w-[48%] max-w-sm bg-slate-800 rounded-xl p-5 border border-red-500/50 shadow-[0_0_20px_rgba(239,68,68,0.15)] shrink-0">
+                    <!-- PURGA DE DATOS -->
+                    <div class="w-full lg:w-[48%] max-w-sm bg-slate-800 rounded-xl p-5 border border-red-500/50 shadow-lg shrink-0">
                         <div class="w-12 h-12 bg-red-600 text-white rounded-xl flex items-center justify-center mb-4"><i data-lucide="skull" class="w-6 h-6"></i></div>
                         <h2 class="text-lg font-bold text-red-500 mb-2">Purga de Datos</h2>
-                        <p class="text-[10px] text-slate-400 mb-4 leading-tight">Elimina registros de la base de datos de manera definitiva. Esto no se puede deshacer.</p>
+                        <p class="text-[10px] text-slate-400 mb-4 leading-tight">Elimina registros de la base de datos de manera definitiva.</p>
                         
                         <div class="space-y-2 mb-4">
                             <label class="flex items-center gap-2 cursor-pointer bg-slate-900/50 p-2 rounded-lg border border-slate-700 hover:border-red-500/50 transition-colors">
@@ -542,7 +555,6 @@
                             <i data-lucide="flame" class="w-4 h-4"></i> Iniciar Purga
                         </button>
                     </div>
-
                 </div>
             </div>
 
@@ -556,7 +568,7 @@
         <div class="bg-slate-800 w-full md:w-[450px] md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none max-h-[90vh]">
             <header class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 md:rounded-t-2xl rounded-t-2xl shrink-0">
                 <div><h3 class="text-lg font-bold text-white" id="modal-vaso-title">Vaso</h3><p class="text-xs text-sky-400" id="modal-vaso-subtitle">Precio: S/ 0</p></div>
-                <button id="btn-cerrar-modal-vaso" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
+                <button id="btn-cerrar-modal-vaso" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="flex-1 overflow-y-auto p-4 space-y-5 no-scrollbar bg-slate-900/50">
                 <div>
@@ -568,7 +580,7 @@
                 </div>
             </div>
             <footer class="p-4 border-t border-slate-700 bg-slate-800 md:rounded-b-2xl shrink-0">
-                <button id="btn-builder-add" class="w-full py-3.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-sm font-bold shadow-lg"><i data-lucide="plus-circle" class="w-5 h-5 inline"></i> Añadir a Orden</button>
+                <button id="btn-builder-add" class="w-full py-3.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-sm font-bold shadow-lg transition-colors"><i data-lucide="plus-circle" class="w-5 h-5 inline"></i> Añadir a Orden</button>
             </footer>
         </div>
     </div>
@@ -578,7 +590,7 @@
         <div class="bg-slate-800 w-full max-w-sm md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none">
             <header class="p-4 border-b border-slate-700 flex justify-between items-center">
                 <h3 class="text-lg font-bold text-white flex items-center gap-2" id="modal-ajuste-titulo">Ajuste</h3>
-                <button id="btn-cerrar-modal-ajuste" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
+                <button id="btn-cerrar-modal-ajuste" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="p-4">
                 <form id="form-ajuste" class="space-y-4">
@@ -591,7 +603,7 @@
                         <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Motivo / Descripción (Opcional)</label>
                         <input type="text" id="ajuste-desc" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-sky-500 outline-none" placeholder="Ej. Cliente frecuente...">
                     </div>
-                    <button type="submit" class="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold mt-2 shadow-lg">Aplicar al Ticket</button>
+                    <button type="submit" class="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold mt-2 shadow-lg transition-colors">Aplicar al Ticket</button>
                 </form>
             </div>
         </div>
@@ -602,7 +614,7 @@
         <div class="bg-slate-800 w-full max-w-sm md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none">
             <header class="p-4 border-b border-slate-700 flex justify-between items-center">
                 <h3 class="text-lg font-bold text-white flex items-center gap-2"><i data-lucide="trending-down" class="w-5 h-5 text-red-400"></i> Registrar Gasto</h3>
-                <button id="btn-cerrar-modal-gasto" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
+                <button id="btn-cerrar-modal-gasto" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="p-4">
                 <form id="form-gasto" class="space-y-4">
@@ -618,7 +630,7 @@
                         <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Afecta a la caja de:</label>
                         <select id="gasto-local" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-red-500 outline-none"></select>
                     </div>
-                    <button type="submit" class="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold mt-2 shadow-lg">Confirmar Gasto</button>
+                    <button type="submit" class="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold mt-2 shadow-lg transition-colors">Confirmar Gasto</button>
                 </form>
             </div>
         </div>
@@ -627,9 +639,9 @@
     <!-- Modal: INGRESO DE STOCK (COMPRAS) -->
     <div id="modal-ingreso-stock" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex flex-col justify-end md:justify-center items-center transition-opacity duration-300 opacity-0 px-4">
         <div class="bg-slate-800 w-full max-w-md md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none">
-            <header class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 rounded-t-2xl">
+            <header class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 md:rounded-t-2xl rounded-t-2xl shrink-0">
                 <h3 class="text-lg font-bold text-white flex items-center gap-2"><i data-lucide="truck" class="w-5 h-5 text-sky-400"></i> Ingreso de Mercadería</h3>
-                <button id="btn-cerrar-modal-ingreso" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
+                <button id="btn-cerrar-modal-ingreso" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="p-4 bg-slate-900/50 overflow-y-auto max-h-[70vh]">
                 <form id="form-ingreso-stock" class="space-y-4">
@@ -655,7 +667,7 @@
                     <div class="bg-sky-500/10 border border-sky-500/30 rounded-lg p-3 mt-4">
                         <p class="text-[10px] text-sky-200 font-medium flex items-start gap-2">
                             <i data-lucide="info" class="w-4 h-4 shrink-0 mt-0.5"></i>
-                            El sistema sumará el stock al inventario y registrará automáticamente un Gasto en la caja seleccionada por el valor del "Costo Total".
+                            El sistema sumará el stock al inventario y registrará automáticamente un Gasto en la caja seleccionada.
                         </p>
                     </div>
 
@@ -672,7 +684,7 @@
         <div class="bg-slate-800 w-full md:w-[400px] md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none max-h-[90vh]">
             <header class="p-4 border-b border-slate-700 flex justify-between items-center shrink-0">
                 <h3 class="text-lg font-bold text-white flex items-center gap-2"><i data-lucide="package" class="w-5 h-5 text-emerald-400"></i> Ítem del Catálogo</h3>
-                <button id="btn-cerrar-modal-producto" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
+                <button id="btn-cerrar-modal-producto" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="flex-1 overflow-y-auto p-4 no-scrollbar">
                 <form id="form-insumo" class="space-y-4">
@@ -707,7 +719,7 @@
                             <input type="number" id="prod-stock" placeholder="Infinito" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none">
                         </div>
                     </div>
-                    <button type="submit" id="btn-guardar-prod" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold mt-2 shadow-lg"><i data-lucide="save" class="w-4 h-4 inline"></i> Guardar</button>
+                    <button type="submit" id="btn-guardar-prod" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold mt-2 shadow-lg transition-colors"><i data-lucide="save" class="w-4 h-4 inline"></i> Guardar</button>
                 </form>
             </div>
         </div>
@@ -716,7 +728,10 @@
     <!-- Modal: Usuario (Admin/Master) -->
     <div id="modal-usuario" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center transition-opacity duration-300 opacity-0 px-4">
         <div class="bg-slate-800 w-full max-w-sm rounded-2xl flex flex-col shadow-2xl border border-slate-700">
-            <header class="p-4 border-b border-slate-700 flex justify-between"><h3 class="text-lg font-bold text-white">Nuevo Usuario</h3><button id="btn-cerrar-modal-usuario" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button></header>
+            <header class="p-4 border-b border-slate-700 flex justify-between">
+                <h3 class="text-lg font-bold text-white">Nuevo Usuario</h3>
+                <button id="btn-cerrar-modal-usuario" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </header>
             <div class="p-4">
                 <form id="form-usuario" class="space-y-3">
                     <input type="hidden" id="user-id">
@@ -741,13 +756,13 @@
                         </div>
                     </div>
 
-                    <button type="submit" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold mt-2 shadow-lg">Guardar Personal</button>
+                    <button type="submit" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold mt-2 shadow-lg transition-colors">Guardar Personal</button>
                 </form>
             </div>
         </div>
     </div>
 
-    <!-- Modal: Breakdown Analisis (Rediseñado como en la imagen) -->
+    <!-- Modal: Breakdown Analisis (Desglose Estilo Imagen) -->
     <div id="breakdownModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-300 px-4">
         <div class="bg-slate-800 rounded-2xl w-full max-w-sm border border-slate-700 shadow-2xl flex flex-col max-h-[90vh]">
             <header class="p-4 border-b border-slate-700 flex justify-between items-start bg-slate-800 rounded-t-2xl shrink-0">
@@ -773,7 +788,7 @@
             </div>
             
             <footer class="p-3 border-t border-slate-700 bg-slate-800 rounded-b-2xl shrink-0">
-                <button class="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-bold transition-colors" onclick="window.closeBreakdownModal?.()">Cerrar Detalles</button>
+                <button id="btn-cerrar-detalles-breakdown" class="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-bold transition-colors">Cerrar Detalles</button>
             </footer>
         </div>
     </div>
@@ -806,9 +821,9 @@
     <!-- MAIN APP SCRIPT -->
     <script type="module" src="js/app.js"></script>
 
-    <!-- SCRIPT DE INTERFAZ GLOBAL (Helpers y UI UI Básica) -->
+    <!-- SCRIPT DE INTERFAZ GLOBAL (Helpers y Conexiones Base) -->
     <script>
-        // Funciones Globales UI
+        // --- Funciones UI Base ---
         window.mostrarAlerta = (titulo, mensaje, colorClass = 'sky') => {
             const modal = document.getElementById('modal-alerta');
             document.getElementById('alerta-titulo').textContent = titulo;
@@ -890,8 +905,9 @@
             }
         };
 
+        // --- CONEXIÓN DE TODOS LOS BOTONES (Cierre de Modales y Globales) ---
         document.addEventListener('DOMContentLoaded', () => {
-            // Manejadores básicos de modales que no dependen de módulos específicos
+            // Confirmación General
             document.getElementById('btn-confirm-accept')?.addEventListener('click', () => { if(confirmCallback) confirmCallback(); window.cerrarConfirmacion(); });
             document.getElementById('btn-confirm-cancel')?.addEventListener('click', window.cerrarConfirmacion);
             document.getElementById('btn-alerta-aceptar')?.addEventListener('click', window.cerrarAlerta);
@@ -909,10 +925,18 @@
                 else container.classList.add('hidden');
             });
 
-            // Llenar selectores dinámicos en HTML usando las variables de entorno de exportaciones en el window object
+            // Conexión segura de botones para Modales en Ventas y Análisis
             document.getElementById('btn-ajuste-cargo')?.addEventListener('click', () => window.abrirModalAjuste?.('Cargo Extra'));
             document.getElementById('btn-ajuste-descuento')?.addEventListener('click', () => window.abrirModalAjuste?.('Descuento'));
-            document.getElementById('btn-vaciar-carrito')?.addEventListener('click', () => { window.clearCart?.(); window.actualizarCarritoUI?.(); });
+            
+            // BOTONES DE CIERRE ('X' o Cerrar Detalles) - Blindados para que nunca fallen
+            document.getElementById('btn-cerrar-modal-vaso')?.addEventListener('click', () => { if(typeof window.cerrarModalArmar === 'function') window.cerrarModalArmar(); });
+            document.getElementById('btn-cerrar-modal-ajuste')?.addEventListener('click', () => { const m = document.getElementById('modal-ajuste'); m.classList.add('opacity-0'); setTimeout(()=>m.classList.add('hidden'), 300); });
+            document.getElementById('btn-cerrar-modal-breakdown')?.addEventListener('click', () => { if(typeof window.closeBreakdownModal === 'function') window.closeBreakdownModal(); });
+            document.getElementById('btn-cerrar-detalles-breakdown')?.addEventListener('click', () => { if(typeof window.closeBreakdownModal === 'function') window.closeBreakdownModal(); });
+            
+            // Carrito / Pagos
+            document.getElementById('btn-vaciar-carrito')?.addEventListener('click', () => { if(typeof window.clearCart === 'function') { window.clearCart(); window.actualizarCarritoUI?.(); } });
             document.querySelectorAll('input[name="metodo_pago"]').forEach(radio => {
                 radio.addEventListener('change', (e) => { if(window.toggleMetodoPago) window.toggleMetodoPago(e.target.value); });
             });
