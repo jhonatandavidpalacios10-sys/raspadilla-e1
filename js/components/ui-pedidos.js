@@ -1,4 +1,4 @@
-import { db, collection, query, where, onSnapshot, doc, updateDoc, deleteDoc, getDoc } from '../core/firebase-setup.js';
+import { db, collection, query, where, onSnapshot, doc, updateDoc, deleteDoc, getDoc, writeBatch, increment } from '../core/firebase-setup.js';
 import { state } from '../core/store.js'; 
 import { getTodayDateStr } from '../utils/helpers.js';
 
@@ -34,8 +34,6 @@ export function initPedidos() {
         });
     }
     
-    // Como en app.js ya nos aseguramos de que el perfil y los locales carguen primero,
-    // podemos iniciar la escucha de datos inmediatamente, sin retrasos.
     iniciarEscuchaPedidos(); 
 }
 
@@ -62,7 +60,6 @@ function renderPedidosUI() {
     let pendientes = [], listos = [];
     
     pedidosGlobales.forEach(v => {
-        // FILTRO JS MULTI-SEDE REPARADO
         const isAdmin = (state.userRole === 'admin' || state.userRole === 'master');
         const miSedeId = state.userLocalId || ""; 
         
@@ -128,7 +125,7 @@ function generarHTMLPedido(v, esListo = false) {
 
     let actionBtn = esListo ? '' : `
         <div class="flex gap-2 mt-3 pt-3 border-t border-slate-700/50">
-            <button data-action="rechazar-pedido" data-id="${v.id}" class="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors border border-transparent hover:border-red-500/30" title="Rechazar y borrar">
+            <button data-action="rechazar-pedido" data-id="${v.id}" class="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors border border-transparent hover:border-red-500/30" title="Rechazar (Devuelve Stock)">
                 <i data-lucide="x" class="w-4 h-4"></i>
             </button>
             <button data-action="editar-pedido" data-id="${v.id}" class="p-2 text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 rounded-lg transition-colors border border-transparent hover:border-amber-500/30" title="Devolver a Caja">
@@ -158,7 +155,7 @@ function generarHTMLPedido(v, esListo = false) {
 
 function actualizarEstadoPedido(idVenta, nuevoEstado) {
     if (nuevoEstado === 'rechazado') {
-        if(window.mostrarConfirmacion) window.mostrarConfirmacion(`¿Rechazar y OCULTAR este pedido de la cola?`, async () => { 
+        if(window.mostrarConfirmacion) window.mostrarConfirmacion(`¿Rechazar pedido? Se ocultará de la cola y el stock regresará al inventario.`, async () => { 
             ejecutarCambioEstado(idVenta, nuevoEstado); 
         });
     } else { 
@@ -168,34 +165,115 @@ function actualizarEstadoPedido(idVenta, nuevoEstado) {
 
 async function ejecutarCambioEstado(idVenta, nuevoEstado) {
     try { 
-        await updateDoc(doc(db, "ventas", idVenta), { 
-            estado: nuevoEstado, 
-            modificadoPor: state.currentUser.email, 
-            fechaModificacion: new Date().toISOString() 
-        }); 
-        if(window.mostrarToast) window.mostrarToast('Actualizado', `Pedido ${nuevoEstado}`, nuevoEstado === 'listo' ? 'emerald' : 'amber'); 
+        if (nuevoEstado === 'listo') {
+            await updateDoc(doc(db, "ventas", idVenta), { 
+                estado: nuevoEstado, 
+                modificadoPor: state.currentUser.email, 
+                fechaModificacion: new Date().toISOString() 
+            }); 
+            if(window.mostrarToast) window.mostrarToast('Actualizado', `Pedido despachado`, 'emerald'); 
+        } else if (nuevoEstado === 'rechazado') {
+            const vRef = doc(db, "ventas", idVenta);
+            const vSnap = await getDoc(vRef);
+            if (!vSnap.exists()) return;
+            const vData = vSnap.data();
+
+            if (vData.estado === 'rechazado') return;
+
+            const batch = writeBatch(db);
+
+            // 1. Marcar como rechazado
+            batch.update(vRef, { 
+                estado: 'rechazado',
+                modificadoPor: state.currentUser.email,
+                fechaModificacion: new Date().toISOString()
+            });
+
+            // 2. Restar dinero de la caja diaria
+            const locId = vData.localId || 'general';
+            const fStr = vData.fechaStr;
+            const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+
+            batch.set(cRef, {
+                total_ingresos: increment(-(vData.total || 0)),
+                total_costos: increment(-(vData.costoTotal || vData.costo_total || 0)),
+                total_efectivo: increment(-(vData.pagoEfectivo || vData.pago_efectivo || 0)),
+                total_yape: increment(-(vData.pagoYape || vData.pago_yape || 0)),
+                cantidad_ventas: increment(-1)
+            }, { merge: true });
+
+            // 3. Devolver los productos al inventario
+            if (vData.items) {
+                vData.items.forEach(item => {
+                    if (item.productoId !== 'AJUSTE') {
+                        const pRef = doc(db, "productos", item.productoId);
+                        batch.update(pRef, { stock: increment(item.cantidad) });
+                    }
+                });
+            }
+
+            await batch.commit();
+
+            // Refrescar Inventario local
+            if (window.cargarInventarioDesdeFirebase) await window.cargarInventarioDesdeFirebase();
+            if(window.mostrarToast) window.mostrarToast('Rechazado', `El pedido fue anulado y el stock devuelto.`, 'amber'); 
+        }
     } catch(e) {
         console.error("Error al actualizar pedido:", e);
+        if(window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo procesar la orden.", "red");
     }
 }
 
 async function editarPedido(idVenta) {
     if(!window.mostrarConfirmacion) return;
-    window.mostrarConfirmacion("¿Mandar a caja para editarlo? Se borrará de la cola.", async () => {
+    window.mostrarConfirmacion("¿Mandar a caja para editarlo? Se borrará de la cola y el stock se liberará momentáneamente.", async () => {
         try {
             const r = doc(db, "ventas", idVenta); 
             const s = await getDoc(r);
+            
             if(s.exists()) {
-                state.carrito = s.data().items; 
+                const vData = s.data();
+                state.carrito = vData.items; 
                 window.ticketEditadoOriginal = true; 
-                await deleteDoc(r);
                 
+                const batch = writeBatch(db);
+
+                // 1. Restar de la caja porque el ticket original va a ser borrado
+                const locId = vData.localId || 'general';
+                const fStr = vData.fechaStr;
+                const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+
+                batch.set(cRef, {
+                    total_ingresos: increment(-(vData.total || 0)),
+                    total_costos: increment(-(vData.costoTotal || vData.costo_total || 0)),
+                    total_efectivo: increment(-(vData.pagoEfectivo || vData.pago_efectivo || 0)),
+                    total_yape: increment(-(vData.pagoYape || vData.pago_yape || 0)),
+                    cantidad_ventas: increment(-1)
+                }, { merge: true });
+
+                // 2. Liberar el stock original
+                if (vData.items) {
+                    vData.items.forEach(item => {
+                        if (item.productoId !== 'AJUSTE') {
+                            const pRef = doc(db, "productos", item.productoId);
+                            batch.update(pRef, { stock: increment(item.cantidad) });
+                        }
+                    });
+                }
+
+                // 3. Borrar el ticket original
+                batch.delete(r);
+
+                await batch.commit();
+                
+                if (window.cargarInventarioDesdeFirebase) await window.cargarInventarioDesdeFirebase();
                 if (window.actualizarCarritoUI) window.actualizarCarritoUI(); 
                 if (window.switchView) window.switchView('ventas');
-                if(window.mostrarToast) window.mostrarToast('En Caja', 'Edita y vuelve a cobrar.', 'sky');
+                if (window.mostrarToast) window.mostrarToast('En Caja', 'Ticket devuelto para edición.', 'sky');
             }
         } catch(e) {
             console.error("Error al devolver pedido a caja:", e);
+            if(window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo recuperar el pedido.", "red");
         }
     });
 }
