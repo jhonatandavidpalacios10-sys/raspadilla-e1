@@ -1,67 +1,62 @@
-/* Estilos base para convertir la web en una App Nativa */
-:root {
-    --safe-bottom: env(safe-area-inset-bottom, 20px);
+/* ========================================================
+   TEMA ROSADO PASTEL - OVERRIDES GLOBALES DE UI
+   Transforma el modo oscuro a un modo claro pastel
+   ======================================================== */
+
+/* 1. Fondos Generales */
+body, .bg-slate-900, .bg-[#090b14] { background-color: #fff1f2 !important; } /* Fondo principal rosa pastel muy claro */
+.bg-slate-950 { background-color: #ffe4e6 !important; } /* Menú lateral un poco más contrastado */
+.bg-slate-800 { background-color: #ffffff !important; } /* Tarjetas y Modales blancos puros */
+.bg-slate-700 { background-color: #fecdd3 !important; } /* Botones secundarios o hover */
+
+/* 2. Textos principales (Oscurecer para que se lean sobre el fondo claro) */
+body.text-slate-100 { color: #4c0519 !important; }
+.text-white { color: #4c0519 !important; } /* Texto principal: Color Vino/Rosa muy oscuro */
+.text-slate-300 { color: #881337 !important; }
+.text-slate-400 { color: #9f1239 !important; } /* Textos secundarios */
+.text-slate-500 { color: #be123c !important; }
+
+/* 3. Proteger los textos dentro de botones de color fuerte (Mantenerlos blancos) */
+button.bg-sky-600 .text-white, 
+button.bg-emerald-600 .text-white, 
+button.bg-indigo-600 .text-white,
+button.bg-red-600 .text-white,
+.bg-amber-500.text-white,
+#btn-procesar-cobro.text-white {
+    color: #ffffff !important;
 }
 
-/* Evitar que el usuario seleccione texto al tocar rápido (muy común en TPV/POS) */
-body {
-    -webkit-user-select: none;
-    -moz-user-select: none;
-    -ms-user-select: none;
-    user-select: none;
-    -webkit-tap-highlight-color: transparent; /* Quita el parpadeo azul en móviles al tocar */
+/* 4. Bordes y Separadores */
+.border-slate-800, 
+.border-slate-700,
+.border-slate-600 { 
+    border-color: #fecdd3 !important; /* Rosa pastel medio para los bordes */
 }
 
-/* Para iPhones con "Notch" o barra inferior */
-.pb-safe { 
-    padding-bottom: var(--safe-bottom); 
-}
+/* 5. Acentos (Cambiar el Celeste/Sky original por Rosado Intenso/Fucsia) */
+.text-sky-400 { color: #fb7185 !important; }
+.bg-sky-600 { background-color: #f43f5e !important; color: #ffffff !important; }
+.hover\:bg-sky-500:hover { background-color: #e11d48 !important; color: #ffffff !important; }
+.border-sky-500 { border-color: #f43f5e !important; }
+.bg-sky-500\/20 { background-color: #ffe4e6 !important; }
+.bg-sky-500\/10 { background-color: #fff1f2 !important; }
 
-/* Scrollbar invisible pero funcional (Diseño limpio global) */
-::-webkit-scrollbar { 
-    width: 6px; 
-    height: 6px; 
+/* 6. Inputs y Formularios */
+input.bg-slate-900, 
+select.bg-slate-900,
+input.bg-slate-800, 
+select.bg-slate-800 {
+    background-color: #ffffff !important;
+    color: #4c0519 !important;
+    border-color: #fbcfe8 !important;
+    box-shadow: 0 1px 3px rgba(244, 63, 94, 0.05) !important;
 }
-::-webkit-scrollbar-track { 
-    background: transparent; 
-}
-::-webkit-scrollbar-thumb { 
-    background: #334155; 
-    border-radius: 10px; 
-}
-::-webkit-scrollbar-thumb:hover { 
-    background: #475569; 
-}
+input::placeholder { color: #fda4af !important; } /* Placeholder rosado */
 
-/* Ocultar las flechas feas de los inputs numéricos */
-input[type=number]::-webkit-inner-spin-button, 
-input[type=number]::-webkit-outer-spin-button { 
-    -webkit-appearance: none; 
-    margin: 0; 
-}
-input[type=number] {
-    -moz-appearance: textfield;
-}
+/* 7. Sombras (Darles un toque de brillo rosado) */
+.shadow-lg { box-shadow: 0 10px 15px -3px rgba(244, 63, 94, 0.1), 0 4px 6px -4px rgba(244, 63, 94, 0.05) !important; }
+.shadow-2xl { box-shadow: 0 25px 50px -12px rgba(244, 63, 94, 0.15) !important; }
 
-/* ==========================================
-   CLASES UTILITARIAS Y ANIMACIONES
-   ========================================== */
-
-/* Ocultar scrollbar completamente en listas específicas (menú, carrito, etc) */
-.no-scrollbar::-webkit-scrollbar { 
-    display: none; 
-}
-.no-scrollbar { 
-    -ms-overflow-style: none; 
-    scrollbar-width: none; 
-}
-
-/* Animación fluida para los modales en vista móvil (Bottom Sheet) */
-.bottom-sheet-up { 
-    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; 
-}
-
-@keyframes slideUp { 
-    from { transform: translateY(100%); } 
-    to { transform: translateY(0); } 
-}
+/* 8. Ajustes específicos de selección en menú */
+.nav-btn.text-sky-400 { color: #f43f5e !important; border-color: #f43f5e !important; }
+.nav-btn:hover { color: #fb7185 !important; }
