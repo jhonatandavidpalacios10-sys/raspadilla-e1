@@ -143,33 +143,28 @@ document.addEventListener("DOMContentLoaded", () => {
     onAuthStateChanged(auth, async (user) => {
         if (user && !datosCargados) {
             try {
-                // SOLUCIÓN AL BUG DE PANTALLAS VACÍAS (Condición de Carrera)
-                // Esperamos a que auth.js termine de descargar el perfil y los permisos
-                // antes de que los módulos intenten filtrar la información.
-                let intentos = 0;
-                while (!state.currentUser && intentos < 50) {
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                    intentos++;
-                }
+                // 1. Damos un respiro mínimo (300ms) para que auth.js termine de setear 'state.currentUser' 
+                // de forma limpia y sin bucles infinitos.
+                await new Promise(resolve => setTimeout(resolve, 300));
 
-                // 1. OBTENER IDENTIDAD PRIMERO (Crucial para filtros de sedes y roles)
+                // 2. Cargar datos de contexto y locales
                 await initUsuarios(); 
                 await cargarUsuariosYLocales(); 
                 
-                // 2. INICIALIZAR VISTAS (Preparar el DOM y exponer funciones globales)
+                // 3. Inicializar las vistas (DOM)
                 initVentas(); 
                 initPedidos(); 
                 initRespaldo();
                 initCaja(); 
                 initAnalisis(); 
                 
-                // 3. CARGAR INVENTARIO AL FINAL (Así window.renderProductosVenta ya existe cuando Firebase responda)
+                // 4. Descargar el inventario desde Firebase
                 await initInventario(); 
-                
-                // 4. DOBLE SEGURO: Forzar re-dibujado visual explícito (Garantiza que la UI despierte)
                 if (typeof window.cargarInventarioDesdeFirebase === 'function') {
                     await window.cargarInventarioDesdeFirebase();
                 }
+                
+                // 5. Renderizar los productos en la vista de ventas
                 if (typeof window.renderProductosVenta === 'function') window.renderProductosVenta();
                 if (typeof window.actualizarCarritoUI === 'function') window.actualizarCarritoUI();
                 
@@ -194,7 +189,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const ot = bs.innerHTML; 
             bs.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin inline"></i> Conectando...'; 
             bs.disabled = true;
-            if(window.lucide) window.lucide.createIcons(); // Renderiza el spinner de carga
+            if(window.lucide) window.lucide.createIcons(); 
             
             try { 
                 const inputUser = document.getElementById('login-username');
@@ -204,12 +199,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 let finalEmail = '';
                 let displayUsername = rawUser;
 
-                // 1. LÓGICA DE BÚSQUEDA INTELIGENTE (DIRECTORIO PÚBLICO)
+                // 1. LÓGICA DE BÚSQUEDA INTELIGENTE
                 if (rawUser.includes('@')) {
                     finalEmail = rawUser;
                     displayUsername = rawUser.split('@')[0];
                 } else {
-                    // BUSCAMOS EN EL DIRECTORIO PÚBLICO MEDIANTE GETDOC DIRECTO
                     const dirRef = doc(db, "directorio_login", rawUser);
                     const dirSnap = await getDoc(dirRef);
 
@@ -217,7 +211,6 @@ document.addEventListener("DOMContentLoaded", () => {
                         finalEmail = dirSnap.data().email;
                         displayUsername = dirSnap.data().username;
                     } else {
-                        // SALVAVIDAS: Fallback para cuentas antiguas no migradas
                         finalEmail = rawUser + '@raspadillas.com';
                     }
                 }
@@ -225,7 +218,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 // 2. Ejecutar Login
                 await login(finalEmail, pass); 
                 
-                // 3. Guardar en perfiles locales
+                // 3. Guardar perfil
                 saveAccount(finalEmail, displayUsername, pass);
 
                 setTimeout(() => { bs.innerHTML = ot; bs.disabled = false; }, 1000); 
@@ -239,7 +232,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
     
-    // Función de Cerrar Sesión
+    // Cerrar Sesión
     const hL = async () => { 
         try { 
             await logout(); 
