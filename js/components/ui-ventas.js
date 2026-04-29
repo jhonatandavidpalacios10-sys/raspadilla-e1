@@ -304,17 +304,21 @@ export function actualizarCarritoUI() {
             <i data-lucide="shopping-basket" class="w-16 h-16"></i>
             <p class="font-medium text-sm">El carrito está vacío</p>
         </div>`;
-        elTotal.textContent = 'S/ 0.00';
-        elBtnTotal.textContent = 'S/ 0.00';
-        btnCobrar.disabled = true;
-        btnCobrar.classList.add('opacity-50', 'cursor-not-allowed');
+        if (elTotal) elTotal.textContent = 'S/ 0.00';
+        if (elBtnTotal) elBtnTotal.textContent = 'S/ 0.00';
+        if (btnCobrar) {
+            btnCobrar.disabled = true;
+            btnCobrar.classList.add('opacity-50', 'cursor-not-allowed');
+        }
         if(window.lucide) window.lucide.createIcons();
         calcularVuelto();
         return;
     }
 
-    btnCobrar.disabled = false;
-    btnCobrar.classList.remove('opacity-50', 'cursor-not-allowed');
+    if (btnCobrar) {
+        btnCobrar.disabled = false;
+        btnCobrar.classList.remove('opacity-50', 'cursor-not-allowed');
+    }
 
     let total = 0;
     cont.innerHTML = state.carrito.map(c => {
@@ -355,8 +359,8 @@ export function actualizarCarritoUI() {
         `;
     }).join('');
 
-    elTotal.textContent = formatMoney(total);
-    elBtnTotal.textContent = formatMoney(total);
+    if (elTotal) elTotal.textContent = formatMoney(total);
+    if (elBtnTotal) elBtnTotal.textContent = formatMoney(total);
     
     if(window.lucide) window.lucide.createIcons();
     calcularVuelto();
