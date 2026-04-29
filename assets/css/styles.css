@@ -1,62 +1,112 @@
 /* ========================================================
    TEMA ROSADO PASTEL - OVERRIDES GLOBALES DE UI
-   Transforma el modo oscuro a un modo claro pastel
+   Transforma el modo oscuro a un modo claro pastel integral
    ======================================================== */
 
-/* 1. Fondos Generales */
-body, .bg-slate-900, .bg-[#090b14] { background-color: #fff1f2 !important; } /* Fondo principal rosa pastel muy claro */
-.bg-slate-950 { background-color: #ffe4e6 !important; } /* Menú lateral un poco más contrastado */
-.bg-slate-800 { background-color: #ffffff !important; } /* Tarjetas y Modales blancos puros */
-.bg-slate-700 { background-color: #fecdd3 !important; } /* Botones secundarios o hover */
+/* 1. Fondos Generales (Capturando todas las opacidades) */
+body, 
+.bg-[#090b14],
+.bg-slate-950, .bg-slate-950\/50 { 
+    background-color: #fff1f2 !important; /* Fondo principal rosa pastel muy claro */
+} 
 
-/* 2. Textos principales (Oscurecer para que se lean sobre el fondo claro) */
-body.text-slate-100 { color: #4c0519 !important; }
-.text-white { color: #4c0519 !important; } /* Texto principal: Color Vino/Rosa muy oscuro */
-.text-slate-300 { color: #881337 !important; }
-.text-slate-400 { color: #9f1239 !important; } /* Textos secundarios */
+.bg-slate-900, .bg-slate-900\/50 { 
+    background-color: #ffe4e6 !important; /* Paneles secundarios rosa claro */
+} 
+
+.bg-slate-800, .bg-slate-800\/50, .bg-slate-800\/80 { 
+    background-color: #ffffff !important; /* Tarjetas y Modales blancos puros */
+} 
+
+.bg-slate-700, .bg-slate-700\/50 { 
+    background-color: #fecdd3 !important; /* Botones secundarios o hover */
+} 
+
+/* 2. Textos principales (Oscurecer para legibilidad) */
+body, .text-slate-100, .text-white { color: #4c0519 !important; } /* Vino/Rosa muy oscuro */
+.text-slate-200, .text-slate-300 { color: #881337 !important; }
+.text-slate-400 { color: #9f1239 !important; }
 .text-slate-500 { color: #be123c !important; }
 
-/* 3. Proteger los textos dentro de botones de color fuerte (Mantenerlos blancos) */
-button.bg-sky-600 .text-white, 
-button.bg-emerald-600 .text-white, 
-button.bg-indigo-600 .text-white,
-button.bg-red-600 .text-white,
-.bg-amber-500.text-white,
-#btn-procesar-cobro.text-white {
+/* 3. Proteger Textos de Botones y Badges (Forzar Blanco sobre color fuerte) */
+button.bg-sky-600, button.bg-emerald-600, button.bg-indigo-600, 
+button.bg-red-600, button.bg-amber-600, button.bg-slate-700,
+#btn-procesar-cobro, .bg-amber-500, .bg-emerald-500, .bg-red-500,
+.bg-sky-500, .bg-indigo-500, .bg-purple-500 {
     color: #ffffff !important;
 }
 
-/* 4. Bordes y Separadores */
-.border-slate-800, 
-.border-slate-700,
-.border-slate-600 { 
-    border-color: #fecdd3 !important; /* Rosa pastel medio para los bordes */
+button.bg-sky-600 .text-white, button.bg-emerald-600 .text-white, 
+button.bg-indigo-600 .text-white, button.bg-red-600 .text-white, 
+#btn-procesar-cobro .text-white, button.bg-slate-700 .text-white {
+    color: #ffffff !important;
 }
 
-/* 5. Acentos (Cambiar el Celeste/Sky original por Rosado Intenso/Fucsia) */
-.text-sky-400 { color: #fb7185 !important; }
+button.bg-slate-700:hover { background-color: #fda4af !important; }
+
+/* 4. Bordes y Separadores */
+.border-slate-800, .border-slate-800\/50, .border-slate-800\/80,
+.border-slate-700, .border-slate-700\/50, 
+.border-slate-600, .border-slate-600\/50 { 
+    border-color: #fbcfe8 !important; /* Rosa pastel medio para bordes */
+}
+
+/* 5. Acentos Principales (Sky original -> Rosado Intenso/Fucsia) */
+.text-sky-400 { color: #f43f5e !important; }
+.text-sky-300 { color: #fb7185 !important; }
 .bg-sky-600 { background-color: #f43f5e !important; color: #ffffff !important; }
 .hover\:bg-sky-500:hover { background-color: #e11d48 !important; color: #ffffff !important; }
 .border-sky-500 { border-color: #f43f5e !important; }
-.bg-sky-500\/20 { background-color: #ffe4e6 !important; }
+.bg-sky-500\/20 { background-color: #ffe4e6 !important; color: #f43f5e !important; }
 .bg-sky-500\/10 { background-color: #fff1f2 !important; }
 
-/* 6. Inputs y Formularios */
-input.bg-slate-900, 
-select.bg-slate-900,
-input.bg-slate-800, 
-select.bg-slate-800 {
+/* 6. Adaptar Acentos Secundarios (Para que contrasten en fondo claro) */
+/* Emerald (Ventas/Ganancias) -> Más oscuro */
+.text-emerald-400 { color: #059669 !important; } 
+.bg-emerald-500\/10 { background-color: #ecfdf5 !important; }
+.bg-emerald-500\/20 { background-color: #d1fae5 !important; }
+.border-emerald-500\/30, .border-emerald-500\/50 { border-color: #6ee7b7 !important; }
+
+/* Red (Gastos/Anulados) -> Más oscuro */
+.text-red-400, .text-red-500 { color: #dc2626 !important; }
+.bg-red-500\/10 { background-color: #fef2f2 !important; }
+.bg-red-500\/20 { background-color: #fee2e2 !important; }
+.border-red-500\/30, .border-red-500\/50 { border-color: #fca5a5 !important; }
+
+/* Purple (Yape/Plin) */
+.text-purple-400 { color: #9333ea !important; }
+.bg-purple-500\/20 { background-color: #f3e8ff !important; }
+.border-purple-500\/50 { border-color: #d8b4fe !important; }
+
+/* Amber (Alertas/Modificaciones) */
+.text-amber-400 { color: #d97706 !important; }
+.bg-amber-500\/10 { background-color: #fffbeb !important; }
+.bg-amber-500\/20 { background-color: #fef3c7 !important; }
+.border-amber-500\/30, .border-amber-500\/50 { border-color: #fcd34d !important; }
+
+/* Indigo (Usuarios/Config) */
+.text-indigo-400 { color: #4f46e5 !important; }
+.bg-indigo-500\/20 { background-color: #e0e7ff !important; }
+
+/* 7. Eliminar degradados oscuros forzados */
+.bg-gradient-to-br.from-slate-800.to-slate-900 {
+    background: #ffffff !important;
+}
+
+/* 8. Inputs y Formularios */
+input.bg-slate-900, select.bg-slate-900,
+input.bg-slate-800, select.bg-slate-800 {
     background-color: #ffffff !important;
     color: #4c0519 !important;
     border-color: #fbcfe8 !important;
     box-shadow: 0 1px 3px rgba(244, 63, 94, 0.05) !important;
 }
-input::placeholder { color: #fda4af !important; } /* Placeholder rosado */
+input::placeholder { color: #fda4af !important; }
 
-/* 7. Sombras (Darles un toque de brillo rosado) */
+/* 9. Sombras (Toque de brillo rosado en lugar de negro) */
 .shadow-lg { box-shadow: 0 10px 15px -3px rgba(244, 63, 94, 0.1), 0 4px 6px -4px rgba(244, 63, 94, 0.05) !important; }
 .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(244, 63, 94, 0.15) !important; }
 
-/* 8. Ajustes específicos de selección en menú */
-.nav-btn.text-sky-400 { color: #f43f5e !important; border-color: #f43f5e !important; }
+/* 10. Navegación Activa (Menú lateral) */
+.nav-btn.active, .nav-btn.text-sky-400 { color: #f43f5e !important; border-color: #f43f5e !important; }
 .nav-btn:hover { color: #fb7185 !important; }
