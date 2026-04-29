@@ -1,4 +1,4 @@
-import { db, collection, getDocs, doc, updateDoc, deleteDoc, setDoc, getDoc, secondaryAuth, createUserWithEmailAndPassword, updatePassword, signInWithEmailAndPassword, query, where } from '../core/firebase-setup.js';
+import { db, collection, getDocs, doc, updateDoc, deleteDoc, setDoc, getDoc, secondaryAuth, createUserWithEmailAndPassword, updatePassword, signInWithEmailAndPassword, query, where, writeBatch } from '../core/firebase-setup.js';
 import { state } from '../core/store.js';
 
 let listaUsuariosEl, listaLocalesEl, selectLocalUsuario; 
@@ -22,6 +22,9 @@ export async function initUsuarios() {
     // Botón de Cerrar Modal Principal
     const btnCerrar = document.getElementById('btn-cerrar-modal-usuario'); 
     if(btnCerrar) btnCerrar.onclick = cerrarModalUsuario;
+    
+    // Botón de Sincronización para cuentas antiguas (Solo Master)
+    document.getElementById('btn-sincronizar-usuarios')?.addEventListener('click', sincronizarDirectorioLogin);
     
     // Filtro de caracteres para el nombre de usuario
     const inN = document.getElementById('user-nombre'); 
@@ -56,6 +59,66 @@ export async function initUsuarios() {
             if(sel.dataset.action === 'cambiar-local') cambiarLocalUsuario(sel.dataset.uid, sel.value);
             else if(sel.dataset.action === 'cambiar-rol') cambiarRolUsuario(sel.dataset.uid, sel.value);
         };
+    }
+}
+
+/**
+ * Función Maestra para migrar cuentas antiguas al nuevo sistema de login.
+ * Crea las entradas en 'directorio_login' basándose en los usuarios existentes.
+ */
+async function sincronizarDirectorioLogin() {
+    if (state.userRole !== 'master') return;
+    
+    if (window.mostrarConfirmacion) {
+        window.mostrarConfirmacion("¿Sincronizar cuentas antiguas con el nuevo sistema de login?", async () => {
+            const btn = document.getElementById('btn-sincronizar-usuarios');
+            const originalHtml = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline mr-2"></i> Procesando...';
+                btn.disabled = true;
+                if(window.lucide) window.lucide.createIcons();
+            }
+
+            try {
+                const snap = await getDocs(collection(db, "usuarios"));
+                const batch = writeBatch(db);
+                let procesados = 0;
+
+                for (const docSnap of snap.docs) {
+                    const u = docSnap.data();
+                    const uid = docSnap.id;
+                    
+                    // Si el usuario no tiene 'username', usamos la parte inicial del correo
+                    const username = u.username || u.email.split('@')[0];
+                    
+                    // 1. Asegurar que el documento de usuario tenga el campo username
+                    if (!u.username) {
+                        batch.update(doc(db, "usuarios", uid), { username: username });
+                    }
+
+                    // 2. Crear la entrada en el directorio público
+                    const dirRef = doc(db, "directorio_login", username);
+                    batch.set(dirRef, {
+                        username: username,
+                        email: u.email
+                    });
+                    procesados++;
+                }
+
+                await batch.commit();
+                if(window.mostrarToast) window.mostrarToast('Éxito', `${procesados} cuentas sincronizadas correctamente.`, 'emerald');
+                cargarUsuariosYLocales();
+            } catch (err) {
+                console.error("Error en sincronización:", err);
+                if(window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo completar la sincronización masiva.", "red");
+            } finally {
+                if (btn) {
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                    if(window.lucide) window.lucide.createIcons();
+                }
+            }
+        });
     }
 }
 
@@ -427,7 +490,13 @@ async function guardarNuevoUsuario(e) {
         // 2. Generar Correo Único y Oculto (A prueba de choques de Firebase Auth)
         const randomSuffix = Math.random().toString(36).substring(2, 6);
         const secretEmail = `${rawName}_${randomSuffix}@raspadillas.com`;
-        // 4. Guardar en Base de Datos
+
+        // 3. Crear en Firebase Auth
+        const userCredential = await createUserWithEmailAndPassword(secondaryAuth, secretEmail, pass); 
+        const nuevoUID = userCredential.user.uid; 
+        await secondaryAuth.signOut();
+
+        // 4. Guardar en Base de Datos (Privado)
         await setDoc(doc(db, "usuarios", nuevoUID), { 
             username: rawName,       // <- Lo que ve el dueño y usa el cajero para loguearse
             email: secretEmail,      // <- El correo real usado por detrás
