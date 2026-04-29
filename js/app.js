@@ -142,19 +142,24 @@ document.addEventListener("DOMContentLoaded", () => {
     onAuthStateChanged(auth, async (user) => {
         if (user && !datosCargados) {
             try {
-                // 1. PRIMERO cargar usuarios y locales (asegura trazabilidad)
+                // 1. Inicializar eventos base de UI (Tienen candados, no se duplican)
                 await initUsuarios(); 
-                await cargarUsuariosYLocales(); 
-                
-                // 2. DESPUÉS cargar el inventario
                 await initInventario(); 
-                
-                // 3. FINALMENTE inicializar las vistas con candados seguros
                 initVentas(); 
                 initPedidos(); 
                 initRespaldo();
                 initCaja(); 
                 initAnalisis(); 
+                
+                // 2. FORZAR CARGA DE DATOS EN CADA LOGIN (Resuelve el bug de pantalla vacía)
+                await cargarUsuariosYLocales(); 
+                if (typeof window.cargarInventarioDesdeFirebase === 'function') {
+                    await window.cargarInventarioDesdeFirebase();
+                }
+                
+                // 3. FORZAR RENDERIZADO VISUAL EXPLÍCITO DE VENTAS
+                if (typeof window.renderProductosVenta === 'function') window.renderProductosVenta();
+                if (typeof window.actualizarCarritoUI === 'function') window.actualizarCarritoUI();
                 
                 datosCargados = true;
             } catch(e) {
