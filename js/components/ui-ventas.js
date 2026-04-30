@@ -291,96 +291,116 @@ function quitarDelCarrito(id) {
 }
 
 export function actualizarCarritoUI() {
-    const cont = document.getElementById('carrito-items');
+    const list = document.getElementById('carrito-items'); 
+    const emp = document.getElementById('carrito-vacio'); 
+    const btn = document.getElementById('btn-procesar-cobro');
     const elTotal = document.getElementById('carrito-total');
-    const elBtnTotal = document.getElementById('btn-cobrar-total');
+    
+    // POSIBLES IDS ANTIGUOS (Blindaje extra por si acaso)
     const btnCobrar = document.getElementById('btn-cobrar');
+    const elBtnTotal = document.getElementById('btn-cobrar-total');
     
-    if (!cont) return;
+    if(!list) return;
+    
+    const activeElementId = document.activeElement?.dataset?.id;
 
-    if (state.carrito.length === 0) {
-        cont.innerHTML = `
-        <div class="h-full flex flex-col items-center justify-center text-slate-400 space-y-4 opacity-50 py-10">
-            <i data-lucide="shopping-basket" class="w-16 h-16"></i>
-            <p class="font-medium text-sm">El carrito está vacío</p>
+    let t = 0; let html = '';
+    state.carrito.forEach(i => {
+        t += i.precio * i.cantidad;
+        const color = i.precio < 0 ? 'text-red-500' : 'text-emerald-500';
+        const btnYapeClass = i.isYape ? 'bg-purple-100 text-purple-600 border-purple-300 dark:bg-purple-500/20 dark:text-purple-400' : 'bg-slate-200 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-400';
+
+        html += `
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 shadow-sm relative group mb-2">
+            <div class="flex justify-between items-start">
+                <div class="flex-1 pr-2">
+                    <h4 class="text-xs font-bold text-slate-800 dark:text-white leading-tight">${i.nombre}</h4>
+                    ${i.sabores.length > 0 ? `<p class="text-[9px] text-sky-500 font-medium mt-0.5">${i.sabores.join(', ')}</p>` : ''}
+                    ${i.productoId !== 'AJUSTE' ? `<div class="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 border border-slate-300 dark:border-slate-600 w-fit mt-1.5"><button data-action="restar" data-id="${i.cartId}" class="w-6 h-5 flex items-center justify-center text-slate-500 hover:text-slate-800 dark:hover:text-white"><i data-lucide="minus" class="w-3 h-3"></i></button><input type="number" data-id="${i.cartId}" value="${i.cantidad}" class="w-7 text-center bg-transparent text-xs font-bold text-slate-800 dark:text-white focus:outline-none hide-arrows"><button data-action="sumar" data-id="${i.cartId}" class="w-6 h-5 flex items-center justify-center text-slate-500 hover:text-slate-800 dark:hover:text-white"><i data-lucide="plus" class="w-3 h-3"></i></button></div>` : ''}
+                </div>
+                <div class="text-right flex flex-col items-end justify-between">
+                    <p class="font-bold ${color} text-sm">${formatMoney(i.precio * i.cantidad)}</p>
+                    <div class="flex items-center gap-1.5 mt-2">
+                        <button data-action="toggle-yape" data-id="${i.cartId}" class="px-2 py-0.5 rounded text-[9px] font-bold border transition-colors flex items-center gap-1 ${btnYapeClass}" title="Pagar con Yape">Yape</button>
+                        <button data-action="eliminar" data-id="${i.cartId}" class="text-slate-400 hover:text-red-500 p-0.5"><i data-lucide="trash" class="w-3.5 h-3.5"></i></button>
+                    </div>
+                </div>
+            </div>
         </div>`;
-        if (elTotal) elTotal.textContent = 'S/ 0.00';
-        if (elBtnTotal) elBtnTotal.textContent = 'S/ 0.00';
-        if (btnCobrar) {
-            btnCobrar.disabled = true;
-            btnCobrar.classList.add('opacity-50', 'cursor-not-allowed');
-        }
-        if(window.lucide) window.lucide.createIcons();
-        calcularVuelto();
-        return;
+    });
+
+    if(state.carrito.length > 0) { 
+        if(emp) emp.classList.add('hidden'); 
+        list.classList.remove('hidden'); 
+        list.innerHTML = html; 
+        if(btn) { btn.classList.remove('opacity-50', 'cursor-not-allowed'); btn.disabled = false; }
+        if(btnCobrar) { btnCobrar.classList.remove('opacity-50', 'cursor-not-allowed'); btnCobrar.disabled = false; }
+    } else { 
+        if(emp) emp.classList.remove('hidden'); 
+        list.classList.add('hidden'); 
+        list.innerHTML = ''; 
+        if(btn) { btn.classList.add('opacity-50', 'cursor-not-allowed'); btn.disabled = true; }
+        if(btnCobrar) { btnCobrar.classList.add('opacity-50', 'cursor-not-allowed'); btnCobrar.disabled = true; }
     }
-
-    if (btnCobrar) {
-        btnCobrar.disabled = false;
-        btnCobrar.classList.remove('opacity-50', 'cursor-not-allowed');
-    }
-
-    let total = 0;
-    cont.innerHTML = state.carrito.map(c => {
-        const sub = c.precio * c.cantidad;
-        total += sub;
-        const isAjuste = c.productoId === 'AJUSTE';
-        const colorTitle = isAjuste ? (c.precio < 0 ? 'text-red-500' : 'text-sky-500') : 'text-slate-800 dark:text-white';
-        
-        return `
-        <div class="p-3 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700/50 flex justify-between items-center gap-2 hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors">
-            <div class="flex-1 min-w-0">
-                <p class="font-bold text-sm ${colorTitle} truncate pr-2">${c.nombre}</p>
-                <p class="text-[11px] font-medium text-slate-500 mt-0.5">${formatMoney(c.precio)} c/u</p>
-            </div>
-            
-            <div class="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 rounded-lg p-1">
-                ${!isAjuste ? `
-                    <button onclick="cambiarCantidadBoton('${c.id}', -1)" class="w-7 h-7 flex justify-center items-center rounded-md bg-white dark:bg-slate-800 text-slate-600 shadow-sm border border-slate-200 dark:border-slate-700 hover:bg-slate-50 active:scale-95 transition-all">
-                        <i data-lucide="minus" class="w-3 h-3"></i>
-                    </button>
-                    <!-- FIX UX: onchange en lugar de oninput para evitar saltos al teclear -->
-                    <input type="number" value="${c.cantidad}" onchange="setCantidadChange('${c.id}', this.value)" class="w-9 h-7 text-center bg-transparent font-bold text-sm text-slate-800 dark:text-white hide-arrows focus:outline-none focus:ring-2 focus:ring-sky-500 rounded" />
-                    <button onclick="cambiarCantidadBoton('${c.id}', 1)" class="w-7 h-7 flex justify-center items-center rounded-md bg-white dark:bg-slate-800 text-slate-600 shadow-sm border border-slate-200 dark:border-slate-700 hover:bg-slate-50 active:scale-95 transition-all">
-                        <i data-lucide="plus" class="w-3 h-3"></i>
-                    </button>
-                ` : `
-                    <div class="px-2 font-bold text-sm">1</div>
-                `}
-            </div>
-            
-            <div class="text-right ml-2 min-w-[60px]">
-                <p class="font-black text-sm text-slate-800 dark:text-white">${formatMoney(sub)}</p>
-                <button onclick="quitarDelCarrito('${c.id}')" class="text-[10px] text-red-400 hover:text-red-600 font-medium mt-1 flex items-center justify-end w-full">
-                    <i data-lucide="trash" class="w-3 h-3 mr-0.5"></i> Quitar
-                </button>
-            </div>
-        </div>
-        `;
-    }).join('');
-
-    if (elTotal) elTotal.textContent = formatMoney(total);
-    if (elBtnTotal) elBtnTotal.textContent = formatMoney(total);
     
-    if(window.lucide) window.lucide.createIcons();
+    // FIX CRÍTICO: Validaciones anti-nulos obligatorias
+    if(elTotal) elTotal.textContent = formatMoney(t); 
+    if(elBtnTotal) elBtnTotal.textContent = formatMoney(t); 
+
+    const hasYape = state.carrito.some(c => c.isYape); 
+    const hasEfe = state.carrito.some(c => !c.isYape);
+    
+    const rMixto = document.getElementById('radio-mixto');
+    const rYape = document.getElementById('radio-yape');
+    if (hasYape) {
+        if (hasEfe && rMixto && !rMixto.checked) { 
+            rMixto.checked = true; 
+            if(typeof window.toggleMetodoPago === 'function') window.toggleMetodoPago('mixto'); 
+        } else if (!hasEfe && rYape && !rYape.checked) { 
+            rYape.checked = true; 
+            if(typeof window.toggleMetodoPago === 'function') window.toggleMetodoPago('yape'); 
+        } else if (rMixto && rMixto.checked) { 
+            if(typeof window.toggleMetodoPago === 'function') window.toggleMetodoPago('mixto'); 
+        }
+    }
+
+    if(window.lucide) window.lucide.createIcons(); 
     calcularVuelto();
+
+    if (activeElementId) {
+        const inputToRefocus = document.querySelector(`input[data-id="${activeElementId}"]`);
+        if (inputToRefocus) { 
+            inputToRefocus.focus(); 
+            const val = inputToRefocus.value; 
+            inputToRefocus.value = ''; 
+            inputToRefocus.value = val; 
+        }
+    }
 }
 
 function calcularVuelto() {
-    const mp = document.querySelector('input[name="metodo_pago"]:checked')?.value || 'efectivo';
-    const total = state.carrito.reduce((s, c) => s + (c.precio * c.cantidad), 0);
-    const elVuelto = document.getElementById('txt-vuelto');
+    const t = state.carrito.reduce((s, i) => s + (i.precio * i.cantidad), 0);
     
-    if (mp === 'efectivo') {
-        const pagaCon = parseFloat(document.getElementById('input-paga-con').value) || 0;
-        const vuelto = pagaCon - total;
-        if (elVuelto) elVuelto.textContent = vuelto > 0 ? formatMoney(vuelto) : 'S/ 0.00';
-    } else if (mp === 'mixto') {
-        const mEfe = parseFloat(document.getElementById('input-mixto-efectivo').value) || 0;
-        const mYap = parseFloat(document.getElementById('input-mixto-yape').value) || 0;
-        const suma = mEfe + mYap;
-        const vuelto = suma - total;
-        if (elVuelto) elVuelto.textContent = vuelto > 0 ? formatMoney(vuelto) : 'S/ 0.00';
+    // Validar de forma segura el método seleccionado
+    const methodEl = document.querySelector('input[name="metodo_pago"]:checked');
+    const checkedMethod = methodEl ? methodEl.value : 'efectivo';
+    
+    if(checkedMethod === 'efectivo') {
+        const inputPagaCon = document.getElementById('input-paga-con');
+        const txtVuelto = document.getElementById('txt-vuelto');
+        
+        const pc = parseFloat(inputPagaCon?.value) || 0; 
+        const v = pc - t;
+        
+        // FIX CRÍTICO: Validar existencia en el DOM
+        if (txtVuelto) {
+            txtVuelto.textContent = v >= 0 ? formatMoney(v) : 'S/ 0.00'; 
+            if(v < 0) {
+                txtVuelto.classList.add('text-red-500');
+            } else {
+                txtVuelto.classList.remove('text-red-500');
+            }
+        }
     }
 }
 
