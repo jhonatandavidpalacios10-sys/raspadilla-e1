@@ -68,8 +68,8 @@ export function initVentas() {
             tab.classList.replace('text-slate-500', 'text-sky-500');
             tab.classList.add('border-sky-500', 'border-b-2');
             
-            // FIX: Fallback seguro a la posición (index) si el HTML no tiene el atributo data-cat
-            categoriaActual = tab.dataset.cat || ['vaso', 'sabor', 'extra'][index] || 'vaso';
+            // FIX: Fallback seguro a la posición y normalización a minúsculas
+            categoriaActual = String(tab.dataset.cat || ['vaso', 'sabor', 'extra'][index] || 'vaso').toLowerCase();
             renderProductosVenta();
         });
     });
@@ -88,13 +88,19 @@ export function renderProductosVenta() {
         return;
     }
 
-    // FIX: Filtrar por categoría Y POR SEDE (Local)
+    // FIX CRÍTICO: Normalizar roles y categorías para evitar "falsos bloqueos" por mayúsculas/minúsculas
+    const rolUsuario = String(state.userRole || '').toLowerCase();
+    const isAdmin = ['admin', 'administrador', 'master', 'dueño'].includes(rolUsuario);
+    const catAct = String(categoriaActual || 'vaso').toLowerCase();
+
+    // FIX: Filtrar por categoría Y POR SEDE (Local) de forma segura
     let filtrados = state.productos.filter(p => {
-        if (p.categoria !== categoriaActual) return false;
+        const catProd = String(p.categoria || '').toLowerCase();
+        if (catProd !== catAct) return false;
         
         // Si es vendedor, solo ve productos globales o de su propio local
-        if (state.userRole !== 'admin' && state.userRole !== 'master') {
-            return !p.localId || p.localId === 'global' || p.localId === state.userLocalId;
+        if (!isAdmin) {
+            return !p.localId || p.localId === 'global' || String(p.localId) === String(state.userLocalId);
         }
         return true; // Admin/Master ven todo el catálogo
     });
