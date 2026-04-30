@@ -61,13 +61,15 @@ export function initVentas() {
 
     // Tabs de Categorías en Ventas
     const tabsVentas = document.querySelectorAll('#tabs-ventas button');
-    tabsVentas.forEach(tab => {
+    tabsVentas.forEach((tab, index) => {
         tab.addEventListener('click', () => {
             tabsVentas.forEach(t => t.classList.replace('text-sky-500', 'text-slate-500'));
             tabsVentas.forEach(t => t.classList.remove('border-sky-500', 'border-b-2'));
             tab.classList.replace('text-slate-500', 'text-sky-500');
             tab.classList.add('border-sky-500', 'border-b-2');
-            categoriaActual = tab.dataset.cat;
+            
+            // FIX: Fallback seguro a la posición (index) si el HTML no tiene el atributo data-cat
+            categoriaActual = tab.dataset.cat || ['vaso', 'sabor', 'extra'][index] || 'vaso';
             renderProductosVenta();
         });
     });
@@ -78,11 +80,24 @@ export function initVentas() {
 }
 
 export function renderProductosVenta() {
-    const grid = document.getElementById('grid-productos-venta');
-    if (!grid) return;
+    // FIX CRÍTICO: Búsqueda flexible de IDs y Alerta en consola si falta
+    const grid = document.getElementById('grid-productos-venta') || document.getElementById('productos-grid') || document.getElementById('lista-ventas');
+    
+    if (!grid) {
+        console.error("⚠️ ALERTA CRÍTICA: No se encontró el contenedor de productos en el HTML. Se esperaba un div con id='grid-productos-venta'. Revisa tu index.html");
+        return;
+    }
 
-    // Filtrar por categoría
-    let filtrados = state.productos.filter(p => p.categoria === categoriaActual);
+    // FIX: Filtrar por categoría Y POR SEDE (Local)
+    let filtrados = state.productos.filter(p => {
+        if (p.categoria !== categoriaActual) return false;
+        
+        // Si es vendedor, solo ve productos globales o de su propio local
+        if (state.userRole !== 'admin' && state.userRole !== 'master') {
+            return !p.localId || p.localId === 'global' || p.localId === state.userLocalId;
+        }
+        return true; // Admin/Master ven todo el catálogo
+    });
 
     // Búsqueda en tiempo real (si hubiera un input de búsqueda)
     const queryTerm = document.getElementById('buscador-ventas')?.value.toLowerCase() || '';
