@@ -83,6 +83,8 @@ function renderPedidosUI() {
             if (v.estado === 'pendiente') pendientes.push(v);
             else if (v.estado === 'listo') listos.push(v);
         }
+    });
+
     // Ordenar: Los más antiguos primero (Usando tiempo estimado o Date.now para evitar el 1970)
     const getTime = (v) => v.fechaHora || (v.timestamp?.seconds ? v.timestamp.seconds * 1000 : Date.now());
     
