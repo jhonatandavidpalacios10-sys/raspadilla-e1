@@ -209,8 +209,11 @@ export function renderProductosVenta() {
         const isAgt = p.stock !== null && p.stock <= 0;
         const blockCls = isAgt ? 'opacity-50 grayscale cursor-not-allowed' : 'cursor-pointer hover:border-sky-500 hover:shadow-sky-500/20 active:scale-95';
         
+        // FIX CRÍTICO: Buscar múltiples nombres de la propiedad límite de sabores por seguridad
+        const limite = p.limite_sabores !== undefined ? p.limite_sabores : (p.limiteSabores || p.limite || 0);
+        
         const badgeLocal = (p.localId && p.localId !== 'global' && isAdmin) ? `<span class="absolute top-1 left-1 bg-slate-900 text-[8px] text-slate-400 px-1 py-0.5 rounded border border-slate-700 truncate max-w-[60px]">${state.locales.find(l => l.id === p.localId)?.nombre || 'Sede'}</span>` : '';
-        const badgeHtml = isAgt ? `<div class="absolute top-0 right-0 bg-red-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">Agotado</div>` : (catLower ==='vaso' ? `<div class="absolute top-0 right-0 bg-sky-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">${p.limite===999?'Ilimitados':p.limite}</div>` : '');
+        const badgeHtml = isAgt ? `<div class="absolute top-0 right-0 bg-red-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">Agotado</div>` : (catLower ==='vaso' ? `<div class="absolute top-0 right-0 bg-sky-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">${limite===999?'Ilimitados':limite}</div>` : '');
         const cCls = catLower === 'vaso' ? 'from-sky-400 to-indigo-500' : 'from-emerald-400 to-teal-500';
         
         html += `
@@ -235,11 +238,37 @@ export function renderProductosVenta() {
 function iniciarArmadoVaso(id) {
     vasoActual = state.productos.find(p => p.id === id); 
     if(!vasoActual) return; 
+
+    // FIX CRÍTICO: Normalizar la propiedad límite
+    const limite = vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0);
+
+    // FIX UX MEJORADA: Si es una raspadilla loca o innovadora (Límite 0), va directo al carrito sin abrir modal.
+    if (limite === 0) {
+        const it = state.carrito.find(i => i.productoId === vasoActual.id && i.categoria === 'vaso' && i.sabores.length === 0);
+        if (it) {
+            it.cantidad++; 
+        } else {
+            state.carrito.push({ 
+                cartId: generateTicketId(), 
+                productoId: vasoActual.id, 
+                nombre: vasoActual.nombre, 
+                precio: vasoActual.precio, 
+                costo: vasoActual.costo || 0, 
+                sabores: [], 
+                cantidad: 1, 
+                categoria: 'vaso', 
+                isYape: false 
+            });
+        }
+        actualizarCarritoUI();
+        if(window.mostrarToast) window.mostrarToast('Agregado', `${vasoActual.nombre} añadida a la orden.`, 'sky');
+        return; // Salimos de la función para no abrir el modal
+    }
     
     saboresElegidos = [];
     document.getElementById('modal-vaso-title').textContent = vasoActual.nombre; 
     document.getElementById('modal-vaso-subtitle').textContent = `Precio: ${formatMoney(vasoActual.precio)}`;
-    document.getElementById('limite-sabores-txt').textContent = vasoActual.limite === 999 ? 'Ilimitados' : `Max: ${vasoActual.limite}`;
+    document.getElementById('limite-sabores-txt').textContent = limite === 999 ? 'Ilimitados' : `Max: ${limite}`;
     
     const c = document.getElementById('builder-sabores'); 
     let html = '';
@@ -268,14 +297,16 @@ function iniciarArmadoVaso(id) {
 }
 
 function toggleSabor(n) {
+    const limite = vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0);
+
     if(saboresElegidos.includes(n)) {
         saboresElegidos = saboresElegidos.filter(s => s !== n);
     } else { 
-        if(vasoActual.limite === 999 || saboresElegidos.length < vasoActual.limite) {
+        if(limite === 999 || saboresElegidos.length < limite) {
             saboresElegidos.push(n); 
         } else {
             // FIX: Avisar al usuario si ya llegó al límite para que no piense que el botón no funciona
-            if(window.mostrarToast) window.mostrarToast('Límite alcanzado', `Solo puedes elegir hasta ${vasoActual.limite} sabores.`, 'amber');
+            if(window.mostrarToast) window.mostrarToast('Límite alcanzado', `Solo puedes elegir hasta ${limite} sabores.`, 'amber');
             return; 
         }
     }
@@ -315,7 +346,9 @@ function cerrarModalArmar() {
 }
 
 function confirmarVasoAlCarrito() {
-    if(saboresElegidos.length === 0 && vasoActual.limite !== 0 && window.mostrarToast) { 
+    const limite = vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0);
+
+    if(saboresElegidos.length === 0 && limite !== 0 && window.mostrarToast) { 
         window.mostrarToast('Atención', 'Elige 1 sabor mínimo.', 'amber'); 
         return; 
     }
