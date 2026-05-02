@@ -176,20 +176,16 @@ function renderListaOperaciones(ventas, gastos) {
     if(window.lucide) window.lucide.createIcons();
 }
 
-async function guardarGasto(e) {
+function guardarGasto(e) {
     e.preventDefault();
-    const desc = document.getElementById('input-desc-gasto').value.trim();
-    const monto = parseFloat(document.getElementById('input-monto-gasto').value);
+    // 🚀 Lógica optimista y sin esperas
+    const desc = document.getElementById('input-desc-gasto')?.value.trim() || document.getElementById('gasto-desc')?.value.trim();
+    const monto = parseFloat(document.getElementById('input-monto-gasto')?.value || document.getElementById('gasto-monto')?.value);
     
-    const localSelect = document.getElementById('filtro-local-caja');
+    const localSelect = document.getElementById('filtro-local-caja') || document.getElementById('gasto-local');
     const localId = localSelect && localSelect.value !== 'todas' ? localSelect.value : (state.userLocalId || 'general');
     
     if (!desc || isNaN(monto) || monto <= 0) return;
-
-    const btn = document.getElementById('btn-submit-gasto');
-    const origText = btn.innerHTML;
-    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline mr-1"></i> Guardando...';
-    btn.disabled = true;
 
     try {
         const batch = writeBatch(db);
@@ -213,29 +209,30 @@ async function guardarGasto(e) {
             total_gastos: increment(monto)
         }, { merge: true });
 
-        await batch.commit();
-
+        // 1. CIERRE INSTANTÁNEO DE UI
         cerrarModalGasto();
-        document.getElementById('form-gasto').reset();
-        if(window.mostrarToast) window.mostrarToast('Gasto Registrado', 'El arqueo se ha actualizado y restado del neto.', 'sky');
+        const formGasto = document.getElementById('form-gasto');
+        if(formGasto) formGasto.reset();
+        if(window.mostrarToast) window.mostrarToast('Procesando', 'Gasto registrado en background.', 'sky');
+
+        // 2. ENVÍO A LA NUBE SIN AWAIT
+        batch.commit().catch(e => {
+            console.error("Error al guardar gasto:", e);
+            if(window.mostrarAlerta) window.mostrarAlerta('Error', 'No se pudo sincronizar el gasto.', 'red');
+        });
+
     } catch (error) {
         console.error("Error al guardar gasto:", error);
-        if(window.mostrarAlerta) window.mostrarAlerta('Error', 'No se pudo guardar el gasto en la nube.', 'red');
-    } finally {
-        btn.innerHTML = origText;
-        btn.disabled = false;
-        if(window.lucide) window.lucide.createIcons();
     }
 }
 
 // LÓGICA RECONSTRUIDA Y BLINDADA MATEMÁTICAMENTE
-async function editarOperacionCaja(id, tipo) {
+function editarOperacionCaja(id, tipo) {
+    // 🚀 Lógica optimista (quitamos async/await de validaciones y UI)
     try {
         if (tipo === 'venta') {
-            const vRef = doc(db, "ventas", id);
-            const vSnap = await getDoc(vRef);
-            if (!vSnap.exists()) return;
-            const vData = vSnap.data();
+            const vData = ventasDelDia.find(v => v.id === id);
+            if (!vData) return;
 
             const nuevoMontoStr = prompt(`Venta Original: S/ ${vData.total.toFixed(2)}\nIngresa el NUEVO monto total correcto:`);
             if (!nuevoMontoStr) return;
@@ -276,6 +273,7 @@ async function editarOperacionCaja(id, tipo) {
             }
 
             const batch = writeBatch(db);
+            const vRef = doc(db, "ventas", id);
 
             batch.update(vRef, { 
                 total: nuevoMonto,
@@ -300,14 +298,12 @@ async function editarOperacionCaja(id, tipo) {
                 total_yape: increment(diffYap)
             }, { merge: true });
 
-            await batch.commit();
+            batch.commit().catch(e => console.error("Error al editar venta:", e));
 
         } else if (tipo === 'gasto') {
-            const gRef = doc(db, "gastos", id);
-            const gSnap = await getDoc(gRef);
-            if (!gSnap.exists()) return;
+            const gData = gastosDelDia.find(g => g.id === id);
+            if (!gData) return;
             
-            const gData = gSnap.data();
             const nuevoMontoStr = prompt(`Gasto Original: S/ ${gData.monto.toFixed(2)}\nIngresa el NUEVO monto del gasto:`);
             if (!nuevoMontoStr) return;
             
@@ -318,6 +314,7 @@ async function editarOperacionCaja(id, tipo) {
             if (diffMonto === 0) return;
 
             const batch = writeBatch(db);
+            const gRef = doc(db, "gastos", id);
 
             batch.update(gRef, { 
                 monto: nuevoMonto,
@@ -333,7 +330,7 @@ async function editarOperacionCaja(id, tipo) {
                 total_gastos: increment(diffMonto)
             }, { merge: true });
 
-            await batch.commit();
+            batch.commit().catch(e => console.error("Error al editar gasto:", e));
         }
         
         if (window.mostrarToast) window.mostrarToast('Modificado', 'Arqueo recalculado al centavo.', 'sky');
@@ -343,22 +340,22 @@ async function editarOperacionCaja(id, tipo) {
     }
 }
 
-async function eliminarOperacionCaja(id, tipo) {
+function eliminarOperacionCaja(id, tipo) {
     if (!window.confirm(`ATENCIÓN: ¿Estás completamente seguro de ANULAR este registro de ${tipo.toUpperCase()}?`)) return;
 
+    // 🚀 Lógica optimista
     try {
         const batch = writeBatch(db);
 
         if (tipo === 'venta') {
-            const vRef = doc(db, "ventas", id);
-            const vSnap = await getDoc(vRef);
-            if (!vSnap.exists()) return;
+            const vData = ventasDelDia.find(v => v.id === id);
+            if (!vData) return;
             
-            const vData = vSnap.data();
             const total = vData.total || 0;
             const efe = parseFloat(vData.pago_efectivo || vData.pagoEfectivo || 0);
             const yap = parseFloat(vData.pago_yape || vData.pagoYape || 0);
 
+            const vRef = doc(db, "ventas", id);
             batch.delete(vRef);
 
             const locId = vData.localId || 'general';
@@ -383,11 +380,10 @@ async function eliminarOperacionCaja(id, tipo) {
 
         } else {
             // Anular un gasto
-            const gRef = doc(db, "gastos", id);
-            const gSnap = await getDoc(gRef);
-            if (!gSnap.exists()) return;
+            const gData = gastosDelDia.find(g => g.id === id);
+            if (!gData) return;
             
-            const gData = gSnap.data();
+            const gRef = doc(db, "gastos", id);
             batch.delete(gRef);
 
             const locId = gData.localId || 'general';
@@ -399,7 +395,7 @@ async function eliminarOperacionCaja(id, tipo) {
             }, { merge: true });
         }
 
-        await batch.commit();
+        batch.commit().catch(e => console.error("Error en anulación background:", e));
         
         // Forzar actualización visual si inventario o carrito están expuestos
         if (window.cargarInventarioDesdeFirebase) window.cargarInventarioDesdeFirebase();
@@ -407,7 +403,6 @@ async function eliminarOperacionCaja(id, tipo) {
 
     } catch (e) {
         console.error("Error en anulación:", e);
-        if(window.mostrarAlerta) window.mostrarAlerta('Error', 'Fallo al anular la operación. Verifica tu conexión.', 'red');
     }
 }
 
