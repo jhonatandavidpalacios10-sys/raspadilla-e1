@@ -56,7 +56,12 @@ function renderArqueoCaja() {
     let vFiltradas = ventasDelDia;
     let gFiltrados = gastosDelDia;
 
-    if (localFiltro !== 'todas') {
+    if (state.userRole !== 'admin' && state.userRole !== 'master') {
+        // FIX CRÍTICO: Vendedores solo ven su propia caja
+        vFiltradas = ventasDelDia.filter(v => v.localId === state.userLocalId || !v.localId || v.localId === 'general');
+        gFiltrados = gastosDelDia.filter(g => g.localId === state.userLocalId || !g.localId || g.localId === 'general');
+    } else if (localFiltro !== 'todas') {
+        // Administradores usando el filtro
         vFiltradas = ventasDelDia.filter(v => v.localId === localFiltro);
         gFiltrados = gastosDelDia.filter(g => g.localId === localFiltro);
     }
@@ -78,12 +83,12 @@ function renderArqueoCaja() {
 
     const netoEfectivo = totalEfectivo - totalGastos;
 
-    // Actualizar Panel Superior (Dashboard de Caja)
-    const elIngresos = document.getElementById('caja-total-ingresos');
-    const elEfectivo = document.getElementById('caja-total-efectivo');
-    const elYape = document.getElementById('caja-total-yape');
-    const elGastos = document.getElementById('caja-total-gastos');
-    const elNeto = document.getElementById('caja-neto-efectivo');
+    // Actualizar Panel Superior (Dashboard de Caja) - FIX: Sincronizados con index.html
+    const elIngresos = document.getElementById('caja-total');
+    const elEfectivo = document.getElementById('caja-efectivo');
+    const elYape = document.getElementById('caja-yape');
+    const elGastos = document.getElementById('caja-gastos');
+    const elNeto = document.getElementById('caja-neta');
 
     if(elIngresos) elIngresos.textContent = formatMoney(totalIngresos);
     if(elEfectivo) elEfectivo.textContent = formatMoney(totalEfectivo);
@@ -96,12 +101,13 @@ function renderArqueoCaja() {
 }
 
 function renderListaOperaciones(ventas, gastos) {
-    const lista = document.getElementById('lista-operaciones-caja');
+    // FIX CRÍTICO: ID sincronizado con index.html
+    const lista = document.getElementById('caja-historial-list');
     if (!lista) return;
 
     let operaciones = [
-        ...ventas.map(v => ({...v, tipoOp: 'venta', time: v.fechaHora || v.timestamp?.toMillis() || Date.now()})),
-        ...gastos.map(g => ({...g, tipoOp: 'gasto', time: g.fechaHora || g.timestamp?.toMillis() || Date.now()}))
+        ...ventas.map(v => ({...v, tipoOp: 'venta', time: v.fechaHora || (v.timestamp && typeof v.timestamp.toMillis === 'function' ? v.timestamp.toMillis() : (v.timestamp?.seconds * 1000)) || Date.now()})),
+        ...gastos.map(g => ({...g, tipoOp: 'gasto', time: g.fechaHora || (g.timestamp && typeof g.timestamp.toMillis === 'function' ? g.timestamp.toMillis() : (g.timestamp?.seconds * 1000)) || Date.now()}))
     ];
 
     // Ordenar de la más reciente a la más antigua
