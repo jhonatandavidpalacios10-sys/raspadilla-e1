@@ -134,8 +134,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 btnLogin.innerHTML = originalHtml;
                 if(window.lucide) window.lucide.createIcons();
                 
-                // FIX: Aduana de Validación - Borrado automático si la cuenta fue eliminada
-                if (err.message === "CUENTA_ELIMINADA") {
+                // FIX: Aduana de Validación - Borrado automático si la cuenta fue eliminada O desactivada
+                if (err.message === "CUENTA_ELIMINADA" || err.message === "CUENTA_DESACTIVADA") {
                     removeAccount(email);
                     if(window.mostrarAlerta) window.mostrarAlerta('Acceso Denegado', 'Esta cuenta ha sido deshabilitada o eliminada permanentemente.', 'red');
                     setTimeout(() => location.reload(), 2000);
@@ -233,8 +233,8 @@ document.addEventListener("DOMContentLoaded", () => {
             } catch (err) { 
                 console.error("Error de autenticación:", err);
                 
-                // FIX: Aduana de Validación - Manejo del error específico
-                if (err.message === "CUENTA_ELIMINADA") {
+                // FIX: Aduana de Validación - Manejo de cuentas eliminadas O desactivadas
+                if (err.message === "CUENTA_ELIMINADA" || err.message === "CUENTA_DESACTIVADA") {
                     document.getElementById('login-error').classList.add('hidden');
                     if(window.mostrarAlerta) window.mostrarAlerta('Acceso Denegado', 'Esta cuenta ha sido deshabilitada o eliminada permanentemente.', 'red');
                 } else {
