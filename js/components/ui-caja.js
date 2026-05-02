@@ -36,14 +36,16 @@ function iniciarEscuchaCaja() {
     // Traemos todas las ventas del día actual
     const qVentas = query(collection(db, "ventas"), where("fechaStr", "==", hoy));
     unsubscribeVentasCaja = onSnapshot(qVentas, (snapshot) => {
-        ventasDelDia = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // FIX: Usamos serverTimestamps: 'estimate' para evitar saltos temporales
+        ventasDelDia = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data({ serverTimestamps: 'estimate' }) }));
         renderArqueoCaja();
     });
 
     // Traemos todos los gastos/retiros del día actual
     const qGastos = query(collection(db, "gastos"), where("fechaStr", "==", hoy));
     unsubscribeGastosCaja = onSnapshot(qGastos, (snapshot) => {
-        gastosDelDia = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // FIX: Usamos serverTimestamps: 'estimate' para evitar saltos temporales
+        gastosDelDia = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data({ serverTimestamps: 'estimate' }) }));
         renderArqueoCaja();
     });
 }
