@@ -48,7 +48,8 @@ function iniciarEscuchaPedidos() {
     unsubscribePedidos = onSnapshot(q, (snapshot) => {
         pedidosGlobales = [];
         snapshot.forEach(d => { 
-            const v = d.data(); 
+            // FIX: Time-jump bug (Evita que el pedido desaparezca temporalmente)
+            const v = d.data({ serverTimestamps: 'estimate' }); 
             v.id = d.id; 
             pedidosGlobales.push(v); 
         });
@@ -82,11 +83,11 @@ function renderPedidosUI() {
             if (v.estado === 'pendiente') pendientes.push(v);
             else if (v.estado === 'listo') listos.push(v);
         }
-    });
-
-    // Ordenar: Los más antiguos primero
-    pendientes.sort((a,b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
-    listos.sort((a,b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+    // Ordenar: Los más antiguos primero (Usando tiempo estimado o Date.now para evitar el 1970)
+    const getTime = (v) => v.fechaHora || (v.timestamp?.seconds ? v.timestamp.seconds * 1000 : Date.now());
+    
+    pendientes.sort((a,b) => getTime(a) - getTime(b));
+    listos.sort((a,b) => getTime(b) - getTime(a));
 
     // Actualizar contadores
     const contPendientes = document.getElementById('contador-pendientes');
@@ -114,7 +115,10 @@ function generarHTMLPedido(v, esListo = false) {
         iHtml += `<div class="flex justify-between items-start mb-1 text-xs"><p class="text-white leading-tight pr-2"><span class="text-sky-400 font-bold">${i.cantidad}x</span> ${i.nombre}</p></div>`; 
     });
     
-    const time = v.timestamp ? new Date(v.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
+    // FIX: Time-jump bug para la visualización de la hora
+    const tVal = v.timestamp ? new Date(v.timestamp.seconds * 1000) : new Date();
+    const time = tVal.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    
     const num = v.id.split('-')[1] || '---';
     const editBdge = v.editado ? `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] px-1 rounded uppercase font-bold ml-2 animate-pulse">Modificado</span>` : '';
     
