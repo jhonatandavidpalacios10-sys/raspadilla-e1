@@ -17,6 +17,7 @@ export function initVentas() {
     window.clearCart = clearCart;
     window.actualizarCarritoUI = actualizarCarritoUI;
     window.cerrarModalArmar = cerrarModalArmar;
+    window.toggleSabor = toggleSabor; // <--- FIX CRÍTICO: Exponemos la función globalmente
 
     window.toggleMetodoPago = function(val) {
         const areaVuelto = document.getElementById('area-vuelto');
@@ -247,8 +248,15 @@ function iniciarArmadoVaso(id) {
     const saboresDisp = state.productos.filter(p => String(p.categoria || '').toLowerCase() === 'sabor' && (!p.localId || p.localId === 'global' || p.localId === state.userLocalId));
     
     saboresDisp.forEach(j => {
-        const dis = (j.stock !== null && j.stock <= 0) ? 'opacity-50 pointer-events-none line-through' : 'cursor-pointer hover:border-slate-400';
-        html += `<div data-nombre="${j.nombre}" class="sabor-btn bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 p-3 rounded-xl flex items-center gap-2 transition-colors ${dis}"><div class="check-icon w-4 h-4 rounded-full border border-slate-400 dark:border-slate-600 flex items-center justify-center"></div><span class="text-sm font-medium text-slate-700 dark:text-slate-300">${j.nombre}</span></div>`;
+        // FIX CRÍTICO: Inyectar la acción de clic directamente (onclick) para que nunca falle y mejorar la UI
+        const dis = (j.stock !== null && j.stock <= 0) ? 'opacity-50 pointer-events-none line-through' : 'cursor-pointer hover:border-sky-500 hover:shadow-md';
+        const clickAction = (j.stock !== null && j.stock <= 0) ? '' : `onclick="window.toggleSabor('${j.nombre}')"`;
+        
+        html += `
+        <div ${clickAction} data-nombre="${j.nombre}" class="sabor-btn bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 p-3 rounded-xl flex items-center gap-2 transition-all select-none ${dis}">
+            <div class="check-icon w-4 h-4 rounded-full border border-slate-400 dark:border-slate-600 flex items-center justify-center transition-colors"></div>
+            <span class="text-sm font-medium text-slate-700 dark:text-slate-300 w-full">${j.nombre}</span>
+        </div>`;
     });
     
     c.innerHTML = html || '<p class="text-xs text-slate-500 col-span-2">No hay sabores disponibles en esta sede.</p>'; 
@@ -265,7 +273,11 @@ function toggleSabor(n) {
     } else { 
         if(vasoActual.limite === 999 || saboresElegidos.length < vasoActual.limite) {
             saboresElegidos.push(n); 
-        } else return; 
+        } else {
+            // FIX: Avisar al usuario si ya llegó al límite para que no piense que el botón no funciona
+            if(window.mostrarToast) window.mostrarToast('Límite alcanzado', `Solo puedes elegir hasta ${vasoActual.limite} sabores.`, 'amber');
+            return; 
+        }
     }
     
     document.querySelectorAll('.sabor-btn').forEach(btn => {
