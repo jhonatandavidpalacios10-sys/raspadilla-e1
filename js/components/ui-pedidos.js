@@ -1,4 +1,4 @@
-import { db, collection, query, where, onSnapshot, doc, updateDoc, deleteDoc, getDoc, writeBatch, increment } from '../core/firebase-setup.js';
+import { db, collection, query, where, onSnapshot, doc, updateDoc, writeBatch, increment } from '../core/firebase-setup.js';
 import { state } from '../core/store.js'; 
 import { getTodayDateStr } from '../utils/helpers.js';
 
@@ -155,7 +155,7 @@ function generarHTMLPedido(v, esListo = false) {
 
 function actualizarEstadoPedido(idVenta, nuevoEstado) {
     if (nuevoEstado === 'rechazado') {
-        if(window.mostrarConfirmacion) window.mostrarConfirmacion(`¿Rechazar pedido? Se ocultará de la cola y el stock regresará al inventario.`, async () => { 
+        if(window.mostrarConfirmacion) window.mostrarConfirmacion(`¿Rechazar pedido? Se ocultará de la cola y el stock regresará al inventario.`, () => { 
             ejecutarCambioEstado(idVenta, nuevoEstado); 
         });
     } else { 
@@ -163,126 +163,120 @@ function actualizarEstadoPedido(idVenta, nuevoEstado) {
     }
 }
 
-async function ejecutarCambioEstado(idVenta, nuevoEstado) {
-    try { 
-        // TRAZABILIDAD DE AUDITORÍA: Quién despachó o rechazó el pedido
-        const autorCambio = state.currentUser?.username || state.currentUser?.email || 'Desconocido';
+function ejecutarCambioEstado(idVenta, nuevoEstado) {
+    // 🚀 Lógica optimista: No hay 'await' bloqueantes. 
+    // Firebase Firestore actualiza la caché local al instante y lanza un onSnapshot, 
+    // haciendo que el ticket desaparezca de la cola sin esperar a la red.
+    const autorCambio = state.currentUser?.username || state.currentUser?.email || 'Desconocido';
 
-        if (nuevoEstado === 'listo') {
-            await updateDoc(doc(db, "ventas", idVenta), { 
-                estado: nuevoEstado, 
-                modificadoPor: autorCambio, 
-                fechaModificacion: new Date().toISOString() 
-            }); 
-            if(window.mostrarToast) window.mostrarToast('Actualizado', `Pedido despachado`, 'emerald'); 
-        } else if (nuevoEstado === 'rechazado') {
-            const vRef = doc(db, "ventas", idVenta);
-            const vSnap = await getDoc(vRef);
-            if (!vSnap.exists()) return;
-            const vData = vSnap.data();
+    if (nuevoEstado === 'listo') {
+        updateDoc(doc(db, "ventas", idVenta), { 
+            estado: nuevoEstado, 
+            modificadoPor: autorCambio, 
+            fechaModificacion: new Date().toISOString() 
+        }).catch(e => console.error("Error al actualizar pedido:", e)); 
+        
+        if(window.mostrarToast) window.mostrarToast('Actualizado', `Pedido despachado`, 'emerald'); 
+    } else if (nuevoEstado === 'rechazado') {
+        
+        // Búsqueda en RAM inmediata (Cero carga de red)
+        const vData = pedidosGlobales.find(v => v.id === idVenta);
+        if (!vData || vData.estado === 'rechazado') return;
 
-            if (vData.estado === 'rechazado') return;
+        const batch = writeBatch(db);
+        const vRef = doc(db, "ventas", idVenta);
 
-            const batch = writeBatch(db);
+        // 1. Marcar como rechazado
+        batch.update(vRef, { 
+            estado: 'rechazado',
+            modificadoPor: autorCambio,
+            fechaModificacion: new Date().toISOString()
+        });
 
-            // 1. Marcar como rechazado
-            batch.update(vRef, { 
-                estado: 'rechazado',
-                modificadoPor: autorCambio,
-                fechaModificacion: new Date().toISOString()
-            });
+        // 2. Restar dinero de la caja diaria
+        const locId = vData.localId || 'general';
+        const fStr = vData.fechaStr;
+        const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
 
-            // 2. Restar dinero de la caja diaria
-            const locId = vData.localId || 'general';
-            const fStr = vData.fechaStr;
-            const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+        batch.set(cRef, {
+            total_ingresos: increment(-(vData.total || 0)),
+            total_costos: increment(-(vData.costoTotal || vData.costo_total || 0)),
+            total_efectivo: increment(-(vData.pagoEfectivo || vData.pago_efectivo || 0)),
+            total_yape: increment(-(vData.pagoYape || vData.pago_yape || 0)),
+            cantidad_ventas: increment(-1)
+        }, { merge: true });
 
-            batch.set(cRef, {
-                total_ingresos: increment(-(vData.total || 0)),
-                total_costos: increment(-(vData.costoTotal || vData.costo_total || 0)),
-                total_efectivo: increment(-(vData.pagoEfectivo || vData.pago_efectivo || 0)),
-                total_yape: increment(-(vData.pagoYape || vData.pago_yape || 0)),
-                cantidad_ventas: increment(-1)
-            }, { merge: true });
-
-            // 3. Devolver los productos al inventario (Protección para productos ilimitados)
-            if (vData.items) {
-                vData.items.forEach(item => {
-                    if (item.productoId !== 'AJUSTE') {
-                        const p = state.productos.find(x => x.id === item.productoId);
-                        if (p && p.stock !== null) {
-                            const pRef = doc(db, "productos", item.productoId);
-                            batch.update(pRef, { stock: increment(item.cantidad) });
-                        }
+        // 3. Devolver los productos al inventario
+        if (vData.items) {
+            vData.items.forEach(item => {
+                if (item.productoId !== 'AJUSTE') {
+                    const p = state.productos.find(x => x.id === item.productoId);
+                    if (p && p.stock !== null) {
+                        const pRef = doc(db, "productos", item.productoId);
+                        batch.update(pRef, { stock: increment(item.cantidad) });
                     }
-                });
-            }
-
-            await batch.commit();
-
-            // Refrescar Inventario local
-            if (window.cargarInventarioDesdeFirebase) await window.cargarInventarioDesdeFirebase();
-            if(window.mostrarToast) window.mostrarToast('Rechazado', `El pedido fue anulado y el stock devuelto.`, 'amber'); 
+                }
+            });
         }
-    } catch(e) {
-        console.error("Error al actualizar pedido:", e);
-        if(window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo procesar la orden.", "red");
+
+        // Envío en background
+        batch.commit().catch(e => console.error("Error al rechazar pedido:", e));
+
+        if(window.mostrarToast) window.mostrarToast('Rechazado', `El pedido fue anulado y el stock devuelto.`, 'amber'); 
     }
 }
 
-async function editarPedido(idVenta) {
+function editarPedido(idVenta) {
     if(!window.mostrarConfirmacion) return;
-    window.mostrarConfirmacion("¿Mandar a caja para editarlo? Se borrará de la cola y el stock se liberará momentáneamente.", async () => {
-        try {
-            const r = doc(db, "ventas", idVenta); 
-            const s = await getDoc(r);
-            
-            if(s.exists()) {
-                const vData = s.data();
-                state.carrito = vData.items; 
-                window.ticketEditadoOriginal = true; 
-                
-                const batch = writeBatch(db);
+    window.mostrarConfirmacion("¿Mandar a caja para editarlo? Se borrará de la cola y el stock se liberará momentáneamente.", () => {
+        // 🚀 Lógica optimista y sin esperas
+        
+        // 1. Buscamos la orden instantáneamente en RAM
+        const vData = pedidosGlobales.find(v => v.id === idVenta);
+        if (!vData) return;
 
-                // 1. Restar de la caja porque el ticket original va a ser borrado
-                const locId = vData.localId || 'general';
-                const fStr = vData.fechaStr;
-                const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+        // 2. Cargamos el ticket al carrito y cambiamos la pantalla inmediatamente (Velocidad de videojuego)
+        state.carrito = vData.items; 
+        window.ticketEditadoOriginal = true; 
+        
+        if (window.actualizarCarritoUI) window.actualizarCarritoUI(); 
+        if (window.switchView) window.switchView('ventas');
+        if (window.mostrarToast) window.mostrarToast('En Caja', 'Ticket devuelto para edición.', 'sky');
 
-                batch.set(cRef, {
-                    total_ingresos: increment(-(vData.total || 0)),
-                    total_costos: increment(-(vData.costoTotal || vData.costo_total || 0)),
-                    total_efectivo: increment(-(vData.pagoEfectivo || vData.pago_efectivo || 0)),
-                    total_yape: increment(-(vData.pagoYape || vData.pago_yape || 0)),
-                    cantidad_ventas: increment(-1)
-                }, { merge: true });
+        // 3. Empaquetamos la limpieza de la base de datos y la mandamos en background
+        const batch = writeBatch(db);
+        const r = doc(db, "ventas", idVenta); 
 
-                // 2. Liberar el stock original (Protección para productos ilimitados)
-                if (vData.items) {
-                    vData.items.forEach(item => {
-                        if (item.productoId !== 'AJUSTE') {
-                            const p = state.productos.find(x => x.id === item.productoId);
-                            if (p && p.stock !== null) {
-                                const pRef = doc(db, "productos", item.productoId);
-                                batch.update(pRef, { stock: increment(item.cantidad) });
-                            }
-                        }
-                    });
+        // Restar de la caja
+        const locId = vData.localId || 'general';
+        const fStr = vData.fechaStr;
+        const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+
+        batch.set(cRef, {
+            total_ingresos: increment(-(vData.total || 0)),
+            total_costos: increment(-(vData.costoTotal || vData.costo_total || 0)),
+            total_efectivo: increment(-(vData.pagoEfectivo || vData.pago_efectivo || 0)),
+            total_yape: increment(-(vData.pagoYape || vData.pago_yape || 0)),
+            cantidad_ventas: increment(-1)
+        }, { merge: true });
+
+        // Liberar el stock original
+        if (vData.items) {
+            vData.items.forEach(item => {
+                if (item.productoId !== 'AJUSTE') {
+                    const p = state.productos.find(x => x.id === item.productoId);
+                    if (p && p.stock !== null) {
+                        const pRef = doc(db, "productos", item.productoId);
+                        batch.update(pRef, { stock: increment(item.cantidad) });
+                    }
                 }
-
-                // 3. Borrar el ticket original
-                batch.delete(r);
-
-                await batch.commit();
-                
-                if (window.cargarInventarioDesdeFirebase) await window.cargarInventarioDesdeFirebase();
-                if (window.actualizarCarritoUI) window.actualizarCarritoUI(); 
-                if (window.switchView) window.switchView('ventas');
-                if (window.mostrarToast) window.mostrarToast('En Caja', 'Ticket devuelto para edición.', 'sky');
-            }
-        } catch(e) {
-            console.error("Error al devolver pedido a caja:", e);
-            if(window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo recuperar el pedido.", "red");
+            });
         }
+
+        // Borrar el ticket original
+        batch.delete(r);
+
+        // Envío asíncrono sin bloquear el hilo principal
+        batch.commit().catch(e => console.error("Error al devolver pedido a caja:", e));
     });
 }
