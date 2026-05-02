@@ -45,6 +45,10 @@ export function initAuth() {
                     r = userData.rol || 'vendedor'; 
                     l = userData.localNombre || 'Sin Local'; 
                     lId = userData.localId || ''; 
+                } else if (user.uid !== MASTER_UID) {
+                    // FIX: Usuario eliminado de la BD en plena sesión. Expulsar inmediatamente.
+                    logout();
+                    return;
                 }
                 
                 if (user.uid === MASTER_UID) { r = 'master'; l = 'Dueño Supremo'; }
@@ -149,7 +153,7 @@ function mostrarError404() {
         errorDiv.className = 'fixed inset-0 z-[300] bg-[#090b14] flex flex-col items-center justify-center text-center p-6 transition-opacity duration-300';
         errorDiv.innerHTML = `
             <div class="flex flex-col items-center max-w-lg font-sans">
-                <div class="mb-8 relative"><div class="absolute inset-0 bg-red-600 blur-[60px] opacity-20 rounded-full animate-pulse"></div><svg class="w-32 h-32 text-slate-800 relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg><div class="absolute bottom-4 right-4 bg-[#090b14] rounded-full p-1 border-4 border-[#090b14] z-20"><svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width=\"2.5\" d=\"M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z\"></path></svg></div></div>
+                <div class="mb-8 relative"><div class="absolute inset-0 bg-red-600 blur-[60px] opacity-20 rounded-full animate-pulse"></div><svg class="w-32 h-32 text-slate-800 relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"></path></svg><div class="absolute bottom-4 right-4 bg-[#090b14] rounded-full p-1 border-4 border-[#090b14] z-20"><svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg></div></div>
                 <h1 class="text-4xl md:text-5xl font-black text-white mb-4 tracking-tight drop-shadow-md">503 Service Unavailable</h1>
                 <div class="bg-slate-900/50 border border-slate-800 rounded-xl p-6 w-full text-left mb-8 shadow-2xl backdrop-blur-sm"><p class="text-red-400 font-mono text-sm mb-3 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>ERR_CONNECTION_TIMED_OUT</p><p class="text-slate-400 text-sm leading-relaxed mb-4">No se pudo establecer conexión con los servidores principales. El nodo de la base de datos ha rechazado la solicitud por tiempo de espera agotado o problemas de enrutamiento en la red.</p><div class="pt-4 border-t border-slate-800/80 bg-slate-950/30 p-3 rounded-lg"><p class="text-xs text-slate-500 font-mono leading-relaxed">Host: api.db-cluster-south.com<br>Status: <span class="text-red-500">Disconnected (Code 404)</span><br>Timeout: 30000ms<br>Trace ID: ${Math.random().toString(36).substr(2, 9).toUpperCase()}</p></div></div>
                 <button id="btn-logout-404" class="px-8 py-3.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl font-bold border border-slate-700 transition-colors shadow-lg flex items-center gap-2"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>Volver e intentar de nuevo</button>
@@ -211,5 +215,18 @@ function aplicarPermisosVisuales(userDocData) {
     }
 }
 
-export async function login(e, p) { return await signInWithEmailAndPassword(auth, e, p); }
+export async function login(e, p) { 
+    const cred = await signInWithEmailAndPassword(auth, e, p); 
+    
+    // FIX: Aduana de validación. Si no existe en BD, rechazar login y lanzar error.
+    if (cred.user.uid !== MASTER_UID) {
+        const userSnap = await getDoc(doc(db, "usuarios", cred.user.uid));
+        if (!userSnap.exists()) {
+            await signOut(auth); // Desloguear a la fuerza
+            throw new Error("CUENTA_ELIMINADA");
+        }
+    }
+    return cred; 
+}
+
 export async function logout() { return await signOut(auth); }
