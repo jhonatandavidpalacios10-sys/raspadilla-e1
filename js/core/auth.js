@@ -42,6 +42,13 @@ export function initAuth() {
                 
                 if (userDoc.exists()) { 
                     userData = userDoc.data();
+                    
+                    // FIX: Expulsar inmediatamente si la cuenta fue desactivada mientras estaba en turno
+                    if ((userData.activo === false || userData.estado === 'inactivo') && user.uid !== MASTER_UID) {
+                        logout();
+                        return;
+                    }
+
                     r = userData.rol || 'vendedor'; 
                     l = userData.localNombre || 'Sin Local'; 
                     lId = userData.localId || ''; 
@@ -218,12 +225,19 @@ function aplicarPermisosVisuales(userDocData) {
 export async function login(e, p) { 
     const cred = await signInWithEmailAndPassword(auth, e, p); 
     
-    // FIX: Aduana de validación. Si no existe en BD, rechazar login y lanzar error.
+    // FIX: Aduana de validación extendida (Eliminado o Desactivado).
     if (cred.user.uid !== MASTER_UID) {
         const userSnap = await getDoc(doc(db, "usuarios", cred.user.uid));
+        
         if (!userSnap.exists()) {
             await signOut(auth); // Desloguear a la fuerza
             throw new Error("CUENTA_ELIMINADA");
+        }
+        
+        const data = userSnap.data();
+        if (data.activo === false || data.estado === 'inactivo') {
+            await signOut(auth); // Desloguear a la fuerza
+            throw new Error("CUENTA_DESACTIVADA");
         }
     }
     return cred; 
