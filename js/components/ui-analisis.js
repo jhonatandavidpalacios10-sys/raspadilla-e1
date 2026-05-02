@@ -72,7 +72,8 @@ function updateAnalysisRange() {
     // Escucha en tiempo real de ventas
     unsubscribeVentas = onSnapshot(qV, (snapshot) => {
         analysisData = [];
-        snapshot.forEach(d => { analysisData.push({ id: d.id, ...d.data() }); });
+        // FIX: Time-jump bug
+        snapshot.forEach(d => { analysisData.push({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }); });
         readyV = true;
         if(readyV && readyG) processAndRenderAnalysis();
     }, (error) => {
@@ -82,7 +83,8 @@ function updateAnalysisRange() {
     // Escucha en tiempo real de gastos
     unsubscribeGastos = onSnapshot(qG, (snapshot) => {
         analysisGastos = [];
-        snapshot.forEach(d => { analysisGastos.push({ id: d.id, ...d.data() }); });
+        // FIX: Time-jump bug
+        snapshot.forEach(d => { analysisGastos.push({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }); });
         readyG = true;
         if(readyV && readyG) processAndRenderAnalysis();
     }, (error) => {
@@ -322,7 +324,8 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
     let lHtml = '';
     
     ventas.forEach(v => {
-        const time = v.timestamp ? new Date(v.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
+        // FIX: Mostrar hora correcta o actual si no hay timestamp temporal
+        const time = v.timestamp ? new Date(v.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         const num = v.id.split('-')[1] || '--';
         const cantItems = v.items ? v.items.reduce((s,i) => s + i.cantidad, 0) : 0;
         const localInfo = v.localNombre ? ` • <span class="text-[9px] uppercase tracking-wider">${v.localNombre}</span>` : '';
@@ -364,7 +367,8 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
     });
     
     gastos.forEach(g => { 
-        const time = g.timestamp ? new Date(g.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--';
+        // FIX: Mostrar hora correcta o actual si no hay timestamp temporal
+        const time = g.timestamp ? new Date(g.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         const localInfo = g.localNombre && g.localNombre !== 'Global' ? ` • <span class="text-[9px] uppercase tracking-wider">${g.localNombre}</span>` : '';
         
         let gHtml = `<div id="det-${g.id}" class="hidden mt-3 pt-2">`;
