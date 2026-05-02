@@ -133,8 +133,16 @@ document.addEventListener("DOMContentLoaded", () => {
             } catch (err) {
                 btnLogin.innerHTML = originalHtml;
                 if(window.lucide) window.lucide.createIcons();
-                if(window.mostrarAlerta) window.mostrarAlerta('Credenciales Caducadas', 'La contraseña fue cambiada o el usuario no existe. Inicia sesión manualmente.', 'amber');
-                removeAccount(email);
+                
+                // FIX: Aduana de Validación - Borrado automático si la cuenta fue eliminada
+                if (err.message === "CUENTA_ELIMINADA") {
+                    removeAccount(email);
+                    if(window.mostrarAlerta) window.mostrarAlerta('Acceso Denegado', 'Esta cuenta ha sido deshabilitada o eliminada permanentemente.', 'red');
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    if(window.mostrarAlerta) window.mostrarAlerta('Credenciales Caducadas', 'La contraseña fue cambiada. Inicia sesión manualmente.', 'amber');
+                    removeAccount(email);
+                }
             }
         }
     });
@@ -224,7 +232,15 @@ document.addEventListener("DOMContentLoaded", () => {
                 setTimeout(() => { bs.innerHTML = ot; bs.disabled = false; }, 1000); 
             } catch (err) { 
                 console.error("Error de autenticación:", err);
-                document.getElementById('login-error').classList.remove('hidden'); 
+                
+                // FIX: Aduana de Validación - Manejo del error específico
+                if (err.message === "CUENTA_ELIMINADA") {
+                    document.getElementById('login-error').classList.add('hidden');
+                    if(window.mostrarAlerta) window.mostrarAlerta('Acceso Denegado', 'Esta cuenta ha sido deshabilitada o eliminada permanentemente.', 'red');
+                } else {
+                    document.getElementById('login-error').classList.remove('hidden'); 
+                }
+                
                 bs.innerHTML = ot; 
                 bs.disabled = false; 
                 if(window.lucide) window.lucide.createIcons(); 
