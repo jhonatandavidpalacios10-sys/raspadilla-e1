@@ -72,14 +72,8 @@ export function initVentas() {
         });
     }
 
-    const gridSabores = document.getElementById('builder-sabores');
-    if (gridSabores) {
-        gridSabores.addEventListener('click', e => {
-            const btn = e.target.closest('.sabor-btn');
-            if (!btn || btn.classList.contains('opacity-50')) return;
-            toggleSabor(btn.dataset.nombre);
-        });
-    }
+    // FIX CRÍTICO: Hemos ELIMINADO el escuchador duplicado de "gridSabores" que estaba aquí.
+    // Eso causaba el doble clic invisible (agregaba y borraba el sabor en 1 milisegundo).
 
     const listCarrito = document.getElementById('carrito-items');
     if (listCarrito) {
@@ -209,8 +203,8 @@ export function renderProductosVenta() {
         const isAgt = p.stock !== null && p.stock <= 0;
         const blockCls = isAgt ? 'opacity-50 grayscale cursor-not-allowed' : 'cursor-pointer hover:border-sky-500 hover:shadow-sky-500/20 active:scale-95';
         
-        // FIX CRÍTICO: Buscar múltiples nombres de la propiedad límite de sabores por seguridad
-        const limite = p.limite_sabores !== undefined ? p.limite_sabores : (p.limiteSabores || p.limite || 0);
+        // FIX CRÍTICO: Buscar múltiples nombres de la propiedad límite y FORZAR que sea Número
+        const limite = Number(p.limite_sabores !== undefined ? p.limite_sabores : (p.limiteSabores || p.limite || 0));
         
         const badgeLocal = (p.localId && p.localId !== 'global' && isAdmin) ? `<span class="absolute top-1 left-1 bg-slate-900 text-[8px] text-slate-400 px-1 py-0.5 rounded border border-slate-700 truncate max-w-[60px]">${state.locales.find(l => l.id === p.localId)?.nombre || 'Sede'}</span>` : '';
         const badgeHtml = isAgt ? `<div class="absolute top-0 right-0 bg-red-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">Agotado</div>` : (catLower ==='vaso' ? `<div class="absolute top-0 right-0 bg-sky-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">${limite===999?'Ilimitados':limite}</div>` : '');
@@ -239,8 +233,8 @@ function iniciarArmadoVaso(id) {
     vasoActual = state.productos.find(p => p.id === id); 
     if(!vasoActual) return; 
 
-    // FIX CRÍTICO: Normalizar la propiedad límite
-    const limite = vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0);
+    // FIX CRÍTICO: Normalizar la propiedad límite y FORZAR que sea un Número
+    const limite = Number(vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0));
 
     // FIX UX MEJORADA: Si es una raspadilla loca o innovadora (Límite 0), va directo al carrito sin abrir modal.
     if (limite === 0) {
@@ -297,7 +291,7 @@ function iniciarArmadoVaso(id) {
 }
 
 function toggleSabor(n) {
-    const limite = vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0);
+    const limite = Number(vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0));
 
     if(saboresElegidos.includes(n)) {
         saboresElegidos = saboresElegidos.filter(s => s !== n);
@@ -346,7 +340,7 @@ function cerrarModalArmar() {
 }
 
 function confirmarVasoAlCarrito() {
-    const limite = vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0);
+    const limite = Number(vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0));
 
     if(saboresElegidos.length === 0 && limite !== 0 && window.mostrarToast) { 
         window.mostrarToast('Atención', 'Elige 1 sabor mínimo.', 'amber'); 
