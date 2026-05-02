@@ -128,7 +128,7 @@ function abrirModalIngresoStock() {
     setTimeout(() => m.classList.remove('opacity-0'), 10);
 }
 
-async function procesarIngresoStock(e) {
+function procesarIngresoStock(e) {
     e.preventDefault();
     const btn = document.querySelector('#form-ingreso-stock button[type="submit"]');
     const oT = btn.innerHTML;
@@ -149,16 +149,29 @@ async function procesarIngresoStock(e) {
     const prod = state.productos.find(p => p.id === prodId);
     if (!prod) return;
 
+    // 🚀 LÓGICA OPTIMISTA (Actualización Instantánea)
     try {
-        // 1. Sumar Stock en la base de datos
-        await updateDoc(doc(db, "productos", prodId), { stock: increment(cant) });
+        // 1. Actualizar memoria local para que la UI se refresque sin recargar
+        prod.stock += cant;
+        renderInventarioUI(categoriaActual);
+        renderProductosVenta(); // Para actualizar los badges de "Agotado" en la pantalla de ventas
         
-        // 2. Registrar el Gasto automáticamente (Seguridad de Sede)
+        // Cerrar modal al instante
+        const m = document.getElementById('modal-ingreso-stock'); 
+        m.classList.add('opacity-0'); 
+        setTimeout(() => m.classList.add('hidden'), 300);
+
+        if(window.mostrarToast) window.mostrarToast('Ingreso Exitoso', `+${cant} a ${prod.nombre}.`, 'emerald');
+
+        // 2. Sumar Stock en la base de datos (EN BACKGROUND)
+        const promesasBackground = [];
+        promesasBackground.push(updateDoc(doc(db, "productos", prodId), { stock: increment(cant) }));
+        
+        // 3. Registrar el Gasto automáticamente (EN BACKGROUND)
         if (costo > 0) {
             let localAfectado = document.getElementById('ingreso-local')?.value || '';
             let nombreL = 'Sede';
 
-            // FIX: Forzamos la asignación al local del vendedor para evitar gastos huérfanos
             if (state.userRole !== 'master' && state.userRole !== 'admin') {
                 localAfectado = state.userLocalId || '';
                 nombreL = state.userLocal || 'Mi Local';
@@ -166,7 +179,7 @@ async function procesarIngresoStock(e) {
                 nombreL = localAfectado === 'ambas' ? 'Global' : (state.locales.find(x => x.id === localAfectado)?.nombre || 'Sede');
             }
             
-            await addDoc(collection(db, "gastos"), { 
+            promesasBackground.push(addDoc(collection(db, "gastos"), { 
                 monto: costo, 
                 descripcion: `Stock: Ingreso de ${cant}x ${prod.nombre}`, 
                 fechaStr: getTodayDateStr(), 
@@ -174,24 +187,17 @@ async function procesarIngresoStock(e) {
                 localId: localAfectado === 'ambas' ? '' : localAfectado, 
                 localNombre: nombreL, 
                 registradoPor: state.currentUser.email 
-            });
+            }));
         }
 
-        // 3. Actualizar memoria local para que la UI se refresque sin recargar
-        prod.stock += cant;
-        renderInventarioUI(categoriaActual);
-        renderProductosVenta(); // Para actualizar los badges de "Agotado" en la pantalla de ventas
-        
-        if(window.mostrarToast) window.mostrarToast('Ingreso Exitoso', `+${cant} a ${prod.nombre}.`, 'emerald');
-        
-        // Cerrar modal
-        const m = document.getElementById('modal-ingreso-stock'); 
-        m.classList.add('opacity-0'); 
-        setTimeout(() => m.classList.add('hidden'), 300);
+        // Dejar que se resuelvan en las sombras, atrapando errores si algo falla
+        Promise.all(promesasBackground).catch(err => {
+            console.error("Error en background al procesar ingreso:", err);
+            if(window.mostrarAlerta) window.mostrarAlerta('Error de Sincronización', 'No se pudo guardar completamente en la nube.', 'red');
+        });
         
     } catch(err) {
-        console.error("Error al procesar ingreso:", err);
-        if(window.mostrarAlerta) window.mostrarAlerta('Error de Conexión', 'No se pudo registrar el ingreso de mercadería.', 'red');
+        console.error("Error UI al procesar ingreso:", err);
     } finally {
         btn.innerHTML = oT; 
         btn.disabled = false;
@@ -284,8 +290,9 @@ export function renderInventarioUI(cat) {
     if(window.lucide) window.lucide.createIcons();
 }
 
-async function guardarProducto(e) {
+function guardarProducto(e) {
     e.preventDefault(); 
+    // 🚀 LÓGICA OPTIMISTA (Sin async/await bloqueantes)
     const id = document.getElementById('prod-id').value;
     
     let selectedLocal = document.getElementById('prod-local').value;
@@ -320,7 +327,7 @@ async function guardarProducto(e) {
             addDoc(collection(db, "productos"), prodData).then(ref => { 
                 const p = state.productos.find(x => x.id === tempId); 
                 if(p) p.id = ref.id; 
-            }); 
+            }).catch(console.error); 
         }
         
         document.getElementById('modal-producto').classList.add('hidden');
@@ -328,7 +335,7 @@ async function guardarProducto(e) {
         renderProductosVenta(); // Sincroniza la ventana de ventas inmediatamente
     } catch(e) {
         console.error(e);
-        if(window.mostrarAlerta) window.mostrarAlerta("Error", "Ocurrió un problema al guardar el producto", "red");
+        if(window.mostrarAlerta) window.mostrarAlerta("Error", "Ocurrió un problema al actualizar la UI", "red");
     } finally {
         btn.innerHTML = originalText; 
         btn.disabled = false;
@@ -337,20 +344,24 @@ async function guardarProducto(e) {
 
 function eliminarProducto(id) {
     if(window.mostrarConfirmacion) {
-        window.mostrarConfirmacion("¿Eliminar definitivamente este ítem del catálogo?", async () => {
+        window.mostrarConfirmacion("¿Eliminar definitivamente este ítem del catálogo?", () => {
+            // 🚀 LÓGICA OPTIMISTA
             try {
-                // Borrado optimista de UI
+                // Borrado en UI Inmediato
                 state.productos = state.productos.filter(p => p.id !== id);
                 renderInventarioUI(categoriaActual); 
                 renderProductosVenta();
                 
-                // Borrado en BD
-                await deleteDoc(doc(db, "productos", id));
-                if(window.mostrarToast) window.mostrarToast('Eliminado', 'Producto borrado de la nube.', 'sky');
+                // Borrado en BD (En background)
+                deleteDoc(doc(db, "productos", id)).catch(e => {
+                    console.error("Error al borrar en background:", e);
+                    window.cargarInventarioDesdeFirebase(); // Revertir si hay error en la red
+                    if(window.mostrarToast) window.mostrarToast('Error', 'No se pudo eliminar en la nube.', 'red');
+                });
+
+                if(window.mostrarToast) window.mostrarToast('Eliminado', 'Producto borrado de la lista.', 'sky');
             } catch(e) {
                 console.error(e);
-                window.cargarInventarioDesdeFirebase(); // Revertir si hay error
-                if(window.mostrarToast) window.mostrarToast('Error', 'No se pudo eliminar', 'red');
             }
         });
     }
