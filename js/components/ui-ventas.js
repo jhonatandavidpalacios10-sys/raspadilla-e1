@@ -17,7 +17,7 @@ export function initVentas() {
     window.clearCart = clearCart;
     window.actualizarCarritoUI = actualizarCarritoUI;
     window.cerrarModalArmar = cerrarModalArmar;
-    window.toggleSabor = toggleSabor; // <--- FIX CRÍTICO: Exponemos la función globalmente
+    window.toggleSabor = toggleSabor; 
 
     window.toggleMetodoPago = function(val) {
         const areaVuelto = document.getElementById('area-vuelto');
@@ -72,9 +72,6 @@ export function initVentas() {
         });
     }
 
-    // FIX CRÍTICO: Hemos ELIMINADO el escuchador duplicado de "gridSabores" que estaba aquí.
-    // Eso causaba el doble clic invisible (agregaba y borraba el sabor en 1 milisegundo).
-
     const listCarrito = document.getElementById('carrito-items');
     if (listCarrito) {
         listCarrito.addEventListener('click', e => {
@@ -105,7 +102,6 @@ export function initVentas() {
     document.getElementById('searchInput')?.addEventListener('input', renderProductosVenta);
     document.getElementById('posCategoryFilter')?.addEventListener('change', renderProductosVenta);
 
-    // FIX: Forzar el primer renderizado para que los productos aparezcan de inmediato al abrir la app
     renderProductosVenta();
 }
 
@@ -173,21 +169,17 @@ export function renderProductosVenta() {
     const rolUsuario = String(state.userRole || '').toLowerCase();
     const isAdmin = ['admin', 'administrador', 'master'].includes(rolUsuario);
     
-    // Filtro por Sede y Categoría (Normalizado a minúsculas)
     let filtrados = state.productos.filter(p => {
         const prodCat = String(p.categoria || '').toLowerCase();
-        // Solo mostramos Vasos y Extras en la grilla principal
         const isRightCat = prodCat === 'vaso' || prodCat === 'extra';
         const isRightLocal = isAdmin ? true : (!p.localId || p.localId === 'global' || p.localId === state.userLocalId);
         return isRightCat && isRightLocal;
     });
 
-    // Filtro por el select desplegable "Todo"
     if(catFiltro !== '' && catFiltro !== 'todo' && catFiltro !== 'todas') {
         filtrados = filtrados.filter(p => String(p.categoria || '').toLowerCase() === catFiltro);
     }
 
-    // Filtro por la barra de búsqueda
     if(term !== '') {
         filtrados = filtrados.filter(p => String(p.nombre || '').toLowerCase().includes(term));
     }
@@ -203,7 +195,6 @@ export function renderProductosVenta() {
         const isAgt = p.stock !== null && p.stock <= 0;
         const blockCls = isAgt ? 'opacity-50 grayscale cursor-not-allowed' : 'cursor-pointer hover:border-sky-500 hover:shadow-sky-500/20 active:scale-95';
         
-        // FIX CRÍTICO: Buscar múltiples nombres de la propiedad límite y FORZAR que sea Número
         const limite = Number(p.limite_sabores !== undefined ? p.limite_sabores : (p.limiteSabores || p.limite || 0));
         
         const badgeLocal = (p.localId && p.localId !== 'global' && isAdmin) ? `<span class="absolute top-1 left-1 bg-slate-900 text-[8px] text-slate-400 px-1 py-0.5 rounded border border-slate-700 truncate max-w-[60px]">${state.locales.find(l => l.id === p.localId)?.nombre || 'Sede'}</span>` : '';
@@ -233,10 +224,8 @@ function iniciarArmadoVaso(id) {
     vasoActual = state.productos.find(p => p.id === id); 
     if(!vasoActual) return; 
 
-    // FIX CRÍTICO: Normalizar la propiedad límite y FORZAR que sea un Número
     const limite = Number(vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0));
 
-    // FIX UX MEJORADA: Si es una raspadilla loca o innovadora (Límite 0), va directo al carrito sin abrir modal.
     if (limite === 0) {
         const it = state.carrito.find(i => i.productoId === vasoActual.id && i.categoria === 'vaso' && i.sabores.length === 0);
         if (it) {
@@ -256,7 +245,7 @@ function iniciarArmadoVaso(id) {
         }
         actualizarCarritoUI();
         if(window.mostrarToast) window.mostrarToast('Agregado', `${vasoActual.nombre} añadida a la orden.`, 'sky');
-        return; // Salimos de la función para no abrir el modal
+        return;
     }
     
     saboresElegidos = [];
@@ -267,11 +256,9 @@ function iniciarArmadoVaso(id) {
     const c = document.getElementById('builder-sabores'); 
     let html = '';
     
-    // Normalizamos el chequeo de "sabor"
     const saboresDisp = state.productos.filter(p => String(p.categoria || '').toLowerCase() === 'sabor' && (!p.localId || p.localId === 'global' || p.localId === state.userLocalId));
     
     saboresDisp.forEach(j => {
-        // FIX CRÍTICO: Inyectar la acción de clic directamente (onclick) para que nunca falle y mejorar la UI
         const dis = (j.stock !== null && j.stock <= 0) ? 'opacity-50 pointer-events-none line-through' : 'cursor-pointer hover:border-sky-500 hover:shadow-md';
         const clickAction = (j.stock !== null && j.stock <= 0) ? '' : `onclick="window.toggleSabor('${j.nombre}')"`;
         
@@ -299,7 +286,6 @@ function toggleSabor(n) {
         if(limite === 999 || saboresElegidos.length < limite) {
             saboresElegidos.push(n); 
         } else {
-            // FIX: Avisar al usuario si ya llegó al límite para que no piense que el botón no funciona
             if(window.mostrarToast) window.mostrarToast('Límite alcanzado', `Solo puedes elegir hasta ${limite} sabores.`, 'amber');
             return; 
         }
@@ -322,7 +308,7 @@ function toggleSabor(n) {
             btn.classList.add('bg-slate-100', 'dark:bg-slate-900', 'border-slate-300', 'dark:border-slate-700'); 
             chk.classList.replace('bg-white/30', 'border'); 
             chk.classList.replace('border-transparent', 'border-slate-400'); 
-            chk.classList.remove('dark:border-slate-600'); // Resetea estado
+            chk.classList.remove('dark:border-slate-600'); 
             chk.innerHTML = ''; 
         }
     });
@@ -538,7 +524,11 @@ function procesarCobroFinal() {
     const cr = [...state.carrito];
     const esEditado = window.ticketEditadoOriginal === true; 
     window.ticketEditadoOriginal = false;
-    const idLocalSeguro = state.userLocalId || 'general';
+    
+    // FIX CRÍTICO: idLocalSeguro ahora guarda exactamente el localId del usuario (incluso si es '')
+    // Esto asegura que onSnapshot (que busca por localId exacto) identifique el documento instantáneamente.
+    const idLocalSeguro = state.userLocalId || ''; 
+    const cajaIdSeguro = state.userLocalId || 'general'; // Para crear la ID del documento de caja diara
     const creador = state.currentUser?.username || state.currentUser?.email || 'Desconocido';
 
     try {
@@ -569,7 +559,7 @@ function procesarCobroFinal() {
         });
         
         // 2. Acumular en Caja
-        bt.set(doc(db, "caja_diaria", hs + "_" + idLocalSeguro), { 
+        bt.set(doc(db, "caja_diaria", hs + "_" + cajaIdSeguro), { 
             localId: idLocalSeguro, 
             localNombre: state.userLocal || 'Sin Local', 
             fechaStr: hs, 
