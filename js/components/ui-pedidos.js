@@ -62,6 +62,8 @@ function renderPedidosUI() {
     
     pedidosGlobales.forEach(v => {
         const isAdmin = (state.userRole === 'admin' || state.userRole === 'master');
+        
+        // FIX CRÍTICO: Obtener el ID de la sede del usuario de forma segura
         const miSedeId = state.userLocalId || ""; 
         
         let mostrar = false;
@@ -69,14 +71,15 @@ function renderPedidosUI() {
             if (filtroLocalPedidos === 'todas') {
                 mostrar = true;
             } else if (filtroLocalPedidos === '') {
-                // Captura exacta para la opción "Sin Asignar / Antiguas"
-                mostrar = !v.localId || v.localId === '';
+                // Captura exacta para la opción "Sin Asignar / Antiguas" incluyendo 'general'
+                mostrar = !v.localId || v.localId === '' || v.localId === 'general';
             } else {
                 mostrar = v.localId === filtroLocalPedidos;
             }
         } else {
-            // Vendedor ve solo las de su sede (O las globales sin asignar)
-            mostrar = (!v.localId || v.localId === miSedeId);
+            // FIX CRÍTICO: Vendedor ve solo las de su sede exacta. 
+            // Si el vendedor no tiene sede (miSedeId === ""), ve las ventas sin asignar o marcadas como 'general'.
+            mostrar = (v.localId === miSedeId || (!v.localId && miSedeId === "") || (v.localId === 'general' && miSedeId === ""));
         }
 
         if (mostrar) {
@@ -200,9 +203,11 @@ function ejecutarCambioEstado(idVenta, nuevoEstado) {
         });
 
         // 2. Restar dinero de la caja diaria
-        const locId = vData.localId || 'general';
+        // FIX CRÍTICO: Usamos el ID de local exacto, o 'general' si está vacío, para encajar con el doc de Caja
+        const locId = vData.localId || '';
+        const cajaId = locId || 'general';
         const fStr = vData.fechaStr;
-        const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+        const cRef = doc(db, "caja_diaria", `${fStr}_${cajaId}`);
 
         batch.set(cRef, {
             total_ingresos: increment(-(vData.total || 0)),
@@ -254,9 +259,11 @@ function editarPedido(idVenta) {
         const r = doc(db, "ventas", idVenta); 
 
         // Restar de la caja
-        const locId = vData.localId || 'general';
+        // FIX CRÍTICO: Usamos el ID de local exacto, o 'general' para ubicar el doc de Caja
+        const locId = vData.localId || '';
+        const cajaId = locId || 'general';
         const fStr = vData.fechaStr;
-        const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
+        const cRef = doc(db, "caja_diaria", `${fStr}_${cajaId}`);
 
         batch.set(cRef, {
             total_ingresos: increment(-(vData.total || 0)),
