@@ -36,7 +36,7 @@ function iniciarEscuchaCaja() {
     // Traemos todas las ventas del día actual
     const qVentas = query(collection(db, "ventas"), where("fechaStr", "==", hoy));
     unsubscribeVentasCaja = onSnapshot(qVentas, (snapshot) => {
-        // FIX: Usamos serverTimestamps: 'estimate' para evitar saltos temporales
+        // FIX: Evitar salto de tiempo y desaparición de tickets usando el tiempo estimado del dispositivo
         ventasDelDia = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data({ serverTimestamps: 'estimate' }) }));
         renderArqueoCaja();
     });
@@ -44,7 +44,7 @@ function iniciarEscuchaCaja() {
     // Traemos todos los gastos/retiros del día actual
     const qGastos = query(collection(db, "gastos"), where("fechaStr", "==", hoy));
     unsubscribeGastosCaja = onSnapshot(qGastos, (snapshot) => {
-        // FIX: Usamos serverTimestamps: 'estimate' para evitar saltos temporales
+        // FIX: Evitar salto de tiempo y desaparición de tickets usando el tiempo estimado del dispositivo
         gastosDelDia = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data({ serverTimestamps: 'estimate' }) }));
         renderArqueoCaja();
     });
@@ -54,29 +54,19 @@ function renderArqueoCaja() {
     const localSelect = document.getElementById('filtro-local-caja');
     const localFiltro = localSelect ? localSelect.value : 'todas';
 
-    // FIX CRÍTICO: Filtrar por local unificando lógica con pedidos
-    const isAdmin = (state.userRole === 'admin' || state.userRole === 'master');
-    const miSedeId = state.userLocalId || "";
+    // FIX: Filtrar y ocultar los tickets que han sido "rechazados" en la cocina/cola para que no sumen ingresos fantasma
+    let vFiltradas = ventasDelDia.filter(v => v.estado !== 'rechazado');
+    let gFiltrados = gastosDelDia;
 
-    let vFiltradas = ventasDelDia.filter(v => {
-        if (isAdmin) {
-            if (localFiltro === 'todas') return true;
-            if (localFiltro === '') return !v.localId || v.localId === '' || v.localId === 'general';
-            return v.localId === localFiltro;
-        } else {
-            return (v.localId === miSedeId || (!v.localId && miSedeId === "") || (v.localId === 'general' && miSedeId === ""));
-        }
-    });
-
-    let gFiltrados = gastosDelDia.filter(g => {
-        if (isAdmin) {
-            if (localFiltro === 'todas') return true;
-            if (localFiltro === '') return !g.localId || g.localId === '' || g.localId === 'general';
-            return g.localId === localFiltro;
-        } else {
-            return (g.localId === miSedeId || (!g.localId && miSedeId === "") || (g.localId === 'general' && miSedeId === ""));
-        }
-    });
+    if (state.userRole !== 'admin' && state.userRole !== 'master') {
+        // FIX CRÍTICO: Vendedores solo ven su propia caja
+        vFiltradas = vFiltradas.filter(v => v.localId === state.userLocalId || !v.localId || v.localId === 'general');
+        gFiltrados = gFiltrados.filter(g => g.localId === state.userLocalId || !g.localId || g.localId === 'general');
+    } else if (localFiltro !== 'todas') {
+        // Administradores usando el filtro
+        vFiltradas = vFiltradas.filter(v => v.localId === localFiltro);
+        gFiltrados = gFiltrados.filter(g => g.localId === localFiltro);
+    }
 
     let totalIngresos = 0;
     let totalEfectivo = 0;
@@ -195,9 +185,7 @@ function guardarGasto(e) {
     const monto = parseFloat(document.getElementById('input-monto-gasto')?.value || document.getElementById('gasto-monto')?.value);
     
     const localSelect = document.getElementById('filtro-local-caja') || document.getElementById('gasto-local');
-    // FIX CRÍTICO: Usamos el ID de local exacto para el documento o 'general' si está vacío
-    const localId = localSelect && localSelect.value !== 'todas' ? localSelect.value : (state.userLocalId || '');
-    const cajaId = localId || 'general';
+    const localId = localSelect && localSelect.value !== 'todas' ? localSelect.value : (state.userLocalId || 'general');
     
     if (!desc || isNaN(monto) || monto <= 0) return;
 
@@ -218,7 +206,7 @@ function guardarGasto(e) {
         });
 
         // Actualizar métricas diarias
-        const cRef = doc(db, "caja_diaria", `${fStr}_${cajaId}`);
+        const cRef = doc(db, "caja_diaria", `${fStr}_${localId}`);
         batch.set(cRef, {
             total_gastos: increment(monto)
         }, { merge: true });
@@ -301,11 +289,10 @@ function editarOperacionCaja(id, tipo) {
                 fechaEdicion: new Date().toISOString()
             });
 
-            // FIX CRÍTICO: Re-cuadrar la Caja Diaria global con el ID seguro
-            const locId = vData.localId || '';
-            const cajaId = locId || 'general';
+            // Re-cuadrar la Caja Diaria global
+            const locId = vData.localId || 'general';
             const fStr = vData.fechaStr || getTodayDateStr();
-            const cRef = doc(db, "caja_diaria", `${fStr}_${cajaId}`);
+            const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
 
             batch.set(cRef, {
                 total_ingresos: increment(diffTotal),
@@ -337,10 +324,9 @@ function editarOperacionCaja(id, tipo) {
                 fechaEdicion: new Date().toISOString()
             });
 
-            const locId = gData.localId || '';
-            const cajaId = locId || 'general';
+            const locId = gData.localId || 'general';
             const fStr = gData.fechaStr || getTodayDateStr();
-            const cRef = doc(db, "caja_diaria", `${fStr}_${cajaId}`);
+            const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
 
             batch.set(cRef, {
                 total_gastos: increment(diffMonto)
@@ -374,10 +360,9 @@ function eliminarOperacionCaja(id, tipo) {
             const vRef = doc(db, "ventas", id);
             batch.delete(vRef);
 
-            const locId = vData.localId || '';
-            const cajaId = locId || 'general';
+            const locId = vData.localId || 'general';
             const fStr = vData.fechaStr || getTodayDateStr();
-            const cRef = doc(db, "caja_diaria", `${fStr}_${cajaId}`);
+            const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
 
             batch.set(cRef, {
                 total_ingresos: increment(-total),
@@ -403,10 +388,9 @@ function eliminarOperacionCaja(id, tipo) {
             const gRef = doc(db, "gastos", id);
             batch.delete(gRef);
 
-            const locId = gData.localId || '';
-            const cajaId = locId || 'general';
+            const locId = gData.localId || 'general';
             const fStr = gData.fechaStr || getTodayDateStr();
-            const cRef = doc(db, "caja_diaria", `${fStr}_${cajaId}`);
+            const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
 
             batch.set(cRef, {
                 total_gastos: increment(-(gData.monto || 0))
