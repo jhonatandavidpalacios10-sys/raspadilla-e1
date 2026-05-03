@@ -30,7 +30,7 @@ function getSavedAccounts() {
 
 function saveAccount(email, username, pass) {
     let accs = getSavedAccounts();
-    const encodedPass = btoa(pass); // Ofuscación básica para localStorage
+    const encodedPass = btoa(pass); 
     const existingIdx = accs.findIndex(a => a.email === email);
     
     if (existingIdx >= 0) {
@@ -111,6 +111,23 @@ document.addEventListener("DOMContentLoaded", () => {
         renderProfiles(); 
     });
 
+    // --- NUEVA LÓGICA: Alternar Visibilidad de Contraseña (Ojito) ---
+    document.getElementById('btn-toggle-password')?.addEventListener('click', (e) => {
+        const btn = e.currentTarget;
+        const passInput = document.getElementById('login-password');
+        
+        if (passInput) {
+            if (passInput.type === 'password') {
+                passInput.type = 'text';
+                btn.innerHTML = '<i data-lucide="eye-off" class="w-5 h-5 text-sky-400"></i>';
+            } else {
+                passInput.type = 'password';
+                btn.innerHTML = '<i data-lucide="eye" class="w-5 h-5 text-slate-400"></i>';
+            }
+            if(window.lucide) window.lucide.createIcons();
+        }
+    });
+
     document.getElementById('saved-profiles-list')?.addEventListener('click', async (e) => {
         const btnLogin = e.target.closest('button[data-action="quick-login"]');
         const btnRemove = e.target.closest('button[data-action="remove-profile"]');
@@ -134,7 +151,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 btnLogin.innerHTML = originalHtml;
                 if(window.lucide) window.lucide.createIcons();
                 
-                // FIX: Aduana de Validación - Borrado automático si la cuenta fue eliminada O desactivada
                 if (err.message === "CUENTA_ELIMINADA" || err.message === "CUENTA_DESACTIVADA") {
                     removeAccount(email);
                     if(window.mostrarAlerta) window.mostrarAlerta('Acceso Denegado', 'Esta cuenta ha sido deshabilitada o eliminada permanentemente.', 'red');
@@ -151,28 +167,22 @@ document.addEventListener("DOMContentLoaded", () => {
     onAuthStateChanged(auth, async (user) => {
         if (user && !datosCargados) {
             try {
-                // 1. Damos un respiro mínimo (300ms) para que auth.js termine de setear 'state.currentUser' 
-                // de forma limpia y sin bucles infinitos.
                 await new Promise(resolve => setTimeout(resolve, 300));
 
-                // 2. Cargar datos de contexto y locales
                 await initUsuarios(); 
                 await cargarUsuariosYLocales(); 
                 
-                // 3. Inicializar las vistas (DOM)
                 initVentas(); 
                 initPedidos(); 
                 initRespaldo();
                 initCaja(); 
                 initAnalisis(); 
                 
-                // 4. Descargar el inventario desde Firebase
                 await initInventario(); 
                 if (typeof window.cargarInventarioDesdeFirebase === 'function') {
                     await window.cargarInventarioDesdeFirebase();
                 }
                 
-                // 5. Renderizar los productos en la vista de ventas
                 if (typeof window.renderProductosVenta === 'function') window.renderProductosVenta();
                 if (typeof window.actualizarCarritoUI === 'function') window.actualizarCarritoUI();
                 
@@ -207,7 +217,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 let finalEmail = '';
                 let displayUsername = rawUser;
 
-                // 1. LÓGICA DE BÚSQUEDA INTELIGENTE
                 if (rawUser.includes('@')) {
                     finalEmail = rawUser;
                     displayUsername = rawUser.split('@')[0];
@@ -223,17 +232,13 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                 }
                 
-                // 2. Ejecutar Login
                 await login(finalEmail, pass); 
-                
-                // 3. Guardar perfil
                 saveAccount(finalEmail, displayUsername, pass);
 
                 setTimeout(() => { bs.innerHTML = ot; bs.disabled = false; }, 1000); 
             } catch (err) { 
                 console.error("Error de autenticación:", err);
                 
-                // FIX: Aduana de Validación - Manejo de cuentas eliminadas O desactivadas
                 if (err.message === "CUENTA_ELIMINADA" || err.message === "CUENTA_DESACTIVADA") {
                     document.getElementById('login-error').classList.add('hidden');
                     if(window.mostrarAlerta) window.mostrarAlerta('Acceso Denegado', 'Esta cuenta ha sido deshabilitada o eliminada permanentemente.', 'red');
@@ -248,7 +253,6 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
     
-    // Cerrar Sesión
     const hL = async () => { 
         try { 
             await logout(); 
