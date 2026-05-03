@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title class="app-name-display">IcePOS - Sistema Franquicias</title>
     
-    <!-- PWA Meta Tags -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#fff1f2">
     <meta name="mobile-web-app-capable" content="yes">
@@ -13,14 +12,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="icon" type="image/svg+xml" href="assets/img/logo.svg">
     
-    <!-- Archivos de Estilos -->
     <link rel="stylesheet" href="assets/css/styles.css">
     
-    <!-- Tailwind CSS & Lucide Icons -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- Configuración Tailwind Base -->
     <script>
         tailwind.config = {
             theme: { extend: { colors: { yape: '#8b5cf6', bcp: '#f97316', tarjeta: '#3b82f6' } } }
@@ -29,30 +25,26 @@
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen overflow-hidden font-sans selection:bg-sky-500 selection:text-white flex flex-col md:flex-row">
 
-    <!-- CONTENEDOR DE NOTIFICACIONES (TOASTS) -->
+    <!-- CONTENEDOR DE NOTIFICACIONES -->
     <div id="toast-container" class="fixed top-4 right-4 md:top-6 md:right-6 z-[300] flex flex-col gap-2 pointer-events-none"></div>
 
     <!-- PANTALLA DE LOGIN -->
     <div id="login-screen" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900 transition-opacity duration-300 px-4">
         <div class="bg-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-700 flex flex-col items-center">
             
-            <!-- Logo Dinámico -->
             <img src="assets/img/logo.svg" alt="IcePOS Logo" class="w-24 h-24 mb-4" onerror="this.outerHTML='<div class=\'w-20 h-20 bg-sky-500/20 text-sky-400 rounded-full flex items-center justify-center mb-6 shadow-lg shadow-sky-500/20\'><i data-lucide=\'snowflake\' class=\'w-10 h-10\'></i></div>'">
             
             <h1 class="text-2xl font-black text-white mb-2 tracking-tight app-name-display">IcePOS</h1>
             <p class="text-sm text-slate-400 mb-6 text-center" id="login-subtitle">Punto de Venta Profesional</p>
             
-            <!-- SECCIÓN: PERFILES GUARDADOS (Inicio Rápido) -->
             <div id="login-profiles-section" class="hidden w-full flex-col items-center transition-all duration-300">
-                <div id="saved-profiles-list" class="flex flex-wrap justify-center gap-3 w-full mb-6 max-h-48 overflow-y-auto no-scrollbar pt-2">
-                    <!-- Inyectado por JS -->
-                </div>
+                <div id="saved-profiles-list" class="flex flex-wrap justify-center gap-3 w-full mb-6 max-h-48 overflow-y-auto no-scrollbar pt-2"></div>
                 <button type="button" id="btn-show-manual-login" class="text-xs text-slate-400 hover:text-sky-400 font-bold transition-colors mt-2 flex items-center gap-1.5">
                     <i data-lucide="plus-circle" class="w-4 h-4"></i> Ingresar con otra cuenta
                 </button>
             </div>
 
-            <!-- SECCIÓN: LOGIN MANUAL -->
+            <!-- SECCIÓN: LOGIN MANUAL CON EL BOTÓN DEL OJITO -->
             <div id="login-manual-section" class="w-full transition-all duration-300">
                 <form id="login-form" class="w-full space-y-4">
                     <div>
@@ -61,7 +53,12 @@
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Contraseña</label>
-                        <input type="password" id="login-password" required autocomplete="new-password" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all" placeholder="••••••••">
+                        <div class="relative">
+                            <input type="password" id="login-password" required autocomplete="new-password" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all pr-12" placeholder="••••••••">
+                            <button type="button" id="btn-toggle-password" class="absolute right-3 top-1/2 transform -translate-y-1/2 p-1.5 focus:outline-none transition-colors" title="Ver contraseña">
+                                <i data-lucide="eye" class="w-5 h-5 text-slate-400 hover:text-white transition-colors"></i>
+                            </button>
+                        </div>
                     </div>
                     <div id="login-error" class="hidden bg-red-500/10 border border-red-500/50 text-red-400 text-xs p-3 rounded-lg flex items-center gap-2">
                         <i data-lucide="alert-circle" class="w-4 h-4 flex-shrink-0"></i>
@@ -387,22 +384,21 @@
                  VISTA 5: USUARIOS (ADMIN)
                  ============================================== -->
             <div id="view-usuarios" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
-    <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
-        <div>
-            <h1 class="text-xl md:text-2xl font-bold text-white">Gestión de Personal</h1>
-            <p class="text-xs text-slate-400">Usuarios agrupados por Sedes.</p>
-        </div>
-        <div class="flex gap-2">
-            <button id="btn-sincronizar-usuarios" class="solo-master hidden px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-lg">
-                <i data-lucide="refresh-cw" class="w-4 h-4"></i> Sincronizar
-            </button>
-            <button id="btn-nuevo-usuario" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-lg">
-                <i data-lucide="user-plus" class="w-4 h-4"></i> Nuevo
-            </button>
-        </div>
-    </header>
+                <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
+                    <div>
+                        <h1 class="text-xl md:text-2xl font-bold text-white">Gestión de Personal</h1>
+                        <p class="text-xs text-slate-400">Usuarios agrupados por Sedes.</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="btn-sincronizar-usuarios" class="solo-master hidden px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-lg">
+                            <i data-lucide="refresh-cw" class="w-4 h-4"></i> Sincronizar
+                        </button>
+                        <button id="btn-nuevo-usuario" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-lg">
+                            <i data-lucide="user-plus" class="w-4 h-4"></i> Nuevo
+                        </button>
+                    </div>
+                </header>
                 
-
                 <div class="flex-1 overflow-y-auto p-4 md:p-6 no-scrollbar grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div class="bg-slate-800 rounded-xl border border-slate-700 flex flex-col h-fit shadow-lg">
                         <div class="p-4 border-b border-slate-700 font-bold text-white flex items-center gap-2"><i data-lucide="users" class="w-5 h-5 text-indigo-400"></i> Personal Registrado</div>
@@ -566,7 +562,6 @@
 
     <!-- MODALES GLOBALES -->
 
-    <!-- Modal: Armar Vaso -->
     <div id="modal-armar-vaso" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex flex-col justify-end md:justify-center items-center transition-opacity duration-300 opacity-0">
         <div class="bg-slate-800 w-full md:w-[450px] md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none max-h-[90vh]">
             <header class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 md:rounded-t-2xl rounded-t-2xl shrink-0">
@@ -588,7 +583,6 @@
         </div>
     </div>
 
-    <!-- Modal: Ajuste de Precio -->
     <div id="modal-ajuste" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex flex-col justify-end md:justify-center items-center transition-opacity duration-300 opacity-0 px-4">
         <div class="bg-slate-800 w-full max-w-sm md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none">
             <header class="p-4 border-b border-slate-700 flex justify-between items-center">
@@ -612,7 +606,6 @@
         </div>
     </div>
 
-    <!-- Modal: Registro de Gasto Manual -->
     <div id="modal-gasto" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex flex-col justify-end md:justify-center items-center transition-opacity duration-300 opacity-0 px-4">
         <div class="bg-slate-800 w-full max-w-sm md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none">
             <header class="p-4 border-b border-slate-700 flex justify-between items-center">
@@ -639,7 +632,6 @@
         </div>
     </div>
 
-    <!-- Modal: INGRESO DE STOCK (COMPRAS) -->
     <div id="modal-ingreso-stock" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex flex-col justify-end md:justify-center items-center transition-opacity duration-300 opacity-0 px-4">
         <div class="bg-slate-800 w-full max-w-md md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none">
             <header class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800 md:rounded-t-2xl rounded-t-2xl shrink-0">
@@ -682,7 +674,6 @@
         </div>
     </div>
 
-    <!-- Modal: Formulario Producto -->
     <div id="modal-producto" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex flex-col justify-end md:justify-center items-center transition-opacity duration-300 opacity-0 px-4">
         <div class="bg-slate-800 w-full md:w-[400px] md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none max-h-[90vh]">
             <header class="p-4 border-b border-slate-700 flex justify-between items-center shrink-0">
@@ -728,7 +719,6 @@
         </div>
     </div>
 
-    <!-- Modal: Usuario (Admin/Master) -->
     <div id="modal-usuario" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center transition-opacity duration-300 opacity-0 px-4">
         <div class="bg-slate-800 w-full max-w-sm rounded-2xl flex flex-col shadow-2xl border border-slate-700">
             <header class="p-4 border-b border-slate-700 flex justify-between">
@@ -765,7 +755,6 @@
         </div>
     </div>
 
-    <!-- Modal: Breakdown Analisis (Desglose Estilo Imagen) -->
     <div id="breakdownModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center opacity-0 transition-opacity duration-300 px-4">
         <div class="bg-slate-800 rounded-2xl w-full max-w-sm border border-slate-700 shadow-2xl flex flex-col max-h-[90vh]">
             <header class="p-4 border-b border-slate-700 flex justify-between items-start bg-slate-800 rounded-t-2xl shrink-0">
@@ -796,7 +785,6 @@
         </div>
     </div>
 
-    <!-- Modal: Confirmación General -->
     <div id="modal-confirmacion" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[160] hidden flex items-center justify-center transition-opacity duration-200 opacity-0 px-4">
         <div class="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-700 transform scale-95 transition-transform duration-200">
             <div class="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-amber-500/30 bg-amber-500/10 text-amber-400">
@@ -811,7 +799,6 @@
         </div>
     </div>
 
-    <!-- Modal: Alertas Estándar -->
     <div id="modal-alerta" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] hidden flex items-center justify-center transition-opacity duration-200 opacity-0 px-4">
         <div class="bg-slate-800 p-6 rounded-2xl shadow-2xl w-full max-w-xs text-center border border-slate-700 transform scale-95 transition-transform duration-200">
             <div id="alerta-icon" class="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border-4"></div>
@@ -821,10 +808,8 @@
         </div>
     </div>
 
-    <!-- MAIN APP SCRIPT -->
     <script type="module" src="js/app.js"></script>
 
-    <!-- SCRIPT DE INTERFAZ GLOBAL (Helpers y Conexiones Base) -->
     <script>
         // --- Funciones UI Base ---
         window.mostrarAlerta = (titulo, mensaje, colorClass = 'sky') => {
@@ -908,37 +893,30 @@
             }
         };
 
-        // --- CONEXIÓN DE TODOS LOS BOTONES (Cierre de Modales y Globales) ---
         document.addEventListener('DOMContentLoaded', () => {
-            // Confirmación General
             document.getElementById('btn-confirm-accept')?.addEventListener('click', () => { if(confirmCallback) confirmCallback(); window.cerrarConfirmacion(); });
             document.getElementById('btn-confirm-cancel')?.addEventListener('click', window.cerrarConfirmacion);
             document.getElementById('btn-alerta-aceptar')?.addEventListener('click', window.cerrarAlerta);
             
-            // Navegación
             const views = ['ventas', 'pedidos', 'inventario', 'caja', 'analisis', 'usuarios', 'respaldo'];
             views.forEach(view => {
                 document.getElementById(`nav-${view}`)?.addEventListener('click', () => window.switchView(view));
             });
 
-            // Lógica UI Menor
             document.getElementById('user-rol')?.addEventListener('change', (e) => {
                 const container = document.getElementById('container-permisos-vendedor');
                 if (e.target.value === 'vendedor') container.classList.remove('hidden');
                 else container.classList.add('hidden');
             });
 
-            // Conexión segura de botones para Modales en Ventas y Análisis
             document.getElementById('btn-ajuste-cargo')?.addEventListener('click', () => window.abrirModalAjuste?.('Cargo Extra'));
             document.getElementById('btn-ajuste-descuento')?.addEventListener('click', () => window.abrirModalAjuste?.('Descuento'));
             
-            // BOTONES DE CIERRE ('X' o Cerrar Detalles) - Blindados para que nunca fallen
             document.getElementById('btn-cerrar-modal-vaso')?.addEventListener('click', () => { if(typeof window.cerrarModalArmar === 'function') window.cerrarModalArmar(); });
             document.getElementById('btn-cerrar-modal-ajuste')?.addEventListener('click', () => { const m = document.getElementById('modal-ajuste'); m.classList.add('opacity-0'); setTimeout(()=>m.classList.add('hidden'), 300); });
             document.getElementById('btn-cerrar-modal-breakdown')?.addEventListener('click', () => { if(typeof window.closeBreakdownModal === 'function') window.closeBreakdownModal(); });
             document.getElementById('btn-cerrar-detalles-breakdown')?.addEventListener('click', () => { if(typeof window.closeBreakdownModal === 'function') window.closeBreakdownModal(); });
             
-            // Carrito / Pagos
             document.getElementById('btn-vaciar-carrito')?.addEventListener('click', () => { if(typeof window.clearCart === 'function') { window.clearCart(); window.actualizarCarritoUI?.(); } });
             document.querySelectorAll('input[name="metodo_pago"]').forEach(radio => {
                 radio.addEventListener('change', (e) => { if(window.toggleMetodoPago) window.toggleMetodoPago(e.target.value); });
