@@ -94,32 +94,30 @@ function updateAnalysisRange() {
 
 function processAndRenderAnalysis() {
     let lF = document.getElementById('analisisLocalFilter')?.value || 'todas';
-    if (state.userRole !== 'admin' && state.userRole !== 'master') {
-        lF = state.userLocalId || '';
-    }
+    const miSedeId = state.userLocalId || "";
 
     let filteredVentas = [];
     let filteredGastos = [];
 
-    // Procesar ventas con filtro local
+    // FIX CRÍTICO: Procesar ventas con filtro local unificado
     analysisData.forEach(v => { 
         let mostrar = false;
         if (state.userRole === 'admin' || state.userRole === 'master') {
-            mostrar = (lF === 'todas') || (v.localId === lF) || (lF === 'todas' && !v.localId) || (lF === '' && (!v.localId || v.localId === ''));
+            mostrar = (lF === 'todas') || (v.localId === lF) || (lF === '' && (!v.localId || v.localId === '' || v.localId === 'general'));
         } else {
-            mostrar = (v.localId === state.userLocalId) || (!v.localId);
+            mostrar = (v.localId === miSedeId || (!v.localId && miSedeId === "") || (v.localId === 'general' && miSedeId === ""));
         }
         
         if (mostrar && v.estado !== 'rechazado') filteredVentas.push(v); 
     });
     
-    // Procesar gastos con filtro local
+    // FIX CRÍTICO: Procesar gastos con filtro local unificado
     analysisGastos.forEach(g => { 
         let mostrar = false;
         if (state.userRole === 'admin' || state.userRole === 'master') {
-            mostrar = (lF === 'todas') || (g.localId === lF) || (g.localId === '') || (lF === 'todas' && !g.localId) || (lF === '' && (!g.localId || g.localId === ''));
+            mostrar = (lF === 'todas') || (g.localId === lF) || (lF === '' && (!g.localId || g.localId === '' || g.localId === 'general'));
         } else {
-            mostrar = (g.localId === state.userLocalId) || (g.localId === '') || (!g.localId);
+            mostrar = (g.localId === miSedeId || (!g.localId && miSedeId === "") || (g.localId === 'general' && miSedeId === ""));
         }
         if (mostrar) filteredGastos.push(g); 
     });
@@ -451,16 +449,16 @@ function showBreakdown(type, dayObj, gIng = null, gEfe = null, gYap = null, gTar
         
         let catTotals = {};
         
-        // Recalcular por las ventas ya filtradas en RAM
+        // FIX CRÍTICO: Recalcular por las ventas ya filtradas en RAM usando la lógica unificada
         let lF = document.getElementById('analisisLocalFilter')?.value || 'todas';
-        if (state.userRole !== 'admin' && state.userRole !== 'master') lF = state.userLocalId || '';
+        const miSedeId = state.userLocalId || "";
         
         dVentas.forEach(v => { 
             let mostrar = false;
             if (state.userRole === 'admin' || state.userRole === 'master') {
-                mostrar = (lF === 'todas') || (v.localId === lF) || (lF === 'todas' && !v.localId) || (lF === '' && (!v.localId || v.localId === ''));
+                mostrar = (lF === 'todas') || (v.localId === lF) || (lF === '' && (!v.localId || v.localId === '' || v.localId === 'general'));
             } else {
-                mostrar = (v.localId === state.userLocalId) || (!v.localId);
+                mostrar = (v.localId === miSedeId || (!v.localId && miSedeId === "") || (v.localId === 'general' && miSedeId === ""));
             }
 
             if (mostrar && v.estado !== 'rechazado') {
