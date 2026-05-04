@@ -48,7 +48,7 @@ function iniciarEscuchaPedidos() {
     unsubscribePedidos = onSnapshot(q, (snapshot) => {
         pedidosGlobales = [];
         snapshot.forEach(d => { 
-            // FIX: Time-jump bug (Evita que el pedido desaparezca temporalmente)
+            // FIX: Evita que el pedido desaparezca temporalmente (Bug de salto de tiempo)
             const v = d.data({ serverTimestamps: 'estimate' }); 
             v.id = d.id; 
             pedidosGlobales.push(v); 
@@ -62,8 +62,6 @@ function renderPedidosUI() {
     
     pedidosGlobales.forEach(v => {
         const isAdmin = (state.userRole === 'admin' || state.userRole === 'master');
-        
-        // FIX CRÍTICO: Obtener el ID de la sede del usuario de forma segura
         const miSedeId = state.userLocalId || ""; 
         
         let mostrar = false;
@@ -71,15 +69,14 @@ function renderPedidosUI() {
             if (filtroLocalPedidos === 'todas') {
                 mostrar = true;
             } else if (filtroLocalPedidos === '') {
-                // Captura exacta para la opción "Sin Asignar / Antiguas" incluyendo 'general'
-                mostrar = !v.localId || v.localId === '' || v.localId === 'general';
+                // Captura exacta para la opción "Sin Asignar / Antiguas"
+                mostrar = !v.localId || v.localId === '';
             } else {
                 mostrar = v.localId === filtroLocalPedidos;
             }
         } else {
-            // FIX CRÍTICO: Vendedor ve solo las de su sede exacta. 
-            // Si el vendedor no tiene sede (miSedeId === ""), ve las ventas sin asignar o marcadas como 'general'.
-            mostrar = (v.localId === miSedeId || (!v.localId && miSedeId === "") || (v.localId === 'general' && miSedeId === ""));
+            // Vendedor ve solo las de su sede (O las globales sin asignar)
+            mostrar = (!v.localId || v.localId === miSedeId);
         }
 
         if (mostrar) {
@@ -117,10 +114,23 @@ function renderPedidosUI() {
 function generarHTMLPedido(v, esListo = false) {
     let iHtml = '';
     v.items.forEach(i => { 
-        iHtml += `<div class="flex justify-between items-start mb-1 text-xs"><p class="text-white leading-tight pr-2"><span class="text-sky-400 font-bold">${i.cantidad}x</span> ${i.nombre}</p></div>`; 
+        // Lógica NUEVA: Extraer sabores si existen y formatearlos
+        let saboresHtml = '';
+        if (i.sabores && i.sabores.length > 0) {
+            const listaSabores = Array.isArray(i.sabores) ? i.sabores.join(', ') : i.sabores;
+            saboresHtml = `<div class="text-[10px] text-slate-400 italic ml-4 leading-tight mt-0.5 mb-1.5">↳ Sabores: ${listaSabores}</div>`;
+        }
+
+        iHtml += `
+            <div class="mb-1">
+                <div class="flex justify-between items-start text-xs">
+                    <p class="text-white leading-tight pr-2"><span class="text-sky-400 font-bold">${i.cantidad}x</span> ${i.nombre}</p>
+                </div>
+                ${saboresHtml}
+            </div>`; 
     });
     
-    // FIX: Time-jump bug para la visualización de la hora
+    // FIX: Hora correcta usando el fallback del dispositivo si es null
     const tVal = v.timestamp ? new Date(v.timestamp.seconds * 1000) : new Date();
     const time = tVal.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
     
@@ -173,9 +183,6 @@ function actualizarEstadoPedido(idVenta, nuevoEstado) {
 }
 
 function ejecutarCambioEstado(idVenta, nuevoEstado) {
-    // 🚀 Lógica optimista: No hay 'await' bloqueantes. 
-    // Firebase Firestore actualiza la caché local al instante y lanza un onSnapshot, 
-    // haciendo que el ticket desaparezca de la cola sin esperar a la red.
     const autorCambio = state.currentUser?.username || state.currentUser?.email || 'Desconocido';
 
     if (nuevoEstado === 'listo') {
@@ -203,11 +210,9 @@ function ejecutarCambioEstado(idVenta, nuevoEstado) {
         });
 
         // 2. Restar dinero de la caja diaria
-        // FIX CRÍTICO: Usamos el ID de local exacto, o 'general' si está vacío, para encajar con el doc de Caja
-        const locId = vData.localId || '';
-        const cajaId = locId || 'general';
+        const locId = vData.localId || 'general';
         const fStr = vData.fechaStr;
-        const cRef = doc(db, "caja_diaria", `${fStr}_${cajaId}`);
+        const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
 
         batch.set(cRef, {
             total_ingresos: increment(-(vData.total || 0)),
@@ -240,13 +245,11 @@ function ejecutarCambioEstado(idVenta, nuevoEstado) {
 function editarPedido(idVenta) {
     if(!window.mostrarConfirmacion) return;
     window.mostrarConfirmacion("¿Mandar a caja para editarlo? Se borrará de la cola y el stock se liberará momentáneamente.", () => {
-        // 🚀 Lógica optimista y sin esperas
-        
         // 1. Buscamos la orden instantáneamente en RAM
         const vData = pedidosGlobales.find(v => v.id === idVenta);
         if (!vData) return;
 
-        // 2. Cargamos el ticket al carrito y cambiamos la pantalla inmediatamente (Velocidad de videojuego)
+        // 2. Cargamos el ticket al carrito y cambiamos la pantalla inmediatamente
         state.carrito = vData.items; 
         window.ticketEditadoOriginal = true; 
         
@@ -259,11 +262,9 @@ function editarPedido(idVenta) {
         const r = doc(db, "ventas", idVenta); 
 
         // Restar de la caja
-        // FIX CRÍTICO: Usamos el ID de local exacto, o 'general' para ubicar el doc de Caja
-        const locId = vData.localId || '';
-        const cajaId = locId || 'general';
+        const locId = vData.localId || 'general';
         const fStr = vData.fechaStr;
-        const cRef = doc(db, "caja_diaria", `${fStr}_${cajaId}`);
+        const cRef = doc(db, "caja_diaria", `${fStr}_${locId}`);
 
         batch.set(cRef, {
             total_ingresos: increment(-(vData.total || 0)),
