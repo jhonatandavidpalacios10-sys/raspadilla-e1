@@ -48,7 +48,6 @@ function iniciarEscuchaPedidos() {
     unsubscribePedidos = onSnapshot(q, (snapshot) => {
         pedidosGlobales = [];
         snapshot.forEach(d => { 
-            // FIX: Evita que el pedido desaparezca temporalmente (Bug de salto de tiempo)
             const v = d.data({ serverTimestamps: 'estimate' }); 
             v.id = d.id; 
             pedidosGlobales.push(v); 
@@ -69,13 +68,11 @@ function renderPedidosUI() {
             if (filtroLocalPedidos === 'todas') {
                 mostrar = true;
             } else if (filtroLocalPedidos === '') {
-                // Captura exacta para la opción "Sin Asignar / Antiguas"
                 mostrar = !v.localId || v.localId === '';
             } else {
                 mostrar = v.localId === filtroLocalPedidos;
             }
         } else {
-            // Vendedor ve solo las de su sede (O las globales sin asignar)
             mostrar = (!v.localId || v.localId === miSedeId);
         }
 
@@ -85,19 +82,17 @@ function renderPedidosUI() {
         }
     });
 
-    // Ordenar: Los más antiguos primero (Usando tiempo estimado o Date.now para evitar el 1970)
+    // Ordenar: Los más antiguos primero
     const getTime = (v) => v.fechaHora || (v.timestamp?.seconds ? v.timestamp.seconds * 1000 : Date.now());
     
     pendientes.sort((a,b) => getTime(a) - getTime(b));
     listos.sort((a,b) => getTime(b) - getTime(a));
 
-    // Actualizar contadores
     const contPendientes = document.getElementById('contador-pendientes');
     const contListos = document.getElementById('contador-listos');
     if (contPendientes) contPendientes.textContent = pendientes.length;
     if (contListos) contListos.textContent = listos.length;
     
-    // Renderizar HTML
     const lp = document.getElementById('pedidos-pendientes-list'); 
     if(lp) {
         lp.innerHTML = pendientes.map(v => generarHTMLPedido(v)).join('') || '<p class="text-xs text-slate-500 text-center py-4">No hay pedidos pendientes.</p>';
@@ -114,19 +109,34 @@ function renderPedidosUI() {
 function generarHTMLPedido(v, esListo = false) {
     let iHtml = '';
     v.items.forEach(i => { 
-        // Lógica NUEVA: Extraer sabores si existen y formatearlos
+        // 1. Mostrar Tamaño
+        let tamanoHtml = '';
+        if (i.tamano && i.tamano !== 'Estándar' && i.tamano !== 'Único / Estándar' && i.productoId !== 'AJUSTE') {
+            tamanoHtml = `<div class="text-[10px] text-emerald-400 font-bold ml-4 leading-tight mt-0.5"><span class="text-slate-500">Tam:</span> ${i.tamano}</div>`;
+        }
+
+        // 2. Mostrar Sabores
         let saboresHtml = '';
         if (i.sabores && i.sabores.length > 0) {
             const listaSabores = Array.isArray(i.sabores) ? i.sabores.join(', ') : i.sabores;
-            saboresHtml = `<div class="text-[10px] text-slate-400 italic ml-4 leading-tight mt-0.5 mb-1.5">↳ Sabores: ${listaSabores}</div>`;
+            saboresHtml = `<div class="text-[10px] text-sky-400 font-bold ml-4 leading-tight mt-0.5"><span class="text-slate-500">Sab:</span> ${listaSabores}</div>`;
+        }
+
+        // 3. Mostrar Toppings
+        let toppingsHtml = '';
+        if (i.toppings && i.toppings.length > 0) {
+            const listaToppings = i.toppings.map(t => t.nombre).join(', ');
+            toppingsHtml = `<div class="text-[10px] text-amber-400 font-bold ml-4 leading-tight mt-0.5"><span class="text-slate-500">Top:</span> ${listaToppings}</div>`;
         }
 
         iHtml += `
-            <div class="mb-1">
+            <div class="mb-2 border-b border-slate-700/40 pb-2 last:border-0 last:pb-0">
                 <div class="flex justify-between items-start text-xs">
-                    <p class="text-white leading-tight pr-2"><span class="text-sky-400 font-bold">${i.cantidad}x</span> ${i.nombre}</p>
+                    <p class="text-white leading-tight pr-2 font-medium"><span class="text-emerald-400 font-bold text-sm mr-1">${i.cantidad}x</span> ${i.nombre}</p>
                 </div>
+                ${tamanoHtml}
                 ${saboresHtml}
+                ${toppingsHtml}
             </div>`; 
     });
     
@@ -137,10 +147,17 @@ function generarHTMLPedido(v, esListo = false) {
     const num = v.id.split('-')[1] || '---';
     const editBdge = v.editado ? `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] px-1 rounded uppercase font-bold ml-2 animate-pulse">Modificado</span>` : '';
     
-    // Si es Master/Admin, mostrar de qué sede viene el pedido en la tarjeta
+    // Si es Master/Admin, mostrar de qué sede viene el pedido
     const badgeLocal = (state.userRole === 'admin' || state.userRole === 'master') && v.localNombre && v.localNombre !== 'Sin Local' 
         ? `<div class="text-[9px] text-slate-400 mt-1 uppercase font-bold"><i data-lucide="store" class="w-3 h-3 inline"></i> ${v.localNombre}</div>` 
         : '';
+
+    // NUEVO: Destacar el nombre del cliente si existe
+    const clienteBadge = v.clienteNombre ? `
+        <div class="mt-2 mb-2 bg-slate-900 border border-slate-700 p-2 rounded-lg flex items-center gap-2 shadow-inner">
+            <i data-lucide="user" class="w-4 h-4 text-sky-400 shrink-0"></i>
+            <span class="text-xs font-bold text-sky-400 uppercase tracking-wider truncate">${v.clienteNombre}</span>
+        </div>` : '';
 
     let actionBtn = esListo ? '' : `
         <div class="flex gap-2 mt-3 pt-3 border-t border-slate-700/50">
@@ -165,6 +182,7 @@ function generarHTMLPedido(v, esListo = false) {
                 </div>
             </div>
             ${badgeLocal}
+            ${clienteBadge}
             <div class="mb-1 mt-1 border-l-2 border-slate-700 pl-2">
                 ${iHtml}
             </div>
@@ -195,7 +213,7 @@ function ejecutarCambioEstado(idVenta, nuevoEstado) {
         if(window.mostrarToast) window.mostrarToast('Actualizado', `Pedido despachado`, 'emerald'); 
     } else if (nuevoEstado === 'rechazado') {
         
-        // Búsqueda en RAM inmediata (Cero carga de red)
+        // Búsqueda en RAM inmediata
         const vData = pedidosGlobales.find(v => v.id === idVenta);
         if (!vData || vData.estado === 'rechazado') return;
 
@@ -222,22 +240,31 @@ function ejecutarCambioEstado(idVenta, nuevoEstado) {
             cantidad_ventas: increment(-1)
         }, { merge: true });
 
-        // 3. Devolver los productos al inventario
+        // 3. Devolver los productos Y Toppings al inventario
         if (vData.items) {
             vData.items.forEach(item => {
                 if (item.productoId !== 'AJUSTE') {
+                    // Restaurar producto principal
                     const p = state.productos.find(x => x.id === item.productoId);
                     if (p && p.stock !== null) {
                         const pRef = doc(db, "productos", item.productoId);
                         batch.update(pRef, { stock: increment(item.cantidad) });
                     }
+                    // Restaurar toppings
+                    if (item.toppings && item.toppings.length > 0) {
+                        item.toppings.forEach(top => {
+                            const pTop = state.productos.find(x => x.id === top.id);
+                            if (pTop && pTop.stock !== null) {
+                                const ptRef = doc(db, "productos", top.id);
+                                batch.update(ptRef, { stock: increment(item.cantidad) });
+                            }
+                        });
+                    }
                 }
             });
         }
 
-        // Envío en background
         batch.commit().catch(e => console.error("Error al rechazar pedido:", e));
-
         if(window.mostrarToast) window.mostrarToast('Rechazado', `El pedido fue anulado y el stock devuelto.`, 'amber'); 
     }
 }
@@ -274,14 +301,25 @@ function editarPedido(idVenta) {
             cantidad_ventas: increment(-1)
         }, { merge: true });
 
-        // Liberar el stock original
+        // Liberar el stock original Y los Toppings
         if (vData.items) {
             vData.items.forEach(item => {
                 if (item.productoId !== 'AJUSTE') {
+                    // Restaurar producto
                     const p = state.productos.find(x => x.id === item.productoId);
                     if (p && p.stock !== null) {
                         const pRef = doc(db, "productos", item.productoId);
                         batch.update(pRef, { stock: increment(item.cantidad) });
+                    }
+                    // Restaurar toppings
+                    if (item.toppings && item.toppings.length > 0) {
+                        item.toppings.forEach(top => {
+                            const pTop = state.productos.find(x => x.id === top.id);
+                            if (pTop && pTop.stock !== null) {
+                                const ptRef = doc(db, "productos", top.id);
+                                batch.update(ptRef, { stock: increment(item.cantidad) });
+                            }
+                        });
                     }
                 }
             });
@@ -290,7 +328,6 @@ function editarPedido(idVenta) {
         // Borrar el ticket original
         batch.delete(r);
 
-        // Envío asíncrono sin bloquear el hilo principal
         batch.commit().catch(e => console.error("Error al devolver pedido a caja:", e));
     });
 }
