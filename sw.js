@@ -1,10 +1,11 @@
-const CACHE_NAME = 'icepos-franquicias-v2';
+const CACHE_NAME = 'raffaelito-v1';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
+  '/manifest.json',
   '/assets/css/styles.css',
   '/assets/css/tema-rosado-pastel.css',
-  '/assets/img/logo.svg',
+  '/assets/img/logo.svg?v=2',
   '/js/app.js',
   '/js/core/auth.js',
   '/js/core/firebase-setup.js',
