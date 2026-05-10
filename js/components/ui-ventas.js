@@ -4,6 +4,8 @@ import { formatMoney, getTodayDateStr, generateTicketId } from '../utils/helpers
 
 let vasoActual = null; 
 let saboresElegidos = [];
+let toppingsElegidos = []; // NUEVO: Estado para toppings
+let tamanoElegido = null;  // NUEVO: Estado para tamaño
 let ventasInicializado = false;
 
 export function initVentas() {
@@ -17,7 +19,9 @@ export function initVentas() {
     window.clearCart = clearCart;
     window.actualizarCarritoUI = actualizarCarritoUI;
     window.cerrarModalArmar = cerrarModalArmar;
-    window.toggleSabor = toggleSabor; // <--- FIX CRÍTICO: Exponemos la función globalmente
+    window.toggleSabor = toggleSabor;
+    window.toggleTamano = toggleTamano;   // NUEVO
+    window.toggleTopping = toggleTopping; // NUEVO
 
     window.toggleMetodoPago = function(val) {
         const areaVuelto = document.getElementById('area-vuelto');
@@ -66,14 +70,18 @@ export function initVentas() {
         grid.addEventListener('click', e => {
             const card = e.target.closest('.producto-card');
             if (!card || card.classList.contains('opacity-50')) return;
-            const catLower = String(card.dataset.categoria || '').toLowerCase();
-            if (catLower === 'vaso') iniciarArmadoVaso(card.dataset.id);
-            else agregarExtra(card.dataset.id);
+            
+            const prod = state.productos.find(p => p.id === card.dataset.id);
+            if (!prod) return;
+
+            // NUEVA LÓGICA: Si es un vaso, o si tiene múltiples tamaños, abrir constructor
+            if (prod.categoria === 'vaso' || (prod.tamanos && prod.tamanos.length > 1)) {
+                iniciarArmadoVaso(prod.id);
+            } else {
+                agregarExtra(prod.id); // Directo al carrito
+            }
         });
     }
-
-    // FIX CRÍTICO: Hemos ELIMINADO el escuchador duplicado de "gridSabores" que estaba aquí.
-    // Eso causaba el doble clic invisible (agregaba y borraba el sabor en 1 milisegundo).
 
     const listCarrito = document.getElementById('carrito-items');
     if (listCarrito) {
@@ -105,7 +113,6 @@ export function initVentas() {
     document.getElementById('searchInput')?.addEventListener('input', renderProductosVenta);
     document.getElementById('posCategoryFilter')?.addEventListener('change', renderProductosVenta);
 
-    // FIX: Forzar el primer renderizado para que los productos aparezcan de inmediato al abrir la app
     renderProductosVenta();
 }
 
@@ -150,6 +157,7 @@ function confirmarAjuste(e) {
         precio: monto, 
         costo: 0, 
         sabores: [], 
+        toppings: [], // NUEVO
         cantidad: 1, 
         categoria: 'ajuste', 
         isYape: false 
@@ -173,7 +181,7 @@ export function renderProductosVenta() {
     const rolUsuario = String(state.userRole || '').toLowerCase();
     const isAdmin = ['admin', 'administrador', 'master'].includes(rolUsuario);
     
-    // Filtro por Sede y Categoría (Normalizado a minúsculas)
+    // Filtro por Sede y Categoría
     let filtrados = state.productos.filter(p => {
         const prodCat = String(p.categoria || '').toLowerCase();
         // Solo mostramos Vasos y Extras en la grilla principal
@@ -182,12 +190,10 @@ export function renderProductosVenta() {
         return isRightCat && isRightLocal;
     });
 
-    // Filtro por el select desplegable "Todo"
     if(catFiltro !== '' && catFiltro !== 'todo' && catFiltro !== 'todas') {
         filtrados = filtrados.filter(p => String(p.categoria || '').toLowerCase() === catFiltro);
     }
 
-    // Filtro por la barra de búsqueda
     if(term !== '') {
         filtrados = filtrados.filter(p => String(p.nombre || '').toLowerCase().includes(term));
     }
@@ -203,13 +209,18 @@ export function renderProductosVenta() {
         const isAgt = p.stock !== null && p.stock <= 0;
         const blockCls = isAgt ? 'opacity-50 grayscale cursor-not-allowed' : 'cursor-pointer hover:border-sky-500 hover:shadow-sky-500/20 active:scale-95';
         
-        // FIX CRÍTICO: Buscar múltiples nombres de la propiedad límite y FORZAR que sea Número
         const limite = Number(p.limite_sabores !== undefined ? p.limite_sabores : (p.limiteSabores || p.limite || 0));
-        
         const badgeLocal = (p.localId && p.localId !== 'global' && isAdmin) ? `<span class="absolute top-1 left-1 bg-slate-900 text-[8px] text-slate-400 px-1 py-0.5 rounded border border-slate-700 truncate max-w-[60px]">${state.locales.find(l => l.id === p.localId)?.nombre || 'Sede'}</span>` : '';
         const badgeHtml = isAgt ? `<div class="absolute top-0 right-0 bg-red-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">Agotado</div>` : (catLower ==='vaso' ? `<div class="absolute top-0 right-0 bg-sky-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">${limite===999?'Ilimitados':limite}</div>` : '');
-        const cCls = catLower === 'vaso' ? 'from-sky-400 to-indigo-500' : 'from-emerald-400 to-teal-500';
+        const cCls = catLower === 'vaso' ? 'from-sky-400 to-red-400' : 'from-emerald-400 to-teal-500';
         
+        // Mostrar "Desde S/ X" si tiene múltiples tamaños
+        let priceDisplay = formatMoney(p.precio || 0);
+        if (p.tamanos && p.tamanos.length > 1) {
+            const min = Math.min(...p.tamanos.map(t => t.precio));
+            priceDisplay = `<span class="text-[9px] text-slate-400 font-normal">Desde</span> ${formatMoney(min)}`;
+        }
+
         html += `
         <div data-id="${p.id}" data-categoria="${catLower}" class="producto-card bg-slate-800 border border-slate-700 rounded-xl md:rounded-2xl p-2 md:p-3 flex flex-col items-center text-center transition-all relative overflow-hidden ${blockCls}">
             ${badgeLocal}
@@ -218,7 +229,7 @@ export function renderProductosVenta() {
                 <i data-lucide="${catLower === 'vaso' ? 'cup-soda' : 'package'}" class="w-5 h-5 md:w-7 md:h-7 text-white"></i>
             </div>
             <h3 class="text-[10px] md:text-sm font-bold text-slate-800 dark:text-white mb-1 leading-tight line-clamp-2">${p.nombre}</h3>
-            <p class="text-${catLower ==='vaso'?'sky':'emerald'}-500 font-black text-xs md:text-sm mt-auto">${formatMoney(p.precio)}</p>
+            <p class="text-${catLower ==='vaso'?'sky':'emerald'}-500 font-black text-xs md:text-sm mt-auto">${priceDisplay}</p>
         </div>`;
     });
     
@@ -227,67 +238,159 @@ export function renderProductosVenta() {
 }
 
 // ========================================================
-// ARMADO DE VASOS (SABORES)
+// ACORDEÓN DE ARMADO (TAMAÑOS, SABORES, TOPPINGS)
 // ========================================================
+function actualizarPrecioModal() {
+    let t = (tamanoElegido ? parseFloat(tamanoElegido.precio) : 0);
+    toppingsElegidos.forEach(top => t += parseFloat(top.precio));
+    document.getElementById('modal-vaso-subtitle').textContent = `Total: ${formatMoney(t)}`;
+}
+
 function iniciarArmadoVaso(id) {
     vasoActual = state.productos.find(p => p.id === id); 
     if(!vasoActual) return; 
 
-    // FIX CRÍTICO: Normalizar la propiedad límite y FORZAR que sea un Número
     const limite = Number(vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0));
 
-    // FIX UX MEJORADA: Si es una raspadilla loca o innovadora (Límite 0), va directo al carrito sin abrir modal.
-    if (limite === 0) {
-        const it = state.carrito.find(i => i.productoId === vasoActual.id && i.categoria === 'vaso' && i.sabores.length === 0);
-        if (it) {
-            it.cantidad++; 
-        } else {
-            state.carrito.push({ 
-                cartId: generateTicketId(), 
-                productoId: vasoActual.id, 
-                nombre: vasoActual.nombre, 
-                precio: vasoActual.precio, 
-                costo: vasoActual.costo || 0, 
-                sabores: [], 
-                cantidad: 1, 
-                categoria: 'vaso', 
-                isYape: false 
-            });
-        }
-        actualizarCarritoUI();
-        if(window.mostrarToast) window.mostrarToast('Agregado', `${vasoActual.nombre} añadida a la orden.`, 'sky');
-        return; // Salimos de la función para no abrir el modal
-    }
-    
     saboresElegidos = [];
+    toppingsElegidos = [];
+    
+    // Normalizar tamaños del producto
+    if (!vasoActual.tamanos || vasoActual.tamanos.length === 0) {
+         vasoActual.tamanos = [{ nombre: 'Estándar', precio: vasoActual.precio }];
+    }
+    tamanoElegido = vasoActual.tamanos[0]; // Seleccionar el primero por defecto
+
     document.getElementById('modal-vaso-title').textContent = vasoActual.nombre; 
-    document.getElementById('modal-vaso-subtitle').textContent = `Precio: ${formatMoney(vasoActual.precio)}`;
     document.getElementById('limite-sabores-txt').textContent = limite === 999 ? 'Ilimitados' : `Max: ${limite}`;
     
+    // 1. RENDERIZAR TAMAÑOS
+    renderTamanosUI();
+
+    // 2. RENDERIZAR SABORES
     const c = document.getElementById('builder-sabores'); 
-    let html = '';
-    
-    // Normalizamos el chequeo de "sabor"
+    let htmlSabores = '';
     const saboresDisp = state.productos.filter(p => String(p.categoria || '').toLowerCase() === 'sabor' && (!p.localId || p.localId === 'global' || p.localId === state.userLocalId));
     
-    saboresDisp.forEach(j => {
-        // FIX CRÍTICO: Inyectar la acción de clic directamente (onclick) para que nunca falle y mejorar la UI
-        const dis = (j.stock !== null && j.stock <= 0) ? 'opacity-50 pointer-events-none line-through' : 'cursor-pointer hover:border-sky-500 hover:shadow-md';
-        const clickAction = (j.stock !== null && j.stock <= 0) ? '' : `onclick="window.toggleSabor('${j.nombre}')"`;
-        
-        html += `
-        <div ${clickAction} data-nombre="${j.nombre}" class="sabor-btn bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 p-3 rounded-xl flex items-center gap-2 transition-all select-none ${dis}">
-            <div class="check-icon w-4 h-4 rounded-full border border-slate-400 dark:border-slate-600 flex items-center justify-center transition-colors"></div>
-            <span class="text-sm font-medium text-slate-700 dark:text-slate-300 w-full">${j.nombre}</span>
+    if (vasoActual.categoria !== 'vaso' || limite === 0) {
+        htmlSabores = '<p class="text-xs text-slate-500 col-span-2 italic text-center">Este producto no lleva sabores.</p>';
+    } else {
+        saboresDisp.forEach(j => {
+            const dis = (j.stock !== null && j.stock <= 0) ? 'opacity-50 pointer-events-none line-through' : 'cursor-pointer hover:border-sky-500 hover:shadow-md';
+            const clickAction = (j.stock !== null && j.stock <= 0) ? '' : `onclick="window.toggleSabor('${j.nombre}')"`;
+            
+            htmlSabores += `
+            <div ${clickAction} data-nombre="${j.nombre}" class="sabor-btn bg-slate-900 border border-slate-700 p-3 rounded-xl flex items-center gap-2 transition-all select-none ${dis}">
+                <div class="check-icon w-4 h-4 rounded-full border border-slate-500 flex items-center justify-center transition-colors"></div>
+                <span class="text-sm font-medium text-slate-300 w-full">${j.nombre}</span>
+            </div>`;
+        });
+    }
+    c.innerHTML = htmlSabores || '<p class="text-xs text-slate-500 col-span-2 text-center">No hay sabores disponibles.</p>'; 
+    document.getElementById('builder-count').textContent = '0';
+
+    // 3. RENDERIZAR TOPPINGS
+    const ct = document.getElementById('builder-toppings');
+    let htmlToppings = '';
+    const toppingsDisp = state.productos.filter(p => String(p.categoria || '').toLowerCase() === 'topping' && (!p.localId || p.localId === 'global' || p.localId === state.userLocalId));
+    
+    toppingsDisp.forEach(top => {
+        const isAgt = top.stock !== null && top.stock <= 0;
+        const cls = isAgt ? 'opacity-50 pointer-events-none' : 'cursor-pointer hover:border-amber-500 hover:bg-slate-800';
+        const tPrecio = top.tamanos && top.tamanos.length > 0 ? top.tamanos[0].precio : (top.precio || 0);
+
+        htmlToppings += `
+        <div onclick="${isAgt ? '' : `window.toggleTopping('${top.id}')`}" data-id="${top.id}" class="topping-btn bg-slate-900 border border-slate-700 p-2.5 rounded-xl flex items-center gap-2 transition-all select-none ${cls}">
+            <div class="check-icon w-4 h-4 rounded-sm border border-slate-500 flex items-center justify-center transition-colors shrink-0"></div>
+            <div class="flex flex-col w-full">
+                <span class="text-xs font-medium text-slate-300 leading-tight">${top.nombre}</span>
+                <span class="text-[10px] text-amber-400 font-bold leading-tight">+${formatMoney(tPrecio)}</span>
+            </div>
         </div>`;
     });
-    
-    c.innerHTML = html || '<p class="text-xs text-slate-500 col-span-2">No hay sabores disponibles en esta sede.</p>'; 
-    document.getElementById('builder-count').textContent = '0';
+    ct.innerHTML = htmlToppings || '<p class="text-xs text-slate-500 col-span-2 text-center italic">No hay toppings disponibles.</p>';
+
+    actualizarPrecioModal();
     
     const m = document.getElementById('modal-armar-vaso'); 
     m.classList.remove('hidden'); 
     setTimeout(() => m.classList.remove('opacity-0'), 10);
+
+    // Expandir automáticamente la primera sección necesaria
+    if (vasoActual.tamanos.length > 1) window.toggleAcordeon('tamanos');
+    else if (limite > 0) window.toggleAcordeon('sabores');
+    else window.toggleAcordeon('toppings');
+}
+
+function renderTamanosUI() {
+    let tamHtml = '';
+    vasoActual.tamanos.forEach((t, idx) => {
+        const isSel = tamanoElegido.nombre === t.nombre;
+        const cls = isSel ? 'bg-sky-500 border-sky-500 shadow-lg shadow-sky-500/20' : 'bg-slate-900 border-slate-700 hover:border-sky-500/50';
+        const txtCls = isSel ? 'text-white' : 'text-slate-300';
+        const priceCls = isSel ? 'text-sky-100' : 'text-sky-400';
+        
+        tamHtml += `
+        <button onclick="window.toggleTamano(${idx})" class="p-3 border rounded-xl flex flex-col items-start transition-all ${cls}">
+            <span class="font-bold text-xs md:text-sm ${txtCls}">${t.nombre}</span>
+            <span class="text-xs font-black ${priceCls} mt-1">${formatMoney(t.precio)}</span>
+        </button>`;
+    });
+    document.getElementById('builder-tamanos').innerHTML = tamHtml;
+}
+
+function toggleTamano(idx) {
+    if(!vasoActual || !vasoActual.tamanos[idx]) return;
+    tamanoElegido = vasoActual.tamanos[idx];
+    renderTamanosUI();
+    actualizarPrecioModal();
+    
+    // Auto-avanzar al siguiente paso
+    const limite = Number(vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0));
+    if (limite > 0) window.toggleAcordeon('sabores');
+    else window.toggleAcordeon('toppings');
+}
+
+function toggleTopping(id) {
+    const toppingData = state.productos.find(p => p.id === id);
+    if (!toppingData) return;
+
+    const existeIdx = toppingsElegidos.findIndex(t => t.id === id);
+    
+    if (existeIdx >= 0) {
+        toppingsElegidos.splice(existeIdx, 1);
+    } else {
+        const tPrecio = toppingData.tamanos && toppingData.tamanos.length > 0 ? toppingData.tamanos[0].precio : (toppingData.precio || 0);
+        toppingsElegidos.push({
+            id: toppingData.id,
+            nombre: toppingData.nombre,
+            precio: parseFloat(tPrecio)
+        });
+    }
+
+    // Actualizar UI Visual de los botones de Toppings
+    document.querySelectorAll('.topping-btn').forEach(btn => {
+        const tid = btn.dataset.id; 
+        const chk = btn.querySelector('.check-icon');
+        if (!chk) return;
+
+        if(toppingsElegidos.some(t => t.id === tid)) { 
+            btn.classList.add('border-amber-500', 'bg-slate-800'); 
+            btn.classList.remove('border-slate-700', 'bg-slate-900'); 
+            chk.classList.replace('border-slate-500', 'border-transparent'); 
+            chk.classList.add('bg-amber-500');
+            chk.innerHTML = '<i data-lucide="check" class="w-3 h-3 text-white"></i>'; 
+        } else { 
+            btn.classList.remove('border-amber-500', 'bg-slate-800'); 
+            btn.classList.add('border-slate-700', 'bg-slate-900'); 
+            chk.classList.replace('border-transparent', 'border-slate-500'); 
+            chk.classList.remove('bg-amber-500');
+            chk.innerHTML = ''; 
+        }
+    });
+
+    if(window.lucide) window.lucide.createIcons();
+    actualizarPrecioModal();
 }
 
 function toggleSabor(n) {
@@ -299,7 +402,6 @@ function toggleSabor(n) {
         if(limite === 999 || saboresElegidos.length < limite) {
             saboresElegidos.push(n); 
         } else {
-            // FIX: Avisar al usuario si ya llegó al límite para que no piense que el botón no funciona
             if(window.mostrarToast) window.mostrarToast('Límite alcanzado', `Solo puedes elegir hasta ${limite} sabores.`, 'amber');
             return; 
         }
@@ -311,24 +413,30 @@ function toggleSabor(n) {
         if (!chk) return;
 
         if(saboresElegidos.includes(nm)) { 
-            btn.classList.add('bg-sky-500', 'text-white', 'border-sky-500'); 
-            btn.classList.remove('bg-slate-100', 'dark:bg-slate-900', 'border-slate-300', 'dark:border-slate-700'); 
+            btn.classList.add('bg-sky-500', 'border-sky-500'); 
+            btn.classList.remove('bg-slate-900', 'border-slate-700'); 
+            btn.querySelector('span').classList.replace('text-slate-300', 'text-white');
             chk.classList.replace('border', 'bg-white/30'); 
-            chk.classList.replace('border-slate-400', 'border-transparent'); 
-            chk.classList.replace('dark:border-slate-600', 'border-transparent'); 
+            chk.classList.replace('border-slate-500', 'border-transparent'); 
             chk.innerHTML = '<i data-lucide="check" class="w-3 h-3 text-white"></i>'; 
         } else { 
-            btn.classList.remove('bg-sky-500', 'text-white', 'border-sky-500'); 
-            btn.classList.add('bg-slate-100', 'dark:bg-slate-900', 'border-slate-300', 'dark:border-slate-700'); 
+            btn.classList.remove('bg-sky-500', 'border-sky-500'); 
+            btn.classList.add('bg-slate-900', 'border-slate-700'); 
+            btn.querySelector('span').classList.replace('text-white', 'text-slate-300');
             chk.classList.replace('bg-white/30', 'border'); 
-            chk.classList.replace('border-transparent', 'border-slate-400'); 
-            chk.classList.remove('dark:border-slate-600'); // Resetea estado
+            chk.classList.replace('border-transparent', 'border-slate-500'); 
             chk.innerHTML = ''; 
         }
     });
+    
     const countEl = document.getElementById('builder-count');
     if (countEl) countEl.textContent = saboresElegidos.length;
     if(window.lucide) window.lucide.createIcons();
+    
+    // Auto-avanzar si llega al límite
+    if (saboresElegidos.length === limite && limite !== 999) {
+        setTimeout(() => window.toggleAcordeon('toppings'), 300);
+    }
 }
 
 function cerrarModalArmar() { 
@@ -344,19 +452,28 @@ function confirmarVasoAlCarrito() {
 
     if(saboresElegidos.length === 0 && limite !== 0 && window.mostrarToast) { 
         window.mostrarToast('Atención', 'Elige 1 sabor mínimo.', 'amber'); 
+        // Abrir la pestaña de sabores para que el usuario lo vea
+        window.toggleAcordeon('sabores');
         return; 
     }
+
+    let precioTotal = parseFloat(tamanoElegido.precio) || 0;
+    toppingsElegidos.forEach(t => precioTotal += t.precio);
+
     state.carrito.push({ 
         cartId: generateTicketId(), 
         productoId: vasoActual.id, 
         nombre: vasoActual.nombre, 
-        precio: vasoActual.precio, 
+        tamano: tamanoElegido.nombre, // NUEVO
+        precio: precioTotal, 
         costo: vasoActual.costo || 0, 
         sabores: [...saboresElegidos], 
+        toppings: [...toppingsElegidos], // NUEVO
         cantidad: 1, 
         categoria: 'vaso', 
         isYape: false 
     });
+    
     cerrarModalArmar(); 
     actualizarCarritoUI();
 }
@@ -367,6 +484,10 @@ function confirmarVasoAlCarrito() {
 function agregarExtra(id) {
     const p = state.productos.find(x => x.id === id); 
     if(!p) return;
+    
+    const tPrecio = p.tamanos && p.tamanos.length > 0 ? p.tamanos[0].precio : (p.precio || 0);
+    const tNombre = p.tamanos && p.tamanos.length > 0 ? p.tamanos[0].nombre : 'Estándar';
+
     const it = state.carrito.find(i => i.productoId === id && i.categoria === 'extra');
     if (it) {
         it.cantidad++; 
@@ -375,9 +496,11 @@ function agregarExtra(id) {
             cartId: generateTicketId(), 
             productoId: p.id, 
             nombre: p.nombre, 
-            precio: p.precio, 
+            tamano: tNombre,
+            precio: parseFloat(tPrecio), 
             costo: p.costo || 0, 
             sabores: [], 
+            toppings: [],
             cantidad: 1, 
             categoria: 'extra', 
             isYape: false 
@@ -424,12 +547,24 @@ export function actualizarCarritoUI() {
         const color = i.precio < 0 ? 'text-red-500' : 'text-emerald-500';
         const btnYapeClass = i.isYape ? 'bg-purple-100 text-purple-600 border-purple-300 dark:bg-purple-500/20 dark:text-purple-400' : 'bg-slate-200 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-400';
 
+        // Construir detalles visuales (Tamaño, Sabores, Toppings)
+        let detallesHtml = '';
+        if (i.tamano && i.tamano !== 'Estándar' && i.tamano !== 'Único / Estándar' && i.productoId !== 'AJUSTE') {
+            detallesHtml += `<p class="text-[9px] text-emerald-400 font-medium mt-0.5"><span class="text-slate-400">Tam:</span> ${i.tamano}</p>`;
+        }
+        if (i.sabores && i.sabores.length > 0) {
+            detallesHtml += `<p class="text-[9px] text-sky-400 font-medium mt-0.5"><span class="text-slate-400">Sab:</span> ${i.sabores.join(', ')}</p>`;
+        }
+        if (i.toppings && i.toppings.length > 0) {
+            detallesHtml += `<p class="text-[9px] text-amber-400 font-medium mt-0.5"><span class="text-slate-400">Top:</span> ${i.toppings.map(x=>x.nombre).join(', ')}</p>`;
+        }
+
         html += `
         <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-2.5 shadow-sm relative group mb-2">
             <div class="flex justify-between items-start">
                 <div class="flex-1 pr-2">
                     <h4 class="text-xs font-bold text-slate-800 dark:text-white leading-tight">${i.nombre}</h4>
-                    ${i.sabores.length > 0 ? `<p class="text-[9px] text-sky-500 font-medium mt-0.5">${i.sabores.join(', ')}</p>` : ''}
+                    ${detallesHtml}
                     ${i.productoId !== 'AJUSTE' ? `<div class="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 border border-slate-300 dark:border-slate-600 w-fit mt-1.5"><button data-action="restar" data-id="${i.cartId}" class="w-6 h-5 flex items-center justify-center text-slate-500 hover:text-slate-800 dark:hover:text-white"><i data-lucide="minus" class="w-3 h-3"></i></button><input type="number" data-id="${i.cartId}" value="${i.cantidad}" class="w-7 text-center bg-transparent text-xs font-bold text-slate-800 dark:text-white focus:outline-none hide-arrows"><button data-action="sumar" data-id="${i.cartId}" class="w-6 h-5 flex items-center justify-center text-slate-500 hover:text-slate-800 dark:hover:text-white"><i data-lucide="plus" class="w-3 h-3"></i></button></div>` : ''}
                 </div>
                 <div class="text-right flex flex-col items-end justify-between">
@@ -508,7 +643,7 @@ function calcularVuelto() {
 }
 
 // ========================================================
-// PROCESAR COBRO (Envío a 2do Plano / Instantáneo)
+// PROCESAR COBRO Y DESCUENTO DE INVENTARIOS
 // ========================================================
 function procesarCobroFinal() {
     const btn = document.getElementById('btn-procesar-cobro');
@@ -532,6 +667,8 @@ function procesarCobroFinal() {
         if(Math.abs((pE + pY) - t) > 0.01 && window.mostrarToast) return window.mostrarToast('Error', 'Sumas no cuadran.', 'amber'); 
     }
 
+    const clienteNombre = document.getElementById('input-cliente-nombre')?.value.trim() || '';
+
     // Datos del Ticket
     const tId = generateTicketId(); 
     const hs = getTodayDateStr(); 
@@ -544,7 +681,7 @@ function procesarCobroFinal() {
     try {
         const bt = writeBatch(db);
         
-        // 1. Guardar Venta
+        // 1. Guardar Venta en Firestore
         bt.set(doc(db, "ventas", tId), { 
             id: tId, 
             fecha: serverTimestamp(), 
@@ -564,11 +701,12 @@ function procesarCobroFinal() {
             localNombre: state.userLocal || 'Sin Local', 
             cajeroEmail: state.currentUser?.email || '',
             creadoPor: creador,
+            clienteNombre: clienteNombre, // NUEVO
             estado: 'pendiente', 
             editado: esEditado 
         });
         
-        // 2. Acumular en Caja
+        // 2. Acumular en Caja Diaria
         bt.set(doc(db, "caja_diaria", hs + "_" + idLocalSeguro), { 
             localId: idLocalSeguro, 
             localNombre: state.userLocal || 'Sin Local', 
@@ -580,15 +718,26 @@ function procesarCobroFinal() {
             cantidad_ventas: increment(1) 
         }, { merge: true });
         
-        // 3. Restar Stock
+        // 3. Descuento Automático de Stock (Producto y Toppings)
         cr.forEach(i => { 
             if(i.productoId !== 'AJUSTE') { 
+                // Descontar Producto Principal (Vasos, Extras)
                 const p = state.productos.find(x => x.id === i.productoId); 
                 if(p && p.stock !== null) bt.update(doc(db, "productos", p.id), { stock: increment(-i.cantidad) }); 
+
+                // Descontar Toppings Extra
+                if (i.toppings && i.toppings.length > 0) {
+                    i.toppings.forEach(top => {
+                        const pTop = state.productos.find(x => x.id === top.id);
+                        if (pTop && pTop.stock !== null) {
+                            bt.update(doc(db, "productos", pTop.id), { stock: increment(-i.cantidad) });
+                        }
+                    });
+                }
             } 
         });
         
-        // --- MAGIA: Enviar a la nube sin "await" para que sea instantáneo en UI ---
+        // --- Enviar a la nube (Background) ---
         bt.commit().catch(err => console.error("Error sincronizando venta en background:", err));
         
         // --- Limpieza INMEDIATA de la UI ---
@@ -599,19 +748,28 @@ function procesarCobroFinal() {
         const inMixEfe = document.getElementById('input-mixto-efectivo');
         const inMixYap = document.getElementById('input-mixto-yape');
         const txtVuelto = document.getElementById('txt-vuelto');
+        const inputCliente = document.getElementById('input-cliente-nombre');
 
         if (inPagaCon) inPagaCon.value = ''; 
         if (inMixEfe) inMixEfe.value = ''; 
         if (inMixYap) inMixYap.value = ''; 
         if (txtVuelto) txtVuelto.textContent = 'S/ 0.00';
+        if (inputCliente) inputCliente.value = ''; // Limpiar nombre
         
         if(window.mostrarToast) window.mostrarToast('Venta Exitosa', `Ticket #T-${tId.split('-')[1]} registrado en cola.`, 'emerald');
         
-        // Actualizar visualmente el stock de la UI (sin requerir recarga)
+        // Actualizar visualmente el stock en la grilla sin esperar a Firestore
         cr.forEach(item => {
             if(item.productoId !== 'AJUSTE') {
                 const prod = state.productos.find(x => x.id === item.productoId);
                 if (prod && prod.stock !== null) prod.stock -= item.cantidad;
+
+                if (item.toppings && item.toppings.length > 0) {
+                    item.toppings.forEach(top => {
+                        const pTop = state.productos.find(x => x.id === top.id);
+                        if (pTop && pTop.stock !== null) pTop.stock -= item.cantidad;
+                    });
+                }
             }
         });
         renderProductosVenta();
