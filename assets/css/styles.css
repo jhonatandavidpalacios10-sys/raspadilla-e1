@@ -1,5 +1,5 @@
 /* ========================================================
-   TEMA PANTONE: HOT PINK, COTTON CANDY & CLASSIC GREEN
+   TEMA: ROJO SUAVE & AGUAMARINA
    Blindaje contra Modo Oscuro (Alto contraste asegurado)
    ======================================================== */
 
@@ -15,11 +15,11 @@
 body, 
 .bg-\[\#090b14\],
 .bg-slate-950, .bg-slate-950\/50, .dark\:bg-slate-950 { 
-    background-color: #fdfbfb !important; /* Blanco muy suave con tinte cálido */
+    background-color: #fdfdfd !important; /* Blanco muy suave, neutral y descansado */
 } 
 
 .bg-slate-900, .bg-slate-900\/50, .bg-slate-900\/80, .bg-slate-900\/30, .dark\:bg-slate-900 { 
-    background-color: #fbf5f7 !important; /* Gris-rosado ultra claro para paneles */
+    background-color: #f7f5f5 !important; /* Gris ultra claro con toque cálido para paneles */
 } 
 
 .bg-slate-800, .bg-slate-800\/50, .bg-slate-800\/80, .dark\:bg-slate-800 { 
@@ -27,11 +27,11 @@ body,
 } 
 
 .bg-slate-700, .bg-slate-700\/50, .dark\:bg-slate-700 { 
-    background-color: #ffb7d5 !important; /* Pantone Cotton Candy */
+    background-color: #fcdcdc !important; /* Rojo pastel muy suave para elementos inactivos */
     color: #1e293b !important;
 } 
 .hover\:bg-slate-700:hover, .hover\:bg-slate-600:hover {
-    background-color: #f79abf !important;
+    background-color: #f5c6c6 !important;
 }
 
 /* --------------------------------------------------------
@@ -61,31 +61,33 @@ button.bg-indigo-600 .text-white, button.bg-red-600 .text-white,
 }
 
 /* --------------------------------------------------------
-   4. ACENTO 1: PANTONE HOT PINK (#e0537b)
+   4. ACENTO 1: ROJO SUAVE (#e05f5f)
+   Mapeado sobre clases 'sky' para no reescribir todo el HTML
    -------------------------------------------------------- */
-.text-sky-400, .text-sky-300, .text-sky-500 { color: #e0537b !important; }
-.bg-sky-600 { background-color: #e0537b !important; color: #ffffff !important; border-color: #e0537b !important; }
-.hover\:bg-sky-500:hover { background-color: #c93e62 !important; color: #ffffff !important; border-color: #c93e62 !important; }
-.border-sky-500 { border-color: #e0537b !important; }
-.bg-sky-500\/20 { background-color: #fdf2f5 !important; color: #e0537b !important; }
-.bg-sky-500\/10 { background-color: #fffafb !important; }
-.ring-sky-500 { --tw-ring-color: #e0537b !important; }
+.text-sky-400, .text-sky-300, .text-sky-500 { color: #e05f5f !important; }
+.bg-sky-600 { background-color: #e05f5f !important; color: #ffffff !important; border-color: #e05f5f !important; }
+.hover\:bg-sky-500:hover { background-color: #c94c4c !important; color: #ffffff !important; border-color: #c94c4c !important; }
+.border-sky-500 { border-color: #e05f5f !important; }
+.bg-sky-500\/20 { background-color: #fce8e8 !important; color: #e05f5f !important; }
+.bg-sky-500\/10 { background-color: #fdf5f5 !important; }
+.ring-sky-500 { --tw-ring-color: #e05f5f !important; }
 
 /* --------------------------------------------------------
-   5. ACENTO 2: PANTONE CLASSIC GREEN (#2fa54b)
+   5. ACENTO 2: AGUAMARINA (#14b8a6)
+   Mapeado sobre clases 'emerald'
    -------------------------------------------------------- */
-.text-emerald-400, .text-emerald-500 { color: #2fa54b !important; } 
-.bg-emerald-600 { background-color: #2fa54b !important; color: #ffffff !important; border-color: #2fa54b !important; }
-.hover\:bg-emerald-500:hover { background-color: #25873c !important; color: #ffffff !important; border-color: #25873c !important; }
-.bg-emerald-500\/10 { background-color: #ebf7ee !important; border-color: #b9e3c4 !important; }
-.bg-emerald-500\/20 { background-color: #d6f0dd !important; border-color: #2fa54b !important; color: #1e293b !important; }
-.border-emerald-500\/30, .border-emerald-500\/50, .border-emerald-500 { border-color: #2fa54b !important; }
-.focus\:border-emerald-500:focus { border-color: #2fa54b !important; }
+.text-emerald-400, .text-emerald-500 { color: #14b8a6 !important; } 
+.bg-emerald-600 { background-color: #14b8a6 !important; color: #ffffff !important; border-color: #14b8a6 !important; }
+.hover\:bg-emerald-500:hover { background-color: #0f9688 !important; color: #ffffff !important; border-color: #0f9688 !important; }
+.bg-emerald-500\/10 { background-color: #f0fdfa !important; border-color: #ccfbf1 !important; }
+.bg-emerald-500\/20 { background-color: #ccfbf1 !important; border-color: #14b8a6 !important; color: #0f766e !important; }
+.border-emerald-500\/30, .border-emerald-500\/50, .border-emerald-500 { border-color: #14b8a6 !important; }
+.focus\:border-emerald-500:focus { border-color: #14b8a6 !important; }
 
 /* --------------------------------------------------------
    6. OTROS ACENTOS SECUNDARIOS
    -------------------------------------------------------- */
-/* Red (Gastos, Errores, Cancelaciones) */
+/* Red original (Gastos, Errores, Cancelaciones) - Mantenemos un rojo alerta clásico */
 .text-red-400, .text-red-500 { color: #ef4444 !important; }
 .bg-red-500\/10, .bg-red-500\/5 { background-color: #fef2f2 !important; border-color: #fecaca !important; }
 .bg-red-500\/20 { background-color: #fee2e2 !important; }
@@ -105,13 +107,13 @@ button.bg-indigo-600 .text-white, button.bg-red-600 .text-white,
 .border-amber-500\/30, .border-amber-500\/50 { border-color: #fcd34d !important; }
 
 /* --------------------------------------------------------
-   7. BORDES, SEPARADORES E INPUTS (Toques Cotton Candy)
+   7. BORDES, SEPARADORES E INPUTS
    -------------------------------------------------------- */
 .border-slate-800, .border-slate-800\/50, .border-slate-800\/80,
 .border-slate-700, .border-slate-700\/50, 
 .border-slate-600, .border-slate-600\/50,
 .dark\:border-slate-700, .dark\:border-slate-600 { 
-    border-color: #f8e1e9 !important; 
+    border-color: #f2e8e8 !important; 
 }
 
 input.bg-slate-900, select.bg-slate-900,
@@ -119,54 +121,54 @@ input.bg-slate-800, select.bg-slate-800,
 .dark\:bg-slate-900, .dark\:bg-slate-800 {
     background-color: #ffffff !important;
     color: #1e293b !important;
-    border-color: #e5d5da !important;
-    box-shadow: 0 1px 2px rgba(224, 83, 123, 0.05) !important;
+    border-color: #e5dddd !important;
+    box-shadow: 0 1px 2px rgba(224, 95, 95, 0.05) !important;
     transition: all 0.2s ease;
 }
 input::placeholder { color: #94a3b8 !important; }
-input:focus, select:focus { border-color: #e0537b !important; }
+input:focus, select:focus { border-color: #e05f5f !important; }
 
 /* --------------------------------------------------------
    8. CORRECCIÓN DE DEGRADADOS Y SOMBRAS
    -------------------------------------------------------- */
 .bg-gradient-to-br.border-emerald-500\/30 {
     background: #ffffff !important;
-    border-color: #2fa54b !important;
+    border-color: #14b8a6 !important;
 }
 
 .bg-gradient-to-br.from-sky-400.to-indigo-500 {
-    background: linear-gradient(to bottom right, #e0537b, #ffb7d5) !important;
-    box-shadow: 0 4px 10px rgba(224, 83, 123, 0.3) !important;
+    background: linear-gradient(to bottom right, #e05f5f, #fca5a5) !important;
+    box-shadow: 0 4px 10px rgba(224, 95, 95, 0.3) !important;
 }
 
 .bg-gradient-to-br.from-emerald-400.to-teal-500 {
-    background: linear-gradient(to bottom right, #2fa54b, #5fcc78) !important;
-    box-shadow: 0 4px 10px rgba(47, 165, 75, 0.3) !important;
+    background: linear-gradient(to bottom right, #2dd4bf, #14b8a6) !important;
+    box-shadow: 0 4px 10px rgba(20, 184, 166, 0.3) !important;
 }
 
 .shadow-lg, .shadow-2xl, .shadow-md, .shadow-sm { 
-    box-shadow: 0 10px 15px -3px rgba(224, 83, 123, 0.08), 0 4px 6px -4px rgba(224, 83, 123, 0.04) !important; 
+    box-shadow: 0 10px 15px -3px rgba(224, 95, 95, 0.08), 0 4px 6px -4px rgba(224, 95, 95, 0.04) !important; 
 }
 
 /* --------------------------------------------------------
    9. HOVERS Y ELEMENTOS ACTIVOS (Interactividad)
    -------------------------------------------------------- */
 .nav-btn.active, .nav-btn.text-sky-400 { 
-    color: #e0537b !important; 
-    border-color: #e0537b !important; 
+    color: #e05f5f !important; 
+    border-color: #e05f5f !important; 
 }
-.nav-btn:hover { color: #c93e62 !important; }
+.nav-btn:hover { color: #c94c4c !important; }
 
 .hover\:bg-slate-800\/50:hover, 
 .hover\:border-sky-500:hover,
 .hover\:bg-slate-700\/50:hover {
-    background-color: #fff5f8 !important;
-    border-color: #ffb7d5 !important;
+    background-color: #fffcfc !important;
+    border-color: #fcdcdc !important;
 }
 
 .bg-emerald-500\/10.border-emerald-500\/50 {
-    background-color: #f1fcf4 !important;
-    border-color: #2fa54b !important;
+    background-color: #f0fdfa !important;
+    border-color: #14b8a6 !important;
 }
 
 .bg-red-500\/10.border-red-500\/50 {
