@@ -170,7 +170,7 @@ function confirmarAjuste(e) {
 }
 
 // ========================================================
-// RENDERIZADO DEL CATÁLOGO EN POS
+// RENDERIZADO DEL CATÁLOGO EN POS (ORDENADO POR POPULARIDAD)
 // ========================================================
 export function renderProductosVenta() {
     const grid = document.getElementById('productos-venta-grid'); 
@@ -197,6 +197,13 @@ export function renderProductosVenta() {
     if(term !== '') {
         filtrados = filtrados.filter(p => String(p.nombre || '').toLowerCase().includes(term));
     }
+
+    // 🚀 ORDENAMIENTO POR POPULARIDAD (Más vendidos primero)
+    filtrados.sort((a, b) => {
+        const ventasA = a.ventasTotales || 0;
+        const ventasB = b.ventasTotales || 0;
+        return ventasB - ventasA; // Orden Descendente
+    });
     
     if(filtrados.length === 0) { 
         grid.innerHTML = `<div class="col-span-full flex justify-center py-10 text-slate-500 text-sm">No hay productos disponibles.</div>`; 
@@ -221,10 +228,16 @@ export function renderProductosVenta() {
             priceDisplay = `<span class="text-[9px] text-slate-400 font-normal">Desde</span> ${formatMoney(min)}`;
         }
 
+        // Indicador visual de popularidad (opcional, solo para depuración o si el admin quiere verlo)
+        // Puedes descomentar esta línea si quieres mostrar un pequeño badge con las ventas totales de cada producto
+        // const popularBadge = isAdmin && p.ventasTotales > 0 ? `<div class="absolute bottom-1 left-1 text-[8px] text-slate-500"><i data-lucide="trending-up" class="w-2 h-2 inline"></i> ${p.ventasTotales}</div>` : '';
+        const popularBadge = '';
+
         html += `
         <div data-id="${p.id}" data-categoria="${catLower}" class="producto-card bg-slate-800 border border-slate-700 rounded-xl md:rounded-2xl p-2 md:p-3 flex flex-col items-center text-center transition-all relative overflow-hidden ${blockCls}">
             ${badgeLocal}
             ${badgeHtml}
+            ${popularBadge}
             <div class="w-10 h-10 md:w-14 md:h-14 bg-gradient-to-br ${cCls} rounded-full flex items-center justify-center mt-3 mb-2 shadow-md">
                 <i data-lucide="${catLower === 'vaso' ? 'cup-soda' : 'package'}" class="w-5 h-5 md:w-7 md:h-7 text-white"></i>
             </div>
@@ -718,19 +731,25 @@ function procesarCobroFinal() {
             cantidad_ventas: increment(1) 
         }, { merge: true });
         
-        // 3. Descuento Automático de Stock (Producto y Toppings)
+        // 3. Descuento Automático de Stock (Producto y Toppings) y Popularidad (ventasTotales)
         cr.forEach(i => { 
             if(i.productoId !== 'AJUSTE') { 
-                // Descontar Producto Principal (Vasos, Extras)
+                // Descontar Producto Principal (Vasos, Extras) y Sumar Popularidad
                 const p = state.productos.find(x => x.id === i.productoId); 
-                if(p && p.stock !== null) bt.update(doc(db, "productos", p.id), { stock: increment(-i.cantidad) }); 
+                if(p) {
+                    const updateData = { ventasTotales: increment(i.cantidad) };
+                    if (p.stock !== null) updateData.stock = increment(-i.cantidad);
+                    bt.update(doc(db, "productos", p.id), updateData);
+                }
 
-                // Descontar Toppings Extra
+                // Descontar Toppings Extra y Sumar su Popularidad
                 if (i.toppings && i.toppings.length > 0) {
                     i.toppings.forEach(top => {
                         const pTop = state.productos.find(x => x.id === top.id);
-                        if (pTop && pTop.stock !== null) {
-                            bt.update(doc(db, "productos", pTop.id), { stock: increment(-i.cantidad) });
+                        if (pTop) {
+                            const topUpdate = { ventasTotales: increment(i.cantidad) };
+                            if (pTop.stock !== null) topUpdate.stock = increment(-i.cantidad);
+                            bt.update(doc(db, "productos", pTop.id), topUpdate);
                         }
                     });
                 }
@@ -758,21 +777,27 @@ function procesarCobroFinal() {
         
         if(window.mostrarToast) window.mostrarToast('Venta Exitosa', `Ticket #T-${tId.split('-')[1]} registrado en cola.`, 'emerald');
         
-        // Actualizar visualmente el stock en la grilla sin esperar a Firestore
+        // Actualizar visualmente el stock y popularidad en la grilla sin esperar a Firestore
         cr.forEach(item => {
             if(item.productoId !== 'AJUSTE') {
                 const prod = state.productos.find(x => x.id === item.productoId);
-                if (prod && prod.stock !== null) prod.stock -= item.cantidad;
+                if (prod) {
+                    if (prod.stock !== null) prod.stock -= item.cantidad;
+                    prod.ventasTotales = (prod.ventasTotales || 0) + item.cantidad;
+                }
 
                 if (item.toppings && item.toppings.length > 0) {
                     item.toppings.forEach(top => {
                         const pTop = state.productos.find(x => x.id === top.id);
-                        if (pTop && pTop.stock !== null) pTop.stock -= item.cantidad;
+                        if (pTop) {
+                            if (pTop.stock !== null) pTop.stock -= item.cantidad;
+                            pTop.ventasTotales = (pTop.ventasTotales || 0) + item.cantidad;
+                        }
                     });
                 }
             }
         });
-        renderProductosVenta();
+        renderProductosVenta(); // Aquí es donde el método .sort() que agregamos arriba hará su magia
 
     } catch (err) { 
         console.error(err); 
