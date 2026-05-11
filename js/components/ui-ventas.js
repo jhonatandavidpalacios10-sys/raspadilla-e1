@@ -221,11 +221,16 @@ export function renderProductosVenta() {
         const badgeHtml = isAgt ? `<div class="absolute top-0 right-0 bg-red-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">Agotado</div>` : (catLower ==='vaso' ? `<div class="absolute top-0 right-0 bg-sky-500 text-white text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded-bl-lg">${limite===999?'Ilimitados':limite}</div>` : '');
         const cCls = catLower === 'vaso' ? 'from-sky-400 to-red-400' : 'from-emerald-400 to-teal-500';
         
-        // Mostrar "Desde S/ X" si tiene múltiples tamaños
+        // Mostrar "S/ 3 - 5" si tiene múltiples tamaños
         let priceDisplay = formatMoney(p.precio || 0);
         if (p.tamanos && p.tamanos.length > 1) {
             const min = Math.min(...p.tamanos.map(t => t.precio));
-            priceDisplay = `<span class="text-[9px] text-slate-400 font-normal">Desde</span> ${formatMoney(min)}`;
+            const max = Math.max(...p.tamanos.map(t => t.precio));
+            
+            // Función auxiliar para quitar '.00' si es entero
+            const formatShort = (val) => Number.isInteger(val) ? val.toString() : val.toFixed(2);
+
+            priceDisplay = min === max ? formatMoney(min) : `S/ ${formatShort(min)} - ${formatShort(max)}`;
         }
 
         // Indicador visual de popularidad (opcional, solo para depuración o si el admin quiere verlo)
