@@ -16,18 +16,21 @@ export function initRespaldo() {
     });
     document.getElementById('importFileInput')?.addEventListener('change', handleImportBackup);
 
-    // Evento Nuevo: Borrado Seguro (Solo Master)
+    // Evento: Borrado Seguro (Solo Master)
     document.getElementById('btn-borrado-masivo')?.addEventListener('click', iniciarBorradoSeguro);
 
-    // --- FIX CRÍTICO: Conectar el botón de suspensión directamente ---
-    // Esto asegura que el botón siempre responda, sin importar cómo cambie su diseño
+    // Conectar el botón de suspensión directamente
     document.getElementById('btn-toggle-sistema')?.addEventListener('click', toggleSistemaLock);
+
+    // FIX IDENTIDAD CORPORATIVA: Faltaba escuchar el cambio del input de archivo para el logo
+    document.getElementById('input-logo-app')?.addEventListener('change', subirLogoApp);
 
     // Funciones globales expuestas para el HTML
     window.toggleSistemaLock = toggleSistemaLock;
     window.subirLogoApp = subirLogoApp;
     window.resetLogoApp = resetLogoApp;
     window.cambiarNombreApp = cambiarNombreApp;
+    window.sincronizarPopularidad = sincronizarPopularidad; // NUEVA EXPOSICIÓN
 
     // Escuchar el estado actual para UI Master (Bloqueo 503)
     if (sysEstadoUnsubscribe) sysEstadoUnsubscribe();
@@ -130,7 +133,7 @@ async function resetLogoApp() {
     window.mostrarConfirmacion("¿Restaurar el nombre y logo originales de la app?", async () => {
         await setDoc(doc(db, "configuracion", "estado_sistema"), { 
             logoUrl: "assets/img/logo.svg",
-            nombreApp: "IcePOS"
+            nombreApp: "Raffaelito"
         }, { merge: true });
         window.location.reload();
     });
@@ -274,7 +277,97 @@ async function handleImportBackup(e) {
 }
 
 // -----------------------------------------------------
-// 4. CUENTA REGRESIVA Y BORRADO SEGURO DE DATOS (NUEVO)
+// 4. NUEVO: ESCÁNER HISTÓRICO DE POPULARIDAD
+// -----------------------------------------------------
+async function sincronizarPopularidad() {
+    if (!window.mostrarConfirmacion) return;
+    window.mostrarConfirmacion("¿Deseas escanear el historial de ventas para identificar los productos más populares?", async () => {
+        const btn = document.getElementById('btn-sincronizar-popularidad');
+        if(!btn) return;
+        
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline mr-2"></i> Escaneando Base de Datos...';
+        btn.disabled = true;
+        if(window.lucide) window.lucide.createIcons();
+
+        try {
+            // 1. Obtener TODO el historial de ventas de forma segura
+            const ventasSnap = await getDocs(collection(db, "ventas"));
+            const contadorProductos = {};
+
+            // 2. Tally: Contar las cantidades vendidas de cada producto (ignorando los rechazados)
+            ventasSnap.forEach(docSnap => {
+                const venta = docSnap.data();
+                if (venta.estado !== 'rechazado' && venta.items && Array.isArray(venta.items)) {
+                    venta.items.forEach(item => {
+                        if (item.productoId && item.productoId !== 'AJUSTE') {
+                            if (!contadorProductos[item.productoId]) {
+                                contadorProductos[item.productoId] = 0;
+                            }
+                            contadorProductos[item.productoId] += (item.cantidad || 1);
+                        }
+                    });
+                }
+            });
+
+            // 3. Actualizar la base de datos de productos por Lotes (Batch) para no saturar la red
+            let currentBatch = writeBatch(db);
+            let operationCount = 0;
+            let totalActualizados = 0;
+
+            for (const prod of state.productos) {
+                const totalVendido = contadorProductos[prod.id] || 0;
+                
+                currentBatch.update(doc(db, "productos", prod.id), { 
+                    ventasTotales: totalVendido 
+                });
+                
+                // Actualizar también en RAM de inmediato para la UI actual
+                prod.ventasTotales = totalVendido;
+
+                operationCount++;
+                totalActualizados++;
+
+                // Límite de Firebase: 500 operaciones por Batch
+                if (operationCount >= 490) {
+                    await currentBatch.commit();
+                    currentBatch = writeBatch(db);
+                    operationCount = 0;
+                }
+            }
+
+            // Enviar cualquier sobrante
+            if (operationCount > 0) {
+                await currentBatch.commit();
+            }
+
+            if(window.mostrarAlerta) {
+                window.mostrarAlerta(
+                    "Análisis Completado", 
+                    `Se escanearon <b>${ventasSnap.size} tickets</b> exitosamente.<br>Se actualizaron <b>${totalActualizados} productos</b> con su nueva popularidad de ventas.`, 
+                    "emerald"
+                );
+            }
+
+            // Si estamos en la ventana de ventas, forzamos un re-render para ordenarlo
+            if (window.renderProductosVenta) {
+                window.renderProductosVenta();
+            }
+
+        } catch (error) {
+            console.error("Error al sincronizar popularidad:", error);
+            if(window.mostrarAlerta) window.mostrarAlerta("Fallo en Operación", "No se pudo escanear el historial debido a un error de conexión.", "red");
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            if(window.lucide) window.lucide.createIcons();
+        }
+    });
+}
+
+
+// -----------------------------------------------------
+// 5. CUENTA REGRESIVA Y BORRADO SEGURO DE DATOS
 // -----------------------------------------------------
 let deleteTimer = null;
 
@@ -285,7 +378,7 @@ function iniciarBorradoSeguro() {
         return;
     }
 
-    // 2. Leer qué quiere borrar (Añadiremos los checkboxes en el HTML al final)
+    // 2. Leer qué quiere borrar
     const borrarVentas = document.getElementById('chkDelVentas')?.checked;
     const borrarProductos = document.getElementById('chkDelProductos')?.checked;
 
