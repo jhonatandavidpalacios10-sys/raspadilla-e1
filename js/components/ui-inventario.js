@@ -43,7 +43,7 @@ export async function initInventario() {
             const cats = ['vaso', 'sabor', 'extra', 'topping', 'insumo'];
             categoriaActual = cats[index] || 'vaso';
             
-            // Estilo visual: Insumos resalta en ámbar, el resto en sky (que es nuestro nuevo rojo suave en CSS)
+            // Estilo visual: Insumos resalta en ámbar, el resto en sky
             const colorClass = categoriaActual === 'insumo' ? 'amber' : 'sky';
             tab.classList.remove('text-slate-500');
             tab.classList.add(`text-${colorClass}-400`, `border-${colorClass}-400`, 'border-b-2');
@@ -312,19 +312,19 @@ export function renderInventarioUI(cat) {
     });
 
     if (items.length === 0) { 
-        listaInventarioEl.innerHTML = `<tr><td colspan=\"5\" class=\"p-8 text-center text-slate-500 text-sm\">No hay ítems registrados en esta categoría.</td></tr>`; 
+        listaInventarioEl.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-slate-500 text-sm">No hay ítems registrados en esta categoría.</td></tr>`; 
         return; 
     }
     
     items.forEach(p => {
-        const stkStr = p.stock !== null && p.stock !== '' && p.stock !== undefined ? `<span class=\"font-mono text-emerald-500 font-bold\">${p.stock}</span>` : '<i data-lucide=\"infinity\" class=\"w-4 h-4 mx-auto text-slate-500\"></i>';
+        const stkStr = p.stock !== null && p.stock !== '' && p.stock !== undefined ? `<span class="font-mono text-emerald-500 font-bold">${p.stock}</span>` : '<i data-lucide="infinity" class="w-4 h-4 mx-auto text-slate-500"></i>';
         
         let badgeLocal = '';
         if (p.localId && p.localId !== 'global') {
             const nLoc = state.locales.find(l => l.id === p.localId)?.nombre || 'Sede';
-            badgeLocal = `<span class=\"ml-2 bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 text-[9px] px-1.5 py-0.5 rounded uppercase border border-slate-200 dark:border-slate-600\">${nLoc}</span>`;
+            badgeLocal = `<span class="ml-2 bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 text-[9px] px-1.5 py-0.5 rounded uppercase border border-slate-200 dark:border-slate-600">${nLoc}</span>`;
         } else if (state.userRole === 'master' || state.userRole === 'admin') {
-            badgeLocal = `<span class=\"ml-2 bg-sky-50 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-500/30 text-[9px] px-1.5 py-0.5 rounded uppercase\">Global</span>`;
+            badgeLocal = `<span class="ml-2 bg-sky-50 dark:bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-500/30 text-[9px] px-1.5 py-0.5 rounded uppercase">Global</span>`;
         }
 
         // Construir string de precio múltiple
@@ -342,17 +342,23 @@ export function renderInventarioUI(cat) {
             }
         }
 
+        // NUEVO: Indicador de Ventas Históricas (Popularidad)
+        const vHist = p.ventasTotales || 0;
+        const ventasHtml = vHist > 0 
+            ? `<div class="flex items-center justify-center text-emerald-500 font-bold text-xs"><i data-lucide="trending-up" class="w-3 h-3 mr-1"></i> ${vHist}</div>`
+            : `<div class="text-slate-500 text-xs text-center">-</div>`;
+
         const tr = document.createElement('tr'); 
         tr.className = 'hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group border-b border-slate-200 dark:border-slate-700/50 last:border-0';
         tr.innerHTML = `
-            <td class=\"p-3 text-sm text-slate-800 dark:text-white font-bold\">${p.nombre} ${badgeLocal}</td>
-            <td class=\"p-3 text-xs text-slate-500 uppercase\">${p.categoria}</td>
-            <td class=\"p-3 text-sm text-sky-600 dark:text-sky-500 font-bold text-right\">${priceStr}</td>
-            <td class=\"p-3 text-center\">${stkStr}</td>
-            <td class=\"p-3 text-center\">
-                <div class=\"flex justify-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity\">
-                    <button onclick=\"window.editarProducto('${p.id}')\" class=\"text-slate-400 hover:text-sky-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-300 dark:hover:border-sky-500/50 p-1.5 rounded transition-colors\"><i data-lucide=\"edit-2\" class=\"w-4 h-4\"></i></button>
-                    <button onclick=\"window.eliminarProducto('${p.id}')\" class=\"text-slate-400 hover:text-red-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-red-300 dark:hover:border-red-500/50 p-1.5 rounded transition-colors\"><i data-lucide=\"trash\" class=\"w-4 h-4\"></i></button>
+            <td class="p-3 text-sm text-slate-800 dark:text-white font-bold">${p.nombre} ${badgeLocal}</td>
+            <td class="p-3 text-center">${ventasHtml}</td>
+            <td class="p-3 text-sm text-sky-600 dark:text-sky-500 font-bold text-right">${priceStr}</td>
+            <td class="p-3 text-center">${stkStr}</td>
+            <td class="p-3 text-center">
+                <div class="flex justify-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button onclick="window.editarProducto('${p.id}')" class="text-slate-400 hover:text-sky-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-300 dark:hover:border-sky-500/50 p-1.5 rounded transition-colors"><i data-lucide="edit-2" class="w-4 h-4"></i></button>
+                    <button onclick="window.eliminarProducto('${p.id}')" class="text-slate-400 hover:text-red-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-red-300 dark:hover:border-red-500/50 p-1.5 rounded transition-colors"><i data-lucide="trash" class="w-4 h-4"></i></button>
                 </div>
             </td>
         `;
@@ -374,20 +380,28 @@ function guardarProducto(e) {
     let selectedLocal = document.getElementById('prod-local').value;
     if (state.userRole === 'vendedor') selectedLocal = state.userLocalId || 'global';
 
+    // Recuperar ventasTotales actuales para no borrarlas al guardar
+    let ventasTotalesGuardadas = 0;
+    if (id) {
+        const prodExistente = state.productos.find(x => x.id === id);
+        if (prodExistente) ventasTotalesGuardadas = prodExistente.ventasTotales || 0;
+    }
+
     const prodData = {
         nombre: document.getElementById('prod-nombre').value.trim(),
         categoria: categoriaActual,
         tamanos: tamanosActuales,
-        precio: tamanosActuales[0].precio || 0, // Fallback por compatibilidad con historiales viejos
+        precio: tamanosActuales[0].precio || 0, // Fallback por compatibilidad
         costo: parseFloat(document.getElementById('prod-costo').value) || 0,
         limite_sabores: parseInt(document.getElementById('prod-limite').value) || 0,
         stock: document.getElementById('prod-stock').value !== '' ? parseInt(document.getElementById('prod-stock').value) : null,
-        localId: selectedLocal
+        localId: selectedLocal,
+        ventasTotales: ventasTotalesGuardadas // Mantiene el récord intacto
     };
 
     const btn = document.getElementById('btn-guardar-prod'); 
     const originalText = btn.innerHTML;
-    btn.innerHTML = '<i data-lucide=\"loader-2\" class=\"w-4 h-4 animate-spin inline mr-1\"></i> Guardando...'; 
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline mr-1"></i> Guardando...'; 
     btn.disabled = true;
     if(window.lucide) window.lucide.createIcons();
 
