@@ -103,7 +103,7 @@ export function initAuth() {
 }
 
 function actualizarLogoGlobal(url) {
-    const logosImg = document.querySelectorAll('img[alt="IcePOS Logo"], img[alt="IcePOS"]');
+    const logosImg = document.querySelectorAll('img[alt="Raffaelito Logo"], img[alt="Raffaelito"], img[alt="IcePOS Logo"], img[alt="IcePOS"]');
     logosImg.forEach(img => {
         img.src = url; img.style.objectFit = 'contain';
         img.classList.remove('drop-shadow-[0_0_15px_rgba(14,165,233,0.3)]');
@@ -187,7 +187,7 @@ function aplicarPermisosVisuales(userDocData) {
         'nav-respaldo': document.getElementById('nav-respaldo') 
     };
 
-    // --- NUEVO: Control de elementos y filtros internos (.solo-admin, .solo-master) ---
+    // Control de elementos y filtros internos (.solo-admin, .solo-master)
     const adminElements = document.querySelectorAll('.solo-admin');
     const masterElements = document.querySelectorAll('.solo-master');
 
