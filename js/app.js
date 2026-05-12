@@ -20,12 +20,41 @@ if ('serviceWorker' in navigator) {
                 console.error('El registro del ServiceWorker falló:', error);
             });
 
-        // EL "EXPULSOR" (Modo Fantasma): Recarga la página cuando el nuevo SW toma el control
+        // EL "EXPULSOR" (Modo Fantasma): Pantalla de Instalación tipo App Nativa
         let refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', () => {
             if (!refreshing) {
                 refreshing = true;
-                window.location.reload();
+                
+                // 1. Crear pantalla bloqueante de instalación
+                const updateScreen = document.createElement('div');
+                updateScreen.className = 'fixed inset-0 z-[9999] bg-slate-950 flex flex-col items-center justify-center text-white transition-opacity duration-300';
+                updateScreen.innerHTML = `
+                    <div class="flex flex-col items-center max-w-sm text-center px-6">
+                        <i data-lucide="download-cloud" class="w-20 h-20 text-sky-500 mb-6 animate-bounce drop-shadow-[0_0_15px_rgba(14,165,233,0.5)]"></i>
+                        <h2 class="text-2xl font-black mb-2">Instalando Actualización...</h2>
+                        <p class="text-slate-400 text-sm mb-8 leading-relaxed">Por favor, no cierres la aplicación. Aplicando nuevas mejoras y optimizaciones del sistema en segundo plano.</p>
+                        
+                        <!-- Barra de progreso simulada -->
+                        <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden shadow-inner">
+                            <div class="h-full bg-sky-500 rounded-full animate-[progress_3s_ease-in-out_forwards] shadow-[0_0_10px_rgba(14,165,233,0.8)]" style="width: 0%;"></div>
+                        </div>
+                        <p class="text-[10px] text-slate-500 mt-4 uppercase font-bold tracking-widest">No apagues tu dispositivo</p>
+                    </div>
+                `;
+                
+                document.body.appendChild(updateScreen);
+                if(window.lucide) window.lucide.createIcons();
+
+                // 2. Inyectar animación de progreso temporal
+                const style = document.createElement('style');
+                style.textContent = '@keyframes progress { 0% { width: 0%; } 100% { width: 100%; } }';
+                document.head.appendChild(style);
+
+                // 3. Esperar 3 segundos (tiempo de la animación) y luego recargar forzosamente
+                setTimeout(() => {
+                    window.location.reload();
+                }, 3000);
             }
         });
     });
