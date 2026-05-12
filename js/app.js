@@ -19,6 +19,15 @@ if ('serviceWorker' in navigator) {
             .catch(error => {
                 console.error('El registro del ServiceWorker falló:', error);
             });
+
+        // EL "EXPULSOR" (Modo Fantasma): Recarga la página cuando el nuevo SW toma el control
+        let refreshing = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!refreshing) {
+                refreshing = true;
+                window.location.reload();
+            }
+        });
     });
 }
 // -----------------------------------------------------------------
