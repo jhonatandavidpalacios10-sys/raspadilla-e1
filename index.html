@@ -23,25 +23,6 @@
             theme: { extend: { colors: { yape: '#8b5cf6', bcp: '#f97316', tarjeta: '#3b82f6' } } }
         }
     </script>
-
-    <script>
-        // --- CARGA RÁPIDA DE LOGO DESDE LOCALSTORAGE ---
-        try {
-            const localLogo = localStorage.getItem('app_custom_logo');
-            if (localLogo) {
-                document.addEventListener('DOMContentLoaded', () => {
-                    const logos = document.querySelectorAll('img[alt="Raffaelito Logo"], img[alt="Raffaelito"]');
-                    logos.forEach(img => {
-                        img.src = localLogo;
-                        img.style.objectFit = 'contain';
-                        if (img.parentElement && img.parentElement.classList.contains('bg-sky-500/20')) {
-                            img.parentElement.classList.replace('bg-sky-500/20', 'bg-transparent');
-                        }
-                    });
-                });
-            }
-        } catch(e) {}
-    </script>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen overflow-hidden font-sans selection:bg-sky-500 selection:text-white flex flex-col md:flex-row">
 
@@ -920,6 +901,23 @@
             <button id="btn-alerta-aceptar" class="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold transition-colors">Aceptar</button>
         </div>
     </div>
+
+    <script>
+        // --- CARGA RÁPIDA DE LOGO DESDE LOCALSTORAGE (EJECUCIÓN INMEDIATA) ---
+        try {
+            const localLogo = localStorage.getItem('app_custom_logo');
+            if (localLogo) {
+                const logos = document.querySelectorAll('img[alt="Raffaelito Logo"], img[alt="Raffaelito"]');
+                logos.forEach(img => {
+                    img.src = localLogo;
+                    img.style.objectFit = 'contain';
+                    if (img.parentElement && img.parentElement.classList.contains('bg-sky-500/20')) {
+                        img.parentElement.classList.replace('bg-sky-500/20', 'bg-transparent');
+                    }
+                });
+            }
+        } catch(e) {}
+    </script>
 
     <script type="module" src="js/app.js"></script>
 
