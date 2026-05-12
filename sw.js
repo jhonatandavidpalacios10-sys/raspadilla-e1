@@ -1,11 +1,10 @@
-const CACHE_NAME = 'raffaelito-v1';
+const CACHE_NAME = 'raffaelito-v2'; // <-- VERSIÓN ACTUALIZADA (v2) para forzar la actualización
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
   '/assets/css/styles.css',
-  '/assets/css/tema-rosado-pastel.css',
-  '/assets/img/logo.svg?v=2',
+  '/assets/img/logo.jpg?v=3', // <-- RUTA ACTUALIZADA A JPG
   '/js/app.js',
   '/js/core/auth.js',
   '/js/core/firebase-setup.js',
@@ -24,7 +23,9 @@ const ASSETS_TO_CACHE = [
 
 // Instalar y almacenar en caché
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
+  // CLAVE MODO FANTASMA: Fuerza al nuevo SW a instalarse inmediatamente sin esperar que cierren la app
+  self.skipWaiting(); 
+  
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       console.log('SW: Archivos almacenados en caché exitosamente.');
@@ -47,7 +48,8 @@ self.addEventListener('activate', (event) => {
       );
     })
   );
-  self.clients.claim();
+  // CLAVE MODO FANTASMA: Obliga al nuevo SW a tomar el control de las pestañas abiertas inmediatamente
+  self.clients.claim(); 
 });
 
 // Estrategia: Stale-While-Revalidate (Primero caché, luego red)
