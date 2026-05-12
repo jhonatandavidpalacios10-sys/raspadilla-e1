@@ -15,6 +15,19 @@ if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('./sw.js')
             .then(registration => {
                 console.log('ServiceWorker registrado con éxito con alcance:', registration.scope);
+
+                // --- RADAR DE ACTUALIZACIONES (Modo Fantasma) ---
+                // 1. Revisar cuando la app vuelve a ser visible (ej. al regresar de otra app o desbloquear)
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible') {
+                        registration.update();
+                    }
+                });
+
+                // 2. Revisar periódicamente cada 5 minutos en segundo plano
+                setInterval(() => {
+                    registration.update();
+                }, 5 * 60 * 1000);
             })
             .catch(error => {
                 console.error('El registro del ServiceWorker falló:', error);
