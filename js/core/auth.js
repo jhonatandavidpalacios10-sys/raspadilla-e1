@@ -103,6 +103,13 @@ export function initAuth() {
 }
 
 function actualizarLogoGlobal(url) {
+    // NUEVO: Guardar en localStorage para carga rápida instantánea
+    try {
+        localStorage.setItem('app_custom_logo', url);
+    } catch(e) {
+        console.warn("No se pudo guardar el logo localmente", e);
+    }
+
     const logosImg = document.querySelectorAll('img[alt="Raffaelito Logo"], img[alt="Raffaelito"], img[alt="IcePOS Logo"], img[alt="IcePOS"]');
     logosImg.forEach(img => {
         img.src = url; img.style.objectFit = 'contain';
