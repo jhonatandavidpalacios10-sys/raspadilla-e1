@@ -1,10 +1,10 @@
-const CACHE_NAME = 'raffaelito-v4'; // <-- VERSIÓN ACTUALIZADA (v2) para forzar la actualización
+const CACHE_NAME = 'raffaelito-v5'; // <-- VERSIÓN ACTUALIZADA (v5)
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
   '/assets/css/styles.css',
-  '/assets/img/logo.jpg?v=3', // <-- RUTA ACTUALIZADA A JPG
+  '/assets/img/logo.jpg', // <-- ¡CORREGIDO! Sin el ?v=3 para que coincida exactamente con el manifest
   '/js/app.js',
   '/js/core/auth.js',
   '/js/core/firebase-setup.js',
