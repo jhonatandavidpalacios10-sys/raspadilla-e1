@@ -6,36 +6,48 @@ let userUnsubscribe = null;
 let sysUnsubscribe = null;
 let isSystemLocked = false;
 
+// Extraemos la lógica de configuración para llamarla de forma independiente
+function escucharConfiguracionGlobal() {
+    if (sysUnsubscribe) { sysUnsubscribe(); sysUnsubscribe = null; }
+    
+    sysUnsubscribe = onSnapshot(doc(db, "configuracion", "estado_sistema"), (sysDoc) => {
+        if (sysDoc.exists()) {
+            const data = sysDoc.data();
+            isSystemLocked = data.cerrado === true;
+            
+            if (data.logoUrl) actualizarLogoGlobal(data.logoUrl);
+            if (data.nombreApp) actualizarNombreAppGlobal(data.nombreApp);
+        } else {
+            isSystemLocked = false;
+        }
+        
+        if (state.currentUser) verificarBloqueoSistema(state.currentUser);
+    }, (error) => {
+        console.warn("Aviso: No se pudo leer la configuración global. (¿Permisos de Firebase denegados sin login?)", error);
+        sysUnsubscribe = null; // Marcamos como nulo para poder reintentar después del login
+        isSystemLocked = false;
+    });
+}
+
 export function initAuth() {
+    // --- 1. DESCARGA INMEDIATA: Intentar traer el logo ANTES de que el usuario inicie sesión ---
+    escucharConfiguracionGlobal();
+
     onAuthStateChanged(auth, async (user) => {
         const loginScreen = document.getElementById('login-screen'); 
         const appContainer = document.getElementById('app-container');
         
         if (userUnsubscribe) { userUnsubscribe(); userUnsubscribe = null; }
-        if (sysUnsubscribe) { sysUnsubscribe(); sysUnsubscribe = null; }
-
-        // 1. Escuchar el estado del sistema, LOGO GLOBAL y NOMBRE DE LA APP
-        sysUnsubscribe = onSnapshot(doc(db, "configuracion", "estado_sistema"), (sysDoc) => {
-            if (sysDoc.exists()) {
-                const data = sysDoc.data();
-                isSystemLocked = data.cerrado === true;
-                
-                if (data.logoUrl) actualizarLogoGlobal(data.logoUrl);
-                if (data.nombreApp) actualizarNombreAppGlobal(data.nombreApp);
-            } else {
-                isSystemLocked = false;
-            }
-            
-            if (state.currentUser) verificarBloqueoSistema(state.currentUser);
-        }, (error) => {
-            console.warn("Aviso: No se pudo leer configuración global.", error);
-            isSystemLocked = false;
-        });
 
         if (user) {
             state.currentUser = user;
+            
+            // --- 2. REINTENTO SEGURO: Si el logo falló antes porque requería permisos, lo intentamos ahora que ya inició sesión ---
+            if (!sysUnsubscribe) {
+                escucharConfiguracionGlobal();
+            }
 
-            // 2. Escucha en TIEMPO REAL los permisos y rol
+            // Escucha en TIEMPO REAL los permisos y rol
             userUnsubscribe = onSnapshot(doc(db, "usuarios", user.uid), async (userDoc) => {
                 let r = 'vendedor', l = 'Sin Local', lId = '';
                 let userData = null;
@@ -103,13 +115,7 @@ export function initAuth() {
 }
 
 function actualizarLogoGlobal(url) {
-    // NUEVO: Guardar en localStorage para carga rápida instantánea
-    try {
-        localStorage.setItem('app_custom_logo', url);
-    } catch(e) {
-        console.warn("No se pudo guardar el logo localmente", e);
-    }
-
+    try { localStorage.setItem('app_custom_logo', url); } catch(e) {}
     const logosImg = document.querySelectorAll('img[alt="Raffaelito Logo"], img[alt="Raffaelito"], img[alt="IcePOS Logo"], img[alt="IcePOS"]');
     logosImg.forEach(img => {
         img.src = url; img.style.objectFit = 'contain';
