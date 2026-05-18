@@ -147,6 +147,18 @@ function generarHTMLPedido(v, esListo = false) {
     const num = v.id.split('-')[1] || '---';
     const editBdge = v.editado ? `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] px-1 rounded uppercase font-bold ml-2 animate-pulse">Modificado</span>` : '';
     
+    // --- NUEVO: Etiqueta Visual del Método de Pago ---
+    const metodoPago = (v.metodoPago || v.metodo_pago || 'efectivo').toLowerCase();
+    let badgePago = '';
+    
+    if (metodoPago.includes('yape') || metodoPago.includes('plin')) {
+        badgePago = `<div class="flex items-center gap-1 bg-purple-500/10 text-purple-400 border border-purple-500/30 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider" title="Yape / Plin"><i data-lucide="smartphone" class="w-3 h-3"></i> Yape</div>`;
+    } else if (metodoPago === 'mixto') {
+        badgePago = `<div class="flex items-center gap-1 bg-sky-500/10 text-sky-400 border border-sky-500/30 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider" title="Pago Mixto"><i data-lucide="split-square-horizontal" class="w-3 h-3"></i> Mixto</div>`;
+    } else {
+        badgePago = `<div class="flex items-center gap-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider" title="Efectivo"><i data-lucide="banknote" class="w-3 h-3"></i> Efectivo</div>`;
+    }
+
     // Si es Master/Admin, mostrar de qué sede viene el pedido
     const badgeLocal = (state.userRole === 'admin' || state.userRole === 'master') && v.localNombre && v.localNombre !== 'Sin Local' 
         ? `<div class="text-[9px] text-slate-400 mt-1 uppercase font-bold"><i data-lucide="store" class="w-3 h-3 inline"></i> ${v.localNombre}</div>` 
@@ -180,6 +192,7 @@ function generarHTMLPedido(v, esListo = false) {
                     <span class="text-[10px] text-slate-500 font-bold">${time}</span>
                     ${editBdge}
                 </div>
+                ${badgePago}
             </div>
             ${badgeLocal}
             ${clienteBadge}
