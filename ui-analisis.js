@@ -1,0 +1,257 @@
+/* ========================================================
+   TEMA: ROJO SUAVE & AGUAMARINA
+   Blindaje contra Modo Oscuro (Alto contraste asegurado)
+   ======================================================== */
+
+/* UTILIDADES BASE */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.hide-arrows::-webkit-outer-spin-button, .hide-arrows::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.hide-arrows { -moz-appearance: textfield; }
+
+/* --------------------------------------------------------
+   1. FONDOS GENERALES (Máximo descanso visual)
+   -------------------------------------------------------- */
+body, 
+.bg-\[\#090b14\],
+.bg-slate-950, .bg-slate-950\/50, .dark\:bg-slate-950 { 
+    background-color: #fdfdfd !important; /* Blanco muy suave, neutral y descansado */
+} 
+
+.bg-slate-900, .bg-slate-900\/50, .bg-slate-900\/80, .bg-slate-900\/30, .dark\:bg-slate-900 { 
+    background-color: #f7f5f5 !important; /* Gris ultra claro con toque cálido para paneles */
+} 
+
+.bg-slate-800, .bg-slate-800\/50, .bg-slate-800\/80, .dark\:bg-slate-800 { 
+    background-color: #ffffff !important; /* Tarjetas y Modales Blancos Puros */
+} 
+
+.bg-slate-700, .bg-slate-700\/50, .dark\:bg-slate-700 { 
+    background-color: #fcdcdc !important; /* Rojo pastel muy suave para elementos inactivos */
+    color: #1e293b !important;
+} 
+.hover\:bg-slate-700:hover, .hover\:bg-slate-600:hover {
+    background-color: #f5c6c6 !important;
+}
+
+/* --------------------------------------------------------
+   2. TEXTOS GLOBALES (Anulación del Modo Oscuro)
+   -------------------------------------------------------- */
+/* Se fuerza texto Gris Pizarra oscuro para lectura cómoda en fondos claros */
+body, .text-slate-100, .text-white, .dark\:text-white { color: #1e293b !important; }
+.text-slate-200, .text-slate-300, .dark\:text-slate-300 { color: #334155 !important; } 
+.text-slate-400, .dark\:text-slate-400 { color: #475569 !important; } 
+.text-slate-500, .dark\:text-slate-500 { color: #64748b !important; } 
+
+/* --------------------------------------------------------
+   3. PROTECCIÓN DE BOTONES Y BADGES (Forzar texto blanco)
+   -------------------------------------------------------- */
+button.bg-sky-600, button.bg-emerald-600, button.bg-indigo-600, 
+button.bg-red-600, button.bg-amber-600, button.bg-red-900,
+#btn-procesar-cobro, .bg-amber-500, .bg-emerald-500, .bg-red-500,
+.bg-sky-500, .bg-indigo-500, .bg-purple-500,
+#contador-pendientes, #contador-listos {
+    color: #ffffff !important;
+}
+
+button.bg-sky-600 .text-white, button.bg-emerald-600 .text-white, 
+button.bg-indigo-600 .text-white, button.bg-red-600 .text-white, 
+#btn-procesar-cobro .text-white {
+    color: #ffffff !important;
+}
+
+/* --------------------------------------------------------
+   4. ACENTO 1: ROJO SUAVE (#e05f5f)
+   Mapeado sobre clases 'sky' para no reescribir todo el HTML
+   -------------------------------------------------------- */
+.text-sky-400, .text-sky-300, .text-sky-500 { color: #e05f5f !important; }
+.bg-sky-600 { background-color: #e05f5f !important; color: #ffffff !important; border-color: #e05f5f !important; }
+.hover\:bg-sky-500:hover { background-color: #c94c4c !important; color: #ffffff !important; border-color: #c94c4c !important; }
+.border-sky-500 { border-color: #e05f5f !important; }
+.bg-sky-500\/20 { background-color: #fce8e8 !important; color: #e05f5f !important; }
+.bg-sky-500\/10 { background-color: #fdf5f5 !important; }
+.ring-sky-500 { --tw-ring-color: #e05f5f !important; }
+
+/* --------------------------------------------------------
+   5. ACENTO 2: AGUAMARINA (#14b8a6)
+   Mapeado sobre clases 'emerald'
+   -------------------------------------------------------- */
+.text-emerald-400, .text-emerald-500 { color: #14b8a6 !important; } 
+.bg-emerald-600 { background-color: #14b8a6 !important; color: #ffffff !important; border-color: #14b8a6 !important; }
+.hover\:bg-emerald-500:hover { background-color: #0f9688 !important; color: #ffffff !important; border-color: #0f9688 !important; }
+.bg-emerald-500\/10 { background-color: #f0fdfa !important; border-color: #ccfbf1 !important; }
+.bg-emerald-500\/20 { background-color: #ccfbf1 !important; border-color: #14b8a6 !important; color: #0f766e !important; }
+.border-emerald-500\/30, .border-emerald-500\/50, .border-emerald-500 { border-color: #14b8a6 !important; }
+.focus\:border-emerald-500:focus { border-color: #14b8a6 !important; }
+
+/* --------------------------------------------------------
+   6. OTROS ACENTOS SECUNDARIOS
+   -------------------------------------------------------- */
+/* Red original (Gastos, Errores, Cancelaciones) - Mantenemos un rojo alerta clásico */
+.text-red-400, .text-red-500 { color: #ef4444 !important; }
+.bg-red-500\/10, .bg-red-500\/5 { background-color: #fef2f2 !important; border-color: #fecaca !important; }
+.bg-red-500\/20 { background-color: #fee2e2 !important; }
+.border-red-500\/30, .border-red-500\/50, .border-red-500\/20 { border-color: #fca5a5 !important; }
+
+/* Purple (Yape / Plin) */
+.text-purple-400, .text-purple-500 { color: #8b5cf6 !important; }
+.bg-purple-500\/20, .bg-purple-100 { background-color: #f3e8ff !important; border-color: #d8b4fe !important; }
+.border-purple-500\/50, .border-purple-300 { border-color: #8b5cf6 !important; }
+.focus\:border-purple-500:focus { border-color: #8b5cf6 !important; }
+.text-purple-600 { color: #7c3aed !important; }
+
+/* Amber (Ediciones, Alertas) */
+.text-amber-400 { color: #f59e0b !important; }
+.bg-amber-500\/10 { background-color: #fffbeb !important; }
+.bg-amber-500\/20 { background-color: #fef3c7 !important; border-color: #fcd34d !important; color: #1e293b !important; }
+.border-amber-500\/30, .border-amber-500\/50 { border-color: #fcd34d !important; }
+
+/* --------------------------------------------------------
+   7. BORDES, SEPARADORES E INPUTS
+   -------------------------------------------------------- */
+.border-slate-800, .border-slate-800\/50, .border-slate-800\/80,
+.border-slate-700, .border-slate-700\/50, 
+.border-slate-600, .border-slate-600\/50,
+.dark\:border-slate-700, .dark\:border-slate-600 { 
+    border-color: #f2e8e8 !important; 
+}
+
+input.bg-slate-900, select.bg-slate-900,
+input.bg-slate-800, select.bg-slate-800,
+.dark\:bg-slate-900, .dark\:bg-slate-800 {
+    background-color: #ffffff !important;
+    color: #1e293b !important;
+    border-color: #e5dddd !important;
+    box-shadow: 0 1px 2px rgba(224, 95, 95, 0.05) !important;
+    transition: all 0.2s ease;
+}
+input::placeholder { color: #94a3b8 !important; }
+input:focus, select:focus { border-color: #e05f5f !important; }
+
+/* --------------------------------------------------------
+   8. CORRECCIÓN DE DEGRADADOS Y SOMBRAS
+   -------------------------------------------------------- */
+.bg-gradient-to-br.border-emerald-500\/30 {
+    background: #ffffff !important;
+    border-color: #14b8a6 !important;
+}
+
+.bg-gradient-to-br.from-sky-400.to-indigo-500 {
+    background: linear-gradient(to bottom right, #e05f5f, #fca5a5) !important;
+    box-shadow: 0 4px 10px rgba(224, 95, 95, 0.3) !important;
+}
+
+.bg-gradient-to-br.from-emerald-400.to-teal-500 {
+    background: linear-gradient(to bottom right, #2dd4bf, #14b8a6) !important;
+    box-shadow: 0 4px 10px rgba(20, 184, 166, 0.3) !important;
+}
+
+.shadow-lg, .shadow-2xl, .shadow-md, .shadow-sm { 
+    box-shadow: 0 10px 15px -3px rgba(224, 95, 95, 0.08), 0 4px 6px -4px rgba(224, 95, 95, 0.04) !important; 
+}
+
+/* --------------------------------------------------------
+   9. HOVERS Y ELEMENTOS ACTIVOS (Interactividad)
+   -------------------------------------------------------- */
+.nav-btn.active, .nav-btn.text-sky-400 { 
+    color: #e05f5f !important; 
+    border-color: #e05f5f !important; 
+}
+.nav-btn:hover { color: #c94c4c !important; }
+
+.hover\:bg-slate-800\/50:hover, 
+.hover\:border-sky-500:hover,
+.hover\:bg-slate-700\/50:hover {
+    background-color: #fffcfc !important;
+    border-color: #fcdcdc !important;
+}
+
+.bg-emerald-500\/10.border-emerald-500\/50 {
+    background-color: #f0fdfa !important;
+    border-color: #14b8a6 !important;
+}
+
+.bg-red-500\/10.border-red-500\/50 {
+    background-color: #fef2f2 !important;
+    border-color: #ef4444 !important;
+}
+
+/* ========================================================
+   10. CORRECCIONES RESPONSIVE Y DE VIEWPORT MÓVIL
+   (Soluciona: botón "Procesar Venta" cortado en celulares,
+   barra inferior sobre el contenido, alturas 100vh erróneas)
+   ======================================================== */
+
+/* 10.1 Altura real del viewport en móviles (100vh incluye la barra
+   del navegador y corta la parte inferior; dvh usa el alto visible) */
+@supports (height: 100dvh) {
+    .h-screen { height: 100dvh !important; }
+    .max-h-\[90vh\] { max-height: 90dvh !important; }
+    .max-h-\[70vh\] { max-height: 70dvh !important; }
+}
+@supports not (height: 100dvh) {
+    body.h-screen { min-height: -webkit-fill-available; }
+}
+
+/* 10.2 Safe Area (iPhone con barra de gestos / notch) */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+/* Barra de navegación inferior: altura fija + espacio seguro extra */
+@media (max-width: 767.98px) {
+    nav.bottom-nav {
+        height: calc(3.5rem + env(safe-area-inset-bottom, 0px)) !important;
+    }
+}
+@media (min-width: 640px) and (max-width: 767.98px) {
+    nav.bottom-nav {
+        height: calc(4rem + env(safe-area-inset-bottom, 0px)) !important;
+    }
+}
+
+/* El contenido principal deja exactamente el espacio de la barra inferior */
+@media (max-width: 767.98px) {
+    main.main-offset {
+        margin-bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px)) !important;
+    }
+}
+@media (min-width: 640px) and (max-width: 767.98px) {
+    main.main-offset {
+        margin-bottom: calc(4rem + env(safe-area-inset-bottom, 0px)) !important;
+    }
+}
+@media (min-width: 768px) {
+    main.main-offset { margin-bottom: 0 !important; }
+}
+
+/* 10.3 Pantallas muy bajas (teléfonos pequeños o teclado abierto):
+   permitir desplazar la vista de Ventas para que el botón
+   "Procesar Venta" siempre sea alcanzable */
+@media (max-width: 1023.98px) and (max-height: 640px) {
+    #view-ventas.pos-view { overflow-y: auto !important; }
+    #view-ventas.pos-view > section { flex: none !important; min-height: 250px; }
+    #view-ventas.pos-view > aside.pos-cart { max-height: none !important; }
+}
+
+/* 10.4 Animación de los modales tipo hoja inferior (clases ya
+   referenciadas en el HTML pero que no estaban definidas) */
+@keyframes sheetUp {
+    from { transform: translateY(28px); opacity: .65; }
+    to   { transform: translateY(0);    opacity: 1; }
+}
+.bottom-sheet-up { animation: sheetUp .25s ease-out; }
+@media (min-width: 768px) {
+    .md\:bottom-sheet-none { animation: none; }
+}
+
+/* 10.5 Mejoras táctiles generales (no cambian el diseño visual) */
+html { -webkit-text-size-adjust: 100%; }
+body {
+    overscroll-behavior-y: none;           /* evita recargas por arrastre accidental */
+    -webkit-tap-highlight-color: transparent;
+}
+button, .producto-card, .nav-btn { touch-action: manipulation; } /* sin retraso de doble tap */
+
+/* Área táctil cómoda para los botones +/- del carrito en pantallas táctiles */
+@media (pointer: coarse) {
+    #carrito-items button[data-action] { min-height: 28px; min-width: 28px; }
+}
