@@ -2,16 +2,17 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <!-- NUEVO NOMBRE BASE -->
-    <title class="app-name-display">Raffaelito - Sistema Franquicias</title>
+    <title>Raffaelito - Sistema Franquicias</title>
     
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#fdfdfd"> <!-- Color neutral acorde a tu CSS -->
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="icon" type="image/jpeg" href="assets/img/logo.jpg">
+    <link rel="icon" type="image/png" href="assets/img/logo.png">
+    <link rel="apple-touch-icon" href="assets/img/logo.png">
     
     <link rel="stylesheet" href="assets/css/styles.css">
     
@@ -33,7 +34,7 @@
     <div id="login-screen" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900 transition-opacity duration-300 px-4">
         <div class="bg-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-700 flex flex-col items-center">
             
-            <img src="assets/img/logo.jpg" alt="Raffaelito Logo" class="w-24 h-24 mb-4">
+            <img src="assets/img/logo.png" alt="Raffaelito Logo" class="w-24 h-24 mb-4">
             
             <h1 class="text-2xl font-black text-white mb-2 tracking-tight app-name-display">Raffaelito</h1>
             <p class="text-sm text-slate-400 mb-6 text-center" id="login-subtitle">Punto de Venta Profesional</p>
@@ -85,9 +86,9 @@
     <div id="app-container" class="hidden w-full h-full flex flex-col md:flex-row opacity-0 transition-opacity duration-300">
         
         <!-- MENÚ LATERAL -->
-        <nav class="w-full md:w-20 bg-slate-950 flex flex-row md:flex-col items-center py-1 md:py-6 border-t md:border-t-0 md:border-r border-slate-800 z-50 fixed bottom-0 md:relative flex-shrink-0 h-14 sm:h-16 md:h-full justify-between md:justify-start pb-safe">
+        <nav class="bottom-nav w-full md:w-20 bg-slate-950 flex flex-row md:flex-col items-center py-1 md:py-6 border-t md:border-t-0 md:border-r border-slate-800 z-50 fixed bottom-0 md:relative flex-shrink-0 h-14 sm:h-16 md:h-full justify-between md:justify-start pb-safe">
             <div class="hidden md:flex w-12 h-12 rounded-xl items-center justify-center mb-6 flex-shrink-0">
-                <img src="assets/img/logo.jpg" alt="Raffaelito" class="w-full h-full object-contain p-1">
+                <img src="assets/img/logo.png" alt="Raffaelito" class="w-full h-full object-contain p-1">
             </div>
             
             <div class="flex flex-row md:flex-col w-full h-full md:h-auto items-center justify-between md:justify-start px-1 md:px-2 md:gap-3 overflow-y-auto no-scrollbar">
@@ -137,12 +138,12 @@
         </nav>
 
         <!-- ÁREA PRINCIPAL -->
-        <main class="flex-1 flex flex-col overflow-hidden relative mb-14 md:mb-0">
+        <main class="main-offset flex-1 flex flex-col overflow-hidden relative min-h-0">
             
             <!-- HEADER SUPERIOR MÓVIL -->
             <header class="md:hidden bg-slate-900 border-b border-slate-800 p-3 flex justify-between items-center z-40">
                 <div class="flex items-center gap-2">
-                    <img src="assets/img/logo.jpg" alt="Raffaelito" class="w-8 h-8">
+                    <img src="assets/img/logo.png" alt="Raffaelito" class="w-8 h-8">
                     <div>
                         <h2 class="font-bold text-sm text-white leading-tight app-name-display">Raffaelito</h2>
                         <p class="text-[10px] text-slate-400" id="user-local-display-mobile">Local...</p>
@@ -161,8 +162,8 @@
             <!-- ==============================================
                  VISTA 1: VENTAS (POS)
                  ============================================== -->
-            <div id="view-ventas" class="view-section flex-1 flex flex-col lg:flex-row h-full overflow-hidden">
-                <section class="flex flex-col h-[55%] lg:h-full lg:flex-1 relative border-b lg:border-b-0 border-slate-800">
+            <div id="view-ventas" class="view-section pos-view flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
+                <section class="flex flex-col flex-1 min-h-0 lg:h-full relative border-b lg:border-b-0 border-slate-800">
                     <header class="p-2 md:p-5 bg-slate-900 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 md:gap-3 z-10 flex-shrink-0">
                         <div class="hidden sm:block">
                             <h1 class="text-xl font-bold text-white">Punto de Venta</h1>
@@ -190,7 +191,7 @@
                 </div>
             </section>
 
-            <aside class="w-full lg:w-[380px] bg-slate-800 border-t lg:border-t-0 lg:border-l border-slate-700 flex flex-col h-[45%] lg:h-full shadow-2xl z-20 flex-shrink-0">
+            <aside class="pos-cart w-full lg:w-[380px] bg-slate-800 border-t lg:border-t-0 lg:border-l border-slate-700 flex flex-col flex-none min-h-0 max-h-[62%] lg:max-h-none lg:h-full shadow-2xl z-20 flex-shrink-0">
                     <header class="p-2 md:p-3 border-b border-slate-700 bg-slate-800 flex justify-between items-center flex-shrink-0">
                         <h2 class="text-sm md:text-base font-bold text-white flex items-center gap-2">
                             <i data-lucide="receipt" class="w-3.5 h-3.5 md:w-4 md:h-4 text-sky-400"></i> Orden Actual
@@ -200,7 +201,7 @@
                         </button>
                     </header>
 
-                    <div class="flex-1 overflow-y-auto no-scrollbar p-1.5 md:p-2 bg-slate-800/50 relative">
+                    <div class="flex-1 min-h-[56px] overflow-y-auto no-scrollbar p-1.5 md:p-2 bg-slate-800/50 relative">
                         <div id="carrito-vacio" class="absolute inset-0 flex flex-col items-center justify-center text-slate-500 space-y-2">
                             <i data-lucide="shopping-bag" class="w-8 h-8 md:w-10 md:h-10 opacity-50"></i>
                             <p class="text-xs md:text-sm">El ticket está vacío</p>
@@ -244,7 +245,7 @@
                         <div id="area-vuelto" class="mb-2 md:mb-3 bg-slate-800 p-1.5 md:p-2 rounded-lg border border-slate-700 flex justify-between items-center hidden">
                             <div class="flex items-center gap-2">
                                 <span class="text-[9px] md:text-[10px] text-slate-400">Paga con: S/</span>
-                                <input type="number" id="input-paga-con" placeholder="0.00" class="w-14 md:w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-1 text-white text-xs focus:outline-none focus:border-emerald-500 text-right hide-arrows">
+                                <input type="number" inputmode="decimal" id="input-paga-con" placeholder="0.00" class="w-14 md:w-16 bg-slate-900 border border-slate-600 rounded px-1.5 py-1 text-white text-xs focus:outline-none focus:border-emerald-500 text-right hide-arrows">
                             </div>
                             <div class="text-right">
                                 <span class="text-[9px] md:text-[10px] text-slate-400 block leading-tight">Vuelto</span>
@@ -255,11 +256,11 @@
                         <div id="area-mixto" class="mb-2 md:mb-3 bg-slate-800 p-1.5 md:p-2 rounded-lg border border-slate-700 space-y-1.5 md:space-y-2 hidden">
                             <div class="flex items-center justify-between gap-2">
                                 <span class="text-[9px] md:text-[10px] text-emerald-400 font-bold w-10 md:w-12">Efectivo</span>
-                                <input type="number" id="input-mixto-efectivo" placeholder="0.00" class="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-0.5 md:py-1 text-white text-xs focus:border-emerald-500 hide-arrows">
+                                <input type="number" inputmode="decimal" id="input-mixto-efectivo" placeholder="0.00" class="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-0.5 md:py-1 text-white text-xs focus:border-emerald-500 hide-arrows">
                             </div>
                             <div class="flex items-center justify-between gap-2">
                                 <span class="text-[9px] md:text-[10px] text-purple-400 font-bold w-10 md:w-12">Yape</span>
-                                <input type="number" id="input-mixto-yape" placeholder="0.00" class="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-0.5 md:py-1 text-white text-xs focus:border-purple-500 hide-arrows">
+                                <input type="number" inputmode="decimal" id="input-mixto-yape" placeholder="0.00" class="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-0.5 md:py-1 text-white text-xs focus:border-purple-500 hide-arrows">
                             </div>
                         </div>
 
@@ -273,7 +274,7 @@
             <!-- ==============================================
                  VISTA 2: INVENTARIO Y STOCK
                  ============================================== -->
-            <div id="view-inventario" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
+            <div id="view-inventario" class="view-section flex-1 flex flex-col min-h-0 hidden bg-slate-900 relative overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
                     <div>
                         <h1 class="text-xl md:text-2xl font-bold text-white">Catálogo / Inventario</h1>
@@ -323,7 +324,7 @@
             <!-- ==============================================
                  VISTA 3: PEDIDOS (COLA)
                  ============================================== -->
-            <div id="view-pedidos" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
+            <div id="view-pedidos" class="view-section flex-1 flex flex-col min-h-0 hidden bg-slate-900 relative overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
                     <div>
                         <h1 class="text-xl md:text-2xl font-bold text-white">Cola de Preparación</h1>
@@ -356,7 +357,7 @@
             <!-- ==============================================
                  VISTA 4: CAJA (ARQUEO Y GASTOS)
                  ============================================== -->
-            <div id="view-caja" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
+            <div id="view-caja" class="view-section flex-1 flex flex-col min-h-0 hidden bg-slate-900 relative overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
                     <div>
                         <h1 class="text-xl md:text-2xl font-bold text-white">Caja del Día</h1>
@@ -411,7 +412,7 @@
             <!-- ==============================================
                  VISTA 5: USUARIOS (ADMIN)
                  ============================================== -->
-            <div id="view-usuarios" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
+            <div id="view-usuarios" class="view-section flex-1 flex flex-col min-h-0 hidden bg-slate-900 relative overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
                     <div>
                         <h1 class="text-xl md:text-2xl font-bold text-white">Gestión de Personal</h1>
@@ -449,7 +450,7 @@
             <!-- ==============================================
                  VISTA 6: ANÁLISIS
                  ============================================== -->
-            <div id="view-analisis" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-y-auto md:overflow-hidden">
+            <div id="view-analisis" class="view-section flex-1 flex flex-col min-h-0 hidden bg-slate-900 relative overflow-y-auto md:overflow-hidden">
                 <div class="flex-1 flex flex-col gap-3 p-3 md:p-4 overflow-visible md:overflow-hidden">
                     <div class="w-full bg-slate-800 rounded-xl border border-slate-700 p-3 shadow-lg flex-shrink-0">
                         <div class="flex flex-wrap items-center justify-between gap-3">
@@ -502,7 +503,7 @@
             <!-- ==============================================
                  VISTA 7: RESPALDO (CENTRO DE CONTROL MASTER)
                  ============================================== -->
-            <div id="view-respaldo" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-y-auto md:overflow-hidden">
+            <div id="view-respaldo" class="view-section flex-1 flex flex-col min-h-0 hidden bg-slate-900 relative overflow-y-auto md:overflow-hidden">
                 <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex-shrink-0">
                     <h1 class="text-xl font-bold text-white">Centro de Control Supremo</h1>
                     <p class="text-xs text-slate-400">Administración global de la franquicia y seguridad.</p>
@@ -674,7 +675,7 @@
                     <input type="hidden" id="ajuste-tipo">
                     <div>
                         <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Monto (S/)</label>
-                        <input type="number" id="ajuste-monto" step="0.1" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-sky-500 outline-none" placeholder="0.00">
+                        <input type="number" inputmode="decimal" id="ajuste-monto" step="0.1" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-sky-500 outline-none" placeholder="0.00">
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Motivo / Descripción (Opcional)</label>
@@ -696,7 +697,7 @@
                 <form id="form-gasto" class="space-y-4">
                     <div>
                         <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Monto del gasto (S/)</label>
-                        <input type="number" id="gasto-monto" step="0.1" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-red-500 outline-none" placeholder="0.00">
+                        <input type="number" inputmode="decimal" id="gasto-monto" step="0.1" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white focus:border-red-500 outline-none" placeholder="0.00">
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Descripción / Motivo</label>
@@ -727,11 +728,11 @@
                     <div class="grid grid-cols-2 gap-4">
                         <div>
                             <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Cant. (Unidades)</label>
-                            <input type="number" id="ingreso-cantidad" min="1" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white outline-none focus:border-emerald-500 shadow-sm text-center font-bold" placeholder="Ej. 24">
+                            <input type="number" inputmode="numeric" id="ingreso-cantidad" min="1" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white outline-none focus:border-emerald-500 shadow-sm text-center font-bold" placeholder="Ej. 24">
                         </div>
                         <div>
                             <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Costo Total (S/)</label>
-                            <input type="number" id="ingreso-costo" step="0.1" min="0" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-red-400 outline-none focus:border-red-500 shadow-sm text-center font-bold" placeholder="0.00">
+                            <input type="number" inputmode="decimal" id="ingreso-costo" step="0.1" min="0" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-red-400 outline-none focus:border-red-500 shadow-sm text-center font-bold" placeholder="0.00">
                         </div>
                     </div>
                     <div>
@@ -792,18 +793,18 @@
                         <!-- Oculto para vasos, visible para extras/toppings/insumos de un solo precio -->
                         <div>
                             <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Costo Interno (S/) Opcional</label>
-                            <input type="number" id="prod-costo" step="0.1" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none">
+                            <input type="number" inputmode="decimal" id="prod-costo" step="0.1" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none">
                         </div>
                     </div>
                     
                     <div class="grid grid-cols-2 gap-3">
                         <div id="div-limite-sabores">
                             <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Max Sabores (Por defecto)</label>
-                            <input type="number" id="prod-limite" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none">
+                            <input type="number" inputmode="numeric" id="prod-limite" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none">
                         </div>
                         <div>
                             <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Stock Inicial</label>
-                            <input type="number" id="prod-stock" placeholder="Infinito" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none">
+                            <input type="number" inputmode="numeric" id="prod-stock" placeholder="Infinito" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none">
                         </div>
                     </div>
                     
@@ -924,23 +925,30 @@
     <script>
         // --- NUEVO: FUNCIÓN DE ACTUALIZACIÓN FORZADA MANUAL ---
         window.forzarActualizacionApp = () => {
-            if('serviceWorker' in navigator) {
-                navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                    for(let registration of registrations) {
-                        registration.unregister(); // Aniquila el SW viejo
-                    }
-                    // Limpia la caché dura
-                    caches.keys().then((keyList) => {
-                        return Promise.all(keyList.map((key) => {
-                            return caches.delete(key);
-                        }));
-                    }).then(() => {
-                        window.mostrarToast('Sincronizando', 'Recargando aplicación con la última versión...', 'emerald');
-                        setTimeout(() => window.location.reload(true), 800);
-                    });
-                });
-            } else {
-                window.location.reload(true);
+            const recargar = () => setTimeout(() => window.location.reload(), 800);
+            try {
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                        for(let registration of registrations) {
+                            registration.unregister(); // Aniquila el SW viejo
+                        }
+                        // Limpia la caché dura (si la API está disponible)
+                        const limpiarCaches = ('caches' in window)
+                            ? caches.keys().then((keyList) => Promise.all(keyList.map((key) => caches.delete(key))))
+                            : Promise.resolve();
+
+                        limpiarCaches.catch(() => {}).then(() => {
+                            if (typeof window.mostrarToast === 'function') {
+                                window.mostrarToast('Sincronizando', 'Recargando aplicación con la última versión...', 'emerald');
+                            }
+                            recargar();
+                        });
+                    }).catch(recargar);
+                } else {
+                    window.location.reload();
+                }
+            } catch (e) {
+                window.location.reload();
             }
         };
 
@@ -988,7 +996,7 @@
         window.mostrarToast = (titulo, mensaje, colorClass = 'sky') => {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
-            toast.className = `bg-slate-800 border-l-4 border-${colorClass}-500 p-4 rounded-lg shadow-2xl flex items-start gap-3 transform transition-all duration-300 translate-x-full opacity-0 pointer-events-auto`;
+            toast.className = `bg-slate-800 border-l-4 border-${colorClass}-500 p-4 rounded-lg shadow-2xl flex items-start gap-3 transform transition-all duration-300 translate-x-full opacity-0 pointer-events-auto w-max max-w-[calc(100vw-2rem)] sm:max-w-sm`;
             const iconMap = { 'emerald': 'check-circle', 'red': 'x-circle', 'amber': 'alert-triangle', 'sky': 'info' };
             toast.innerHTML = `
                 <i data-lucide="${iconMap[colorClass] || 'info'}" class="w-5 h-5 text-${colorClass}-400 shrink-0 mt-0.5"></i>
