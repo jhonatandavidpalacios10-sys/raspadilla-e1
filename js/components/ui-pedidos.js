@@ -1,6 +1,6 @@
 import { db, collection, query, where, onSnapshot, doc, updateDoc, writeBatch, increment } from '../core/firebase-setup.js';
 import { state } from '../core/store.js'; 
-import { getTodayDateStr } from '../utils/helpers.js';
+import { getTodayDateStr, obtenerNombreCliente, escaparHtml } from '../utils/helpers.js';
 
 let unsubscribePedidos = null;
 let pedidosInicializado = false;
@@ -164,11 +164,12 @@ function generarHTMLPedido(v, esListo = false) {
         ? `<div class="text-[9px] text-slate-400 mt-1 uppercase font-bold"><i data-lucide="store" class="w-3 h-3 inline"></i> ${v.localNombre}</div>` 
         : '';
 
-    // NUEVO: Destacar el nombre del cliente si existe
-    const clienteBadge = v.clienteNombre ? `
+    // Destacar el nombre del cliente si existe (incluye claves de versiones anteriores)
+    const clienteNombre = obtenerNombreCliente(v);
+    const clienteBadge = clienteNombre ? `
         <div class="mt-2 mb-2 bg-slate-900 border border-slate-700 p-2 rounded-lg flex items-center gap-2 shadow-inner">
             <i data-lucide="user" class="w-4 h-4 text-sky-400 shrink-0"></i>
-            <span class="text-xs font-bold text-sky-400 uppercase tracking-wider truncate">${v.clienteNombre}</span>
+            <span class="text-xs font-bold text-sky-400 uppercase tracking-wider truncate">${escaparHtml(clienteNombre)}</span>
         </div>` : '';
 
     let actionBtn = esListo ? '' : `
@@ -292,6 +293,9 @@ function editarPedido(idVenta) {
         // 2. Cargamos el ticket al carrito y cambiamos la pantalla inmediatamente
         state.carrito = vData.items; 
         window.ticketEditadoOriginal = true; 
+
+        const inputCliente = document.getElementById('input-cliente-nombre');
+        if (inputCliente) inputCliente.value = obtenerNombreCliente(vData);
         
         if (window.actualizarCarritoUI) window.actualizarCarritoUI(); 
         if (window.switchView) window.switchView('ventas');
