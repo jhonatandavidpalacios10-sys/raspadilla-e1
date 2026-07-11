@@ -1,5 +1,5 @@
 import { db, collection, query, where, onSnapshot } from '../core/firebase-setup.js';
-import { formatMoney, getTodayDateStr } from '../utils/helpers.js';
+import { formatMoney, getTodayDateStr, obtenerNombreCliente, escaparHtml } from '../utils/helpers.js';
 import { state } from '../core/store.js';
 
 let analysisData = []; 
@@ -327,6 +327,8 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
         const num = v.id.split('-')[1] || '--';
         const cantItems = v.items ? v.items.reduce((s,i) => s + i.cantidad, 0) : 0;
         const localInfo = v.localNombre ? ` • <span class="text-[9px] uppercase tracking-wider">${v.localNombre}</span>` : '';
+        const clienteNombre = obtenerNombreCliente(v);
+        const clienteInfo = clienteNombre ? `<p class="text-[10px] text-sky-500 font-bold mt-0.5 flex items-center gap-1"><i data-lucide="user" class="w-3 h-3 shrink-0"></i><span class="truncate">Cliente: ${escaparHtml(clienteNombre)}</span></p>` : '';
         const metodoPago = String(v.metodo_pago || v.metodoFinal || 'Efectivo').toUpperCase();
         
         let iHtml = `<div id="det-${v.id}" class="hidden mt-3 pt-3 border-t border-slate-200 dark:border-slate-700/50 space-y-1.5">`;
@@ -353,6 +355,7 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
                         <div>
                             <p class="text-xs font-bold text-slate-800 dark:text-white">Venta POS <span class="text-[9px] text-slate-400 font-normal ml-1">#${num}</span></p>
                             <p class="text-[10px] text-slate-500">${cantItems} item(s) ${localInfo}</p>
+                            ${clienteInfo}
                         </div>
                     </div>
                     <div class="text-right flex flex-col items-end">
