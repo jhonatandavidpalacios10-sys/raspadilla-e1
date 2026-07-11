@@ -9,6 +9,58 @@ import { initRespaldo } from './components/ui-respaldo.js';
 import { auth, onAuthStateChanged, db, doc, getDoc } from './core/firebase-setup.js';
 import { state } from './core/store.js';
 
+
+// ---- ALTURA REAL DEL VIEWPORT (iPhone / iPad / PWA) ----
+// 100vh puede conservar una altura obsoleta después de recargar la app en iOS.
+// Esta variable sigue el área realmente visible y evita que el panel de cobro
+// termine debajo de la barra del navegador o del menú inferior.
+let viewportFrameId = null;
+
+function actualizarAlturaViewportApp() {
+    const alturaVisible = window.visualViewport?.height || window.innerHeight;
+    if (!Number.isFinite(alturaVisible) || alturaVisible <= 0) return;
+
+    document.documentElement.style.setProperty(
+        '--app-viewport-height',
+        `${Math.round(alturaVisible)}px`
+    );
+}
+
+function programarAjusteViewport() {
+    if (viewportFrameId !== null) cancelAnimationFrame(viewportFrameId);
+    viewportFrameId = requestAnimationFrame(() => {
+        viewportFrameId = null;
+        actualizarAlturaViewportApp();
+    });
+}
+
+actualizarAlturaViewportApp();
+window.addEventListener('resize', programarAjusteViewport, { passive: true });
+window.addEventListener('pageshow', programarAjusteViewport, { passive: true });
+window.addEventListener('orientationchange', () => {
+    programarAjusteViewport();
+    setTimeout(programarAjusteViewport, 250);
+}, { passive: true });
+
+if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', programarAjusteViewport, { passive: true });
+    window.visualViewport.addEventListener('scroll', programarAjusteViewport, { passive: true });
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        programarAjusteViewport();
+        setTimeout(programarAjusteViewport, 100);
+    }
+});
+
+document.addEventListener('focusout', () => {
+    // iOS tarda unos milisegundos en devolver la altura tras cerrar el teclado.
+    setTimeout(programarAjusteViewport, 100);
+    setTimeout(programarAjusteViewport, 350);
+});
+// -----------------------------------------------------------------
+
 // ---- REGISTRO DEL SERVICE WORKER (Background Sync & Offline) ----
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
