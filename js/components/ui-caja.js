@@ -1,5 +1,5 @@
 import { db, collection, query, where, onSnapshot, addDoc, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, writeBatch, increment } from '../core/firebase-setup.js';
-import { getTodayDateStr, formatMoney } from '../utils/helpers.js'; 
+import { getTodayDateStr, formatMoney, obtenerNombreCliente, escaparHtml } from '../utils/helpers.js'; 
 import { state } from '../core/store.js';
 
 let unsubscribeVentasCaja = null;
@@ -133,6 +133,8 @@ function renderListaOperaciones(ventas, gastos) {
         const autorOriginal = op.cajeroEmail || op.creadoPor || 'Vendedor Anónimo';
         const autorEdicion = op.editadoPor ? `<span class="text-amber-500 ml-2 font-medium">(Editado por: ${op.editadoPor})</span>` : '';
         const tagAutor = `<div class="text-[10.5px] text-slate-500 flex items-center mt-1"><i data-lucide="user" class="w-3 h-3 mr-1"></i> Cajero: <b class="ml-1">${autorOriginal}</b> ${autorEdicion}</div>`;
+        const clienteNombre = isVenta ? obtenerNombreCliente(op) : '';
+        const tagCliente = clienteNombre ? `<div class="text-[10.5px] text-sky-500 flex items-center mt-1"><i data-lucide="user" class="w-3 h-3 mr-1"></i> Cliente: <b class="ml-1">${escaparHtml(clienteNombre)}</b></div>` : '';
 
         let badges = '';
         if (isVenta) {
@@ -154,6 +156,7 @@ function renderListaOperaciones(ventas, gastos) {
                         ${op.editadoPor ? '<i data-lucide="alert-circle" class="w-3 h-3 text-amber-500" title="Ticket Editado"></i>' : ''}
                     </p>
                     <div class="mt-1">${badges}</div>
+                    ${tagCliente}
                     ${tagAutor}
                 </div>
             </div>
