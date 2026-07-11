@@ -1,4 +1,4 @@
-const CACHE_NAME = 'raffaelito-v6'; // <-- VERSIÓN ACTUALIZADA (v6) para forzar la actualización
+const CACHE_NAME = 'raffaelito-v7'; // <-- VERSIÓN ACTUALIZADA (v7) para forzar la actualización
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',

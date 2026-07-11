@@ -200,7 +200,7 @@
                         </button>
                     </header>
 
-                    <div class="flex-1 overflow-y-auto no-scrollbar p-1.5 md:p-2 bg-slate-800/50 relative">
+                    <div id="carrito-scroll-area" class="flex-1 overflow-y-auto no-scrollbar p-1.5 md:p-2 bg-slate-800/50 relative">
                         <div id="carrito-vacio" class="absolute inset-0 flex flex-col items-center justify-center text-slate-500 space-y-2">
                             <i data-lucide="shopping-bag" class="w-8 h-8 md:w-10 md:h-10 opacity-50"></i>
                             <p class="text-xs md:text-sm">El ticket está vacío</p>
@@ -208,7 +208,8 @@
                         <div id="carrito-items" class="space-y-1.5 md:space-y-2 relative z-10 hidden"></div>
                     </div>
 
-                    <footer class="bg-slate-900 p-2 md:p-4 border-t border-slate-700 flex-shrink-0">
+                    <footer id="venta-cobro-panel" class="bg-slate-900 p-2 md:p-4 border-t border-slate-700 flex-shrink-0">
+                        <div id="venta-cobro-controles" class="no-scrollbar">
                         
                         <!-- NUEVO: CAMPO DE NOMBRE DEL CLIENTE -->
                         <div class="mb-3">
@@ -261,6 +262,7 @@
                                 <span class="text-[9px] md:text-[10px] text-purple-400 font-bold w-10 md:w-12">Yape</span>
                                 <input type="number" id="input-mixto-yape" placeholder="0.00" class="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-0.5 md:py-1 text-white text-xs focus:border-purple-500 hide-arrows">
                             </div>
+                        </div>
                         </div>
 
                         <button id="btn-procesar-cobro" class="w-full py-2.5 md:py-3 rounded-lg md:rounded-xl font-bold text-white text-sm md:text-base bg-emerald-600 hover:bg-emerald-500 opacity-50 cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-lg" disabled>
