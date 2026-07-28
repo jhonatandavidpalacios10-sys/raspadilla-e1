@@ -1,4 +1,5 @@
 import {
+    auth,
     db,
     doc,
     increment,
@@ -359,6 +360,27 @@ function getAccounting(sale = {}) {
     };
 }
 
+function getAppliedOperations(documentData = {}) {
+    const ledger = documentData?.appliedOperations;
+    if (!ledger || typeof ledger !== 'object' || Array.isArray(ledger)) return {};
+    return { ...ledger };
+}
+
+function wasOperationApplied(documentData, operationId) {
+    if (!operationId) return false;
+    return (
+        Boolean(getAppliedOperations(documentData)[operationId])
+        || documentData?.lastOperationId === operationId
+    );
+}
+
+function appendAppliedOperation(documentData, operationId, operationType) {
+    return {
+        ...getAppliedOperations(documentData),
+        [operationId]: String(operationType || 'operacion')
+    };
+}
+
 function getCashDocumentKey(sale = {}) {
     const date = String(sale.fechaStr || '').trim();
     const localId = String(sale.localId || 'general').trim() || 'general';
@@ -446,11 +468,7 @@ function resolveMovementStockFlags(movements, productReads) {
     });
 }
 
-function queueProductDeltas(
-    transaction,
-    productReads,
-    { requireAll = true, operationId = '' } = {}
-) {
+function queueProductDeltas(transaction, productReads, { requireAll = true } = {}) {
     const missingProducts = [];
 
     productReads.forEach(({ delta, ref, snapshot }) => {
@@ -466,8 +484,7 @@ function queueProductDeltas(
                 : Number(product.stock);
         const currentSales = toFiniteNumber(product.ventasTotales);
         const nextData = {
-            ventasTotales: Math.max(0, currentSales + delta.salesDelta),
-            ...(operationId ? { lastInventoryOperationId: operationId } : {})
+            ventasTotales: Math.max(0, currentSales + delta.salesDelta)
         };
 
         if (currentStock !== null) {
@@ -846,7 +863,7 @@ function reconcileSaleItemsWithCatalog({
     });
 }
 
-async function commitSaveSaleTransaction({
+async function commitSaleTransaction({
     saleId,
     operationId,
     sale,
@@ -880,7 +897,7 @@ async function commitSaveSaleTransaction({
             }
 
             previousSale = saleSnapshot.data();
-            if (previousSale.lastOperationId === operationId) {
+            if (wasOperationApplied(previousSale, operationId)) {
                 return { saleId, alreadyApplied: true, edited: true };
             }
 
@@ -894,20 +911,17 @@ async function commitSaveSaleTransaction({
 
             const currentState = String(previousSale.estado || 'pendiente').toLowerCase();
             if (editContext.localPendingEdit === true) {
-                const sourceOperationId = String(editContext.sourceOperationId || '');
+                const sourceSaleOperationId = String(
+                    editContext.sourceSaleOperationId || ''
+                );
                 if (
-                    !sourceOperationId
-                    || String(previousSale.lastOperationId || '') !== sourceOperationId
+                    !sourceSaleOperationId
+                    || String(previousSale.lastOperationId || '') !== sourceSaleOperationId
+                    || currentState !== 'pendiente'
                 ) {
                     throw new SalesIntegrityError(
                         'edit-conflict',
-                        'La venta local cambió antes de aplicar esta edición.'
-                    );
-                }
-                if (currentState !== 'pendiente') {
-                    throw new SalesIntegrityError(
-                        'invalid-sale-state',
-                        'El pedido ya cambió de estado y no admite esta edición local.'
+                        'La venta original cambió antes de aplicar la edición local.'
                     );
                 }
             } else {
@@ -955,7 +969,7 @@ async function commitSaveSaleTransaction({
             );
         } else if (saleSnapshot.exists()) {
             const existing = saleSnapshot.data();
-            if (existing.lastOperationId === operationId) {
+            if (wasOperationApplied(existing, operationId)) {
                 return { saleId, alreadyApplied: true, edited: false };
             }
             throw new SalesIntegrityError(
@@ -1058,10 +1072,7 @@ async function commitSaveSaleTransaction({
             const read = readsById.get(delta.productoId);
             return { delta, ref: read.ref, snapshot: read.snapshot };
         });
-        queueProductDeltas(transaction, productReads, {
-            requireAll: true,
-            operationId
-        });
+        queueProductDeltas(transaction, productReads, { requireAll: true });
 
         let finalSale = {
             ...saleForCommit,
@@ -1069,6 +1080,11 @@ async function commitSaveSaleTransaction({
             inventarioMovimientos: newMovements,
             lastOperationId: operationId,
             lastOperationType: isEdit ? 'editar_venta' : 'crear_venta',
+            appliedOperations: appendAppliedOperation(
+                previousSale || {},
+                operationId,
+                isEdit ? 'editar_venta' : 'crear_venta'
+            ),
             revision: isEdit ? Number(previousSale.revision || 1) + 1 : 1
         };
 
@@ -1266,7 +1282,7 @@ export async function releaseSaleEditLock({
     });
 }
 
-async function commitTransitionSaleTransaction({
+async function commitSaleStateTransition({
     saleId,
     operationId,
     nextState,
@@ -1296,7 +1312,7 @@ async function commitTransitionSaleTransaction({
         const sale = saleSnapshot.data();
         const currentState = String(sale.estado || 'pendiente').toLowerCase();
 
-        if (sale.lastOperationId === operationId || currentState === normalizedNextState) {
+        if (wasOperationApplied(sale, operationId) || currentState === normalizedNextState) {
             return { saleId, alreadyApplied: true, previousState: currentState };
         }
 
@@ -1358,7 +1374,7 @@ async function commitTransitionSaleTransaction({
             missingProducts = queueProductDeltas(
                 transaction,
                 productReads,
-                { requireAll: false, operationId }
+                { requireAll: false }
             );
             queueCashDelta(
                 transaction,
@@ -1378,6 +1394,11 @@ async function commitTransitionSaleTransaction({
             lastOperationId: operationId,
             lastOperationType:
                 normalizedNextState === 'rechazado' ? 'anular_venta' : 'cambiar_estado',
+            appliedOperations: appendAppliedOperation(
+                sale,
+                operationId,
+                normalizedNextState === 'rechazado' ? 'anular_venta' : 'cambiar_estado'
+            ),
             revision: Number(sale.revision || 1) + 1,
             ...(editLock.stale
                 ? {
@@ -1441,7 +1462,7 @@ function calculateEditedPayments(sale, newTotal) {
     return { method, cash, digital };
 }
 
-async function commitUpdateSaleAmountTransaction({
+async function commitSaleAmountUpdate({
     saleId,
     operationId,
     newTotal,
@@ -1463,7 +1484,7 @@ async function commitUpdateSaleAmountTransaction({
         }
 
         const sale = snapshot.data();
-        if (sale.lastOperationId === operationId) {
+        if (wasOperationApplied(sale, operationId)) {
             return { saleId, alreadyApplied: true };
         }
         if (String(sale.estado || '').toLowerCase() === 'rechazado') {
@@ -1509,6 +1530,11 @@ async function commitUpdateSaleAmountTransaction({
             fechaEdicion: serverTimestamp(),
             lastOperationId: operationId,
             lastOperationType: 'editar_monto',
+            appliedOperations: appendAppliedOperation(
+                sale,
+                operationId,
+                'editar_monto'
+            ),
             revision: Number(sale.revision || 1) + 1,
             ...(editLock.stale
                 ? {
@@ -1522,7 +1548,7 @@ async function commitUpdateSaleAmountTransaction({
     });
 }
 
-async function commitUpdateExpenseAmountTransaction({
+async function commitExpenseAmountUpdate({
     expenseId,
     operationId,
     newAmount,
@@ -1544,7 +1570,7 @@ async function commitUpdateExpenseAmountTransaction({
         }
 
         const expense = snapshot.data();
-        if (expense.lastOperationId === operationId) {
+        if (wasOperationApplied(expense, operationId)) {
             return { expenseId, alreadyApplied: true };
         }
 
@@ -1564,6 +1590,11 @@ async function commitUpdateExpenseAmountTransaction({
             fechaEdicion: serverTimestamp(),
             lastOperationId: operationId,
             lastOperationType: 'editar_gasto',
+            appliedOperations: appendAppliedOperation(
+                expense,
+                operationId,
+                'editar_gasto'
+            ),
             revision: Number(expense.revision || 1) + 1
         });
 
@@ -1571,7 +1602,7 @@ async function commitUpdateExpenseAmountTransaction({
     });
 }
 
-async function commitSaveExpenseTransaction({
+async function commitExpenseTransaction({
     expenseId,
     operationId,
     expense
@@ -1600,7 +1631,7 @@ async function commitSaveExpenseTransaction({
     return runTransaction(db, async transaction => {
         const snapshot = await transaction.get(expenseRef);
         if (snapshot.exists()) {
-            if (snapshot.data().lastOperationId === operationId) {
+            if (wasOperationApplied(snapshot.data(), operationId)) {
                 return { expenseId, alreadyApplied: true };
             }
             throw new SalesIntegrityError(
@@ -1618,7 +1649,8 @@ async function commitSaveExpenseTransaction({
             timestamp: serverTimestamp(),
             revision: 1,
             lastOperationId: operationId,
-            lastOperationType: 'crear_gasto'
+            lastOperationType: 'crear_gasto',
+            appliedOperations: appendAppliedOperation({}, operationId, 'crear_gasto')
         });
         transaction.set(cashRef, {
             localId,
@@ -1631,7 +1663,7 @@ async function commitSaveExpenseTransaction({
     });
 }
 
-async function commitDeleteExpenseTransaction({ expenseId, operationId }) {
+async function commitExpenseDeletion({ expenseId, operationId }) {
     const expenseRef = doc(db, 'gastos', expenseId);
     return runTransaction(db, async transaction => {
         const snapshot = await transaction.get(expenseRef);
@@ -1654,112 +1686,71 @@ async function commitDeleteExpenseTransaction({ expenseId, operationId }) {
     });
 }
 
-function resolveLocalMovementStockFlags(movements, catalog = []) {
-    const productsById = new Map(
-        (Array.isArray(catalog) ? catalog : [])
-            .filter(product => product?.id)
-            .map(product => [String(product.id), product])
-    );
-
-    return normalizeStoredMovements(movements, null).map(movement => {
-        if (typeof movement.stockAfectado === 'boolean') return movement;
-        const product = productsById.get(String(movement.productoId));
-        const stockAfectado = Boolean(
-            product
-            && product.stock !== null
-            && product.stock !== undefined
-            && product.stock !== ''
+function getQueueOwnerId() {
+    const ownerId = String(auth.currentUser?.uid || '');
+    if (!ownerId) {
+        throw new SalesIntegrityError(
+            'sync-auth-not-ready',
+            'La sesión todavía no está lista para guardar esta operación.'
         );
-        return { ...movement, stockAfectado };
-    });
+    }
+    return ownerId;
 }
 
-function assertLocalInventoryDeltas({
-    previousMovements = [],
+function assertOperationOwner(operation) {
+    const currentOwnerId = String(auth.currentUser?.uid || '');
+    if (!currentOwnerId || currentOwnerId !== operation.ownerId) {
+        throw new SalesIntegrityError(
+            'sync-auth-not-ready',
+            'La sincronización esperará a que vuelva la sesión que creó la operación.'
+        );
+    }
+}
+
+function buildOptimisticInventoryMutations(
     nextMovements = [],
-    catalog = []
-}) {
-    const productsById = new Map(
-        (Array.isArray(catalog) ? catalog : [])
-            .filter(product => product?.id)
-            .map(product => [String(product.id), product])
-    );
+    previousMovements = []
+) {
+    const deltas = new Map();
+    const addDelta = (movement, stockDelta, salesDelta) => {
+        const productId = String(movement?.productoId || movement?.id || '');
+        const quantity = Number(movement?.cantidad);
+        if (!productId || !Number.isInteger(quantity) || quantity <= 0) return;
+        const current = deltas.get(productId) || { stock: 0, ventasTotales: 0 };
+        current.stock += stockDelta * quantity;
+        current.ventasTotales += salesDelta * quantity;
+        deltas.set(productId, current);
+    };
 
-    buildProductDelta(previousMovements, nextMovements).forEach(delta => {
-        const product = productsById.get(String(delta.productoId));
-        if (!product) {
-            throw new SalesIntegrityError(
-                'missing-product',
-                'Uno o más productos ya no existen en el catálogo.',
-                { productIds: [delta.productoId] }
-            );
-        }
-        if (
-            product.stock === null
-            || product.stock === undefined
-            || product.stock === ''
-            || delta.stockDelta >= 0
-        ) return;
+    (Array.isArray(previousMovements) ? previousMovements : [])
+        .forEach(movement => addDelta(
+            movement,
+            movement?.stockAfectado === false ? 0 : 1,
+            -1
+        ));
+    (Array.isArray(nextMovements) ? nextMovements : [])
+        .forEach(movement => addDelta(
+            movement,
+            movement?.stockAfectado === false ? 0 : -1,
+            1
+        ));
 
-        const currentStock = Number(product.stock);
-        if (!Number.isFinite(currentStock)) {
-            throw new SalesIntegrityError(
-                'invalid-stock',
-                `El producto ${product.nombre || delta.productoId} tiene stock inválido.`
-            );
-        }
-        if (currentStock + delta.stockDelta < 0) {
-            throw new SalesIntegrityError(
-                'insufficient-stock',
-                `Stock insuficiente para ${product.nombre || 'un producto'}.`,
-                {
-                    productoId: delta.productoId,
-                    productoNombre: product.nombre || '',
-                    disponible: currentStock,
-                    solicitado: Math.abs(delta.stockDelta)
-                }
-            );
-        }
-    });
+    return [...deltas.entries()]
+        .filter(([, delta]) => delta.stock !== 0 || delta.ventasTotales !== 0)
+        .map(([documentId, data]) => ({
+            collection: 'productos',
+            documentId,
+            kind: 'increment',
+            data
+        }));
 }
 
-function getOptimisticDependencyOperationId(entity = null) {
-    const syncState = String(entity?._syncState || '').toLowerCase();
-    if (!['pending', 'error'].includes(syncState)) return '';
-    return String(
-        entity?._syncOperationId
-        || entity?.lastOperationId
-        || ''
-    ).trim();
-}
-
-function buildOptimisticInventoryChanges({
-    operationId,
-    previousMovements = [],
-    nextMovements = [],
-    catalog = []
-}) {
-    const previous = resolveLocalMovementStockFlags(previousMovements, catalog);
-    const next = resolveLocalMovementStockFlags(nextMovements, catalog);
-    return buildProductDelta(previous, next).map(delta => ({
-        collection: 'productos',
-        id: delta.productoId,
-        action: 'patch',
-        increments: {
-            stock: delta.stockDelta,
-            ventasTotales: delta.salesDelta
-        },
-        confirmField: 'lastInventoryOperationId'
-    }));
-}
-
-export async function saveSaleTransaction({
+export function saveSaleTransaction({
     saleId,
     operationId,
     sale,
     inventoryMovements,
-    editContext = null,
-    catalog = []
+    editContext = null
 }) {
     if (!saleId || !operationId) {
         throw new SalesIntegrityError(
@@ -1769,50 +1760,30 @@ export async function saveSaleTransaction({
     }
     assertSaleAmounts(sale);
 
-    const requestedMovements = resolveLocalMovementStockFlags(
-        inventoryMovements,
-        catalog
-    );
+    const ownerId = getQueueOwnerId();
     const isEdit = Boolean(editContext);
-    const previousMovements = isEdit
-        ? resolveLocalMovementStockFlags(
-            editContext.previousInventoryMovements
-            || editContext.legacyInventoryMovements
-            || [],
-            catalog
-        )
-        : [];
-    assertLocalInventoryDeltas({
-        previousMovements,
-        nextMovements: requestedMovements,
-        catalog
-    });
     const optimisticSale = {
         ...sale,
         id: saleId,
-        inventarioMovimientos: requestedMovements,
+        estado: 'pendiente',
+        editado: isEdit,
+        edicionActiva: false,
+        edicionToken: null,
+        inventarioMovimientos: Array.isArray(inventoryMovements)
+            ? inventoryMovements
+            : [],
         lastOperationId: operationId,
         lastOperationType: isEdit ? 'editar_venta' : 'crear_venta',
         revision: isEdit
             ? Number(editContext?.expectedRevision || 1) + 1
-            : 1,
-        estado: 'pendiente',
-        ...(isEdit
-            ? {
-                editado: true,
-                edicionActiva: false,
-                edicionToken: null,
-                fechaEdicion: getTrustedNowMs()
-            }
-            : {
-                editado: false,
-                edicionActiva: false
-            })
+            : 1
     };
 
-    await enqueueSyncOperation({
+    const queued = enqueueSyncOperation({
         id: operationId,
         type: 'sale.save',
+        ownerId,
+        localId: sale.localId || 'general',
         payload: {
             saleId,
             operationId,
@@ -1820,32 +1791,34 @@ export async function saveSaleTransaction({
             inventoryMovements,
             editContext
         },
-        optimisticChanges: [
+        optimisticMutations: [
             {
                 collection: 'ventas',
-                id: saleId,
-                action: isEdit ? 'patch' : 'upsert',
-                data: optimisticSale,
-                createIfMissing: !isEdit,
-                confirmField: 'lastOperationId'
+                documentId: saleId,
+                kind: 'merge',
+                data: optimisticSale
             },
-            ...buildOptimisticInventoryChanges({
-                operationId,
-                previousMovements,
-                nextMovements: requestedMovements,
-                catalog
-            })
+            ...buildOptimisticInventoryMutations(
+                inventoryMovements,
+                editContext?.originalInventoryMovements
+                    || editContext?.legacyInventoryMovements
+                    || []
+            )
         ],
-        metadata: { label: isEdit ? 'Editar venta' : 'Crear venta' },
         dependsOnOperationIds: editContext?.localPendingEdit
             ? [String(editContext.sourceOperationId || '')]
             : []
     });
 
-    return { saleId, alreadyApplied: false, edited: isEdit, queued: true };
+    return {
+        saleId,
+        edited: isEdit,
+        alreadyApplied: queued.alreadyQueued,
+        queued: true
+    };
 }
 
-export async function transitionSaleTransaction({
+export function transitionSaleTransaction({
     saleId,
     operationId,
     nextState,
@@ -1853,8 +1826,7 @@ export async function transitionSaleTransaction({
     actor,
     reason = '',
     legacyInventoryMovements = [],
-    currentSale = null,
-    catalog = []
+    currentSale = null
 }) {
     const normalizedNextState = String(nextState || '').toLowerCase();
     if (!saleId || !operationId || !normalizedNextState) {
@@ -1864,65 +1836,57 @@ export async function transitionSaleTransaction({
         );
     }
 
-    const shouldRestoreInventory = normalizedNextState === 'rechazado';
-    const storedMovements = currentSale?.inventarioMovimientos || [];
-    const restoreMovements = storedMovements.length > 0
-        ? storedMovements
-        : legacyInventoryMovements;
-    const optimisticChanges = [{
-        collection: 'ventas',
-        id: saleId,
-        action: 'patch',
-        data: {
-            estado: normalizedNextState,
-            modificadoPor: actor || 'Desconocido',
-            fechaModificacion: getTrustedNowMs(),
-            motivoCambio: reason || '',
-            inventarioRestaurado: shouldRestoreInventory,
-            lastOperationId: operationId,
-            lastOperationType:
-                normalizedNextState === 'rechazado' ? 'anular_venta' : 'cambiar_estado',
-            revision: Number(currentSale?.revision || 1) + 1
-        },
-        confirmField: 'lastOperationId'
-    }];
-
-    if (shouldRestoreInventory) {
-        optimisticChanges.push(...buildOptimisticInventoryChanges({
-            operationId,
-            previousMovements: restoreMovements,
-            nextMovements: [],
-            catalog
-        }));
-    }
-
-    await enqueueSyncOperation({
+    const ownerId = getQueueOwnerId();
+    const queued = enqueueSyncOperation({
         id: operationId,
         type: 'sale.transition',
+        ownerId,
         payload: {
             saleId,
             operationId,
-            nextState,
+            nextState: normalizedNextState,
             allowedStates,
             actor,
             reason,
             legacyInventoryMovements
         },
-        optimisticChanges,
-        metadata: { label: shouldRestoreInventory ? 'Anular venta' : 'Cambiar pedido' },
-        dependsOnOperationIds: [getOptimisticDependencyOperationId(currentSale)]
+        optimisticMutations: [
+            {
+                collection: 'ventas',
+                documentId: saleId,
+                kind: 'merge',
+                data: {
+                    estado: normalizedNextState,
+                    modificadoPor: actor || 'Desconocido',
+                    motivoCambio: reason || '',
+                    lastOperationId: operationId,
+                    lastOperationType:
+                        normalizedNextState === 'rechazado'
+                            ? 'anular_venta'
+                            : 'cambiar_estado'
+                }
+            },
+            ...(normalizedNextState === 'rechazado'
+                ? buildOptimisticInventoryMutations(
+                    [],
+                    legacyInventoryMovements
+                )
+                : [])
+        ],
+        dependsOnOperationIds: [String(
+            currentSale?.sincronizacionOperacionId || ''
+        )].filter(Boolean)
     });
 
     return {
         saleId,
-        alreadyApplied: false,
-        previousState: String(currentSale?.estado || ''),
-        missingProducts: [],
-        queued: true
+        alreadyApplied: queued.alreadyQueued,
+        queued: true,
+        missingProducts: []
     };
 }
 
-export async function updateSaleAmountTransaction({
+export function updateSaleAmountTransaction({
     saleId,
     operationId,
     newTotal,
@@ -1930,52 +1894,57 @@ export async function updateSaleAmountTransaction({
     currentSale = null
 }) {
     const normalizedTotal = roundMoney(newTotal);
-    if (normalizedTotal <= 0) {
+    if (!saleId || !operationId || normalizedTotal <= 0) {
         throw new SalesIntegrityError(
             'non-positive-total',
             'El total corregido debe ser mayor que cero.'
         );
     }
 
-    const payments = currentSale
+    const ownerId = getQueueOwnerId();
+    const optimisticPayments = currentSale
         ? calculateEditedPayments(currentSale, normalizedTotal)
         : null;
-    await enqueueSyncOperation({
+    const queued = enqueueSyncOperation({
         id: operationId,
         type: 'sale.update-amount',
+        ownerId,
         payload: { saleId, operationId, newTotal: normalizedTotal, actor },
-        optimisticChanges: [{
+        optimisticMutations: [{
             collection: 'ventas',
-            id: saleId,
-            action: 'patch',
+            documentId: saleId,
+            kind: 'merge',
             data: {
                 total: normalizedTotal,
-                ...(payments
+                ...(optimisticPayments
                     ? {
-                        pago_efectivo: payments.cash,
-                        pagoEfectivo: payments.cash,
-                        pago_yape: payments.digital,
-                        pagoYape: payments.digital,
-                        metodoFinal: payments.method,
-                        metodo_pago: payments.method
+                        pago_efectivo: optimisticPayments.cash,
+                        pagoEfectivo: optimisticPayments.cash,
+                        pago_yape: optimisticPayments.digital,
+                        pagoYape: optimisticPayments.digital,
+                        metodoFinal: optimisticPayments.method,
+                        metodo_pago: optimisticPayments.method
                     }
                     : {}),
                 editado: true,
                 editadoPor: actor || 'Desconocido',
-                fechaEdicion: getTrustedNowMs(),
                 lastOperationId: operationId,
-                lastOperationType: 'editar_monto',
-                revision: Number(currentSale?.revision || 1) + 1
-            },
-            confirmField: 'lastOperationId'
+                lastOperationType: 'editar_monto'
+            }
         }],
-        metadata: { label: 'Editar monto de venta' },
-        dependsOnOperationIds: [getOptimisticDependencyOperationId(currentSale)]
+        dependsOnOperationIds: [String(
+            currentSale?.sincronizacionOperacionId || ''
+        )].filter(Boolean)
     });
-    return { saleId, alreadyApplied: false, queued: true };
+
+    return {
+        saleId,
+        alreadyApplied: queued.alreadyQueued,
+        queued: true
+    };
 }
 
-export async function updateExpenseAmountTransaction({
+export function updateExpenseAmountTransaction({
     expenseId,
     operationId,
     newAmount,
@@ -1983,47 +1952,58 @@ export async function updateExpenseAmountTransaction({
     currentExpense = null
 }) {
     const normalizedAmount = roundMoney(newAmount);
-    if (normalizedAmount <= 0) {
+    if (!expenseId || !operationId || normalizedAmount <= 0) {
         throw new SalesIntegrityError(
             'non-positive-expense',
             'El gasto debe ser mayor que cero.'
         );
     }
 
-    await enqueueSyncOperation({
+    const ownerId = getQueueOwnerId();
+    const queued = enqueueSyncOperation({
         id: operationId,
         type: 'expense.update-amount',
+        ownerId,
         payload: { expenseId, operationId, newAmount: normalizedAmount, actor },
-        optimisticChanges: [{
+        optimisticMutations: [{
             collection: 'gastos',
-            id: expenseId,
-            action: 'patch',
+            documentId: expenseId,
+            kind: 'merge',
             data: {
                 monto: normalizedAmount,
                 editadoPor: actor || 'Desconocido',
-                fechaEdicion: getTrustedNowMs(),
                 lastOperationId: operationId,
-                lastOperationType: 'editar_gasto',
-                revision: Number(currentExpense?.revision || 1) + 1
-            },
-            confirmField: 'lastOperationId'
+                lastOperationType: 'editar_gasto'
+            }
         }],
-        metadata: { label: 'Editar gasto' },
-        dependsOnOperationIds: [getOptimisticDependencyOperationId(currentExpense)]
+        dependsOnOperationIds: [String(
+            currentExpense?.sincronizacionOperacionId || ''
+        )].filter(Boolean)
     });
-    return { expenseId, alreadyApplied: false, queued: true };
+
+    return {
+        expenseId,
+        alreadyApplied: queued.alreadyQueued,
+        queued: true
+    };
 }
 
-export async function saveExpenseTransaction({ expenseId, operationId, expense }) {
+export function saveExpenseTransaction({
+    expenseId,
+    operationId,
+    expense
+}) {
     if (!expenseId || !operationId) {
         throw new SalesIntegrityError(
             'missing-operation-id',
             'No se pudo generar un identificador seguro para el gasto.'
         );
     }
+
     const amount = roundMoney(expense?.monto);
     const description = String(expense?.descripcion || '').trim();
     const date = String(expense?.fechaStr || '').trim();
+    const localId = String(expense?.localId || 'general').trim() || 'general';
     if (!description || amount <= 0 || !date) {
         throw new SalesIntegrityError(
             'invalid-expense',
@@ -2031,66 +2011,133 @@ export async function saveExpenseTransaction({ expenseId, operationId, expense }
         );
     }
 
+    const ownerId = getQueueOwnerId();
     const optimisticExpense = {
         ...expense,
         id: expenseId,
         monto: amount,
+        fechaStr: date,
+        localId,
         fechaHora: Number(expense.fechaHora) || getTrustedNowMs(),
         revision: 1,
         lastOperationId: operationId,
         lastOperationType: 'crear_gasto'
     };
-    await enqueueSyncOperation({
+    const queued = enqueueSyncOperation({
         id: operationId,
         type: 'expense.save',
-        payload: { expenseId, operationId, expense },
-        optimisticChanges: [{
+        ownerId,
+        localId,
+        payload: {
+            expenseId,
+            operationId,
+            expense: optimisticExpense
+        },
+        optimisticMutations: [{
             collection: 'gastos',
-            id: expenseId,
-            action: 'upsert',
-            data: optimisticExpense,
-            createIfMissing: true,
-            confirmField: 'lastOperationId'
-        }],
-        metadata: { label: 'Registrar gasto' }
+            documentId: expenseId,
+            kind: 'merge',
+            data: optimisticExpense
+        }]
     });
-    return { expenseId, alreadyApplied: false, queued: true };
+
+    return {
+        expenseId,
+        alreadyApplied: queued.alreadyQueued,
+        queued: true
+    };
 }
 
-export async function deleteExpenseTransaction({
-    expenseId,
-    operationId,
-    currentExpense = null
-}) {
+export function deleteExpenseTransaction({ expenseId, operationId, currentExpense = null }) {
     if (!expenseId || !operationId) {
         throw new SalesIntegrityError(
             'missing-operation-id',
-            'No se pudo identificar el gasto que se anulará.'
+            'No se pudo identificar el gasto que deseas eliminar.'
         );
     }
-    await enqueueSyncOperation({
+
+    const ownerId = getQueueOwnerId();
+    const queued = enqueueSyncOperation({
         id: operationId,
         type: 'expense.delete',
+        ownerId,
         payload: { expenseId, operationId },
-        optimisticChanges: [{
+        optimisticMutations: [{
             collection: 'gastos',
-            id: expenseId,
-            action: 'delete',
-            confirmField: ''
+            documentId: expenseId,
+            kind: 'delete'
         }],
-        metadata: {
-            label: 'Eliminar gasto',
-            amount: Number(currentExpense?.monto || 0)
-        },
-        dependsOnOperationIds: [getOptimisticDependencyOperationId(currentExpense)]
+        dependsOnOperationIds: [String(
+            currentExpense?.sincronizacionOperacionId || ''
+        )].filter(Boolean)
     });
-    return { expenseId, operationId, alreadyApplied: false, queued: true };
+
+    return {
+        expenseId,
+        alreadyApplied: queued.alreadyQueued,
+        queued: true
+    };
 }
 
-registerSyncHandler('sale.save', commitSaveSaleTransaction);
-registerSyncHandler('sale.transition', commitTransitionSaleTransaction);
-registerSyncHandler('sale.update-amount', commitUpdateSaleAmountTransaction);
-registerSyncHandler('expense.update-amount', commitUpdateExpenseAmountTransaction);
-registerSyncHandler('expense.save', commitSaveExpenseTransaction);
-registerSyncHandler('expense.delete', commitDeleteExpenseTransaction);
+registerSyncHandler('sale.save', async (payload, operation) => {
+    assertOperationOwner(operation);
+    let queuedPayload = payload;
+    const editContext = payload?.editContext;
 
+    // Guardar una edición nunca bloquea la pantalla. Si el bloqueo remoto aún
+    // estaba en camino, se obtiene aquí, dentro del trabajador de sincronización.
+    if (editContext && editContext.localPendingEdit !== true && editContext.lockPending) {
+        const lockResult = await acquireSaleEditLock({
+            saleId: payload.saleId,
+            lockToken: editContext.lockToken,
+            ownerId: editContext.lockOwnerId,
+            ownerName: editContext.lockOwnerName
+        });
+        if (
+            Number(lockResult.expectedRevision || 1)
+            !== Number(editContext.expectedRevision || 1)
+        ) {
+            void releaseSaleEditLock({
+                saleId: payload.saleId,
+                lockToken: editContext.lockToken,
+                actor: editContext.lockOwnerName || 'Usuario',
+                reason: 'edicion_local_en_conflicto'
+            }).catch(() => {});
+            throw new SalesIntegrityError(
+                'edit-conflict',
+                'El pedido cambió antes de sincronizar la edición.'
+            );
+        }
+        queuedPayload = {
+            ...payload,
+            editContext: {
+                ...editContext,
+                expectedRevision: lockResult.expectedRevision,
+                lockExpiresAtMs: lockResult.expiresAtMs,
+                lockPending: false
+            }
+        };
+    }
+
+    return commitSaleTransaction(queuedPayload);
+});
+registerSyncHandler('sale.transition', async (payload, operation) => {
+    assertOperationOwner(operation);
+    return commitSaleStateTransition(payload);
+});
+registerSyncHandler('sale.update-amount', async (payload, operation) => {
+    assertOperationOwner(operation);
+    return commitSaleAmountUpdate(payload);
+});
+registerSyncHandler('expense.update-amount', async (payload, operation) => {
+    assertOperationOwner(operation);
+    return commitExpenseAmountUpdate(payload);
+});
+registerSyncHandler('expense.save', async (payload, operation) => {
+    assertOperationOwner(operation);
+    return commitExpenseTransaction(payload);
+});
+registerSyncHandler('expense.delete', async (payload, operation) => {
+    assertOperationOwner(operation);
+    return commitExpenseDeletion(payload);
+});

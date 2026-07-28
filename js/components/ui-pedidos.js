@@ -7,6 +7,7 @@ import {
 } from '../utils/helpers.js';
 import { subscribeDailySales } from '../core/data-service.js';
 import {
+    SALE_EDIT_LOCK_TTL_MS,
     acquireSaleEditLock,
     buildLegacyInventoryMovements,
     createUuid,
@@ -28,6 +29,23 @@ const operacionesPedidoEnCurso = new Set();
 let lockRefreshTimer = null;
 let editLockAcquisitionInProgress = false;
 let pedidosLifecycleGeneration = 0;
+const TEMPORARY_EDIT_LOCK_ERROR_CODES = new Set([
+    'aborted',
+    'cancelled',
+    'deadline-exceeded',
+    'failed-precondition',
+    'internal',
+    'network-request-failed',
+    'resource-exhausted',
+    'unauthenticated',
+    'unavailable'
+]);
+
+function isTemporaryEditLockError(error) {
+    return TEMPORARY_EDIT_LOCK_ERROR_CODES.has(
+        String(error?.code || '').replace(/^firestore\//, '')
+    );
+}
 
 function isAdminUser() {
     return ['admin', 'administrador', 'master'].includes(
@@ -200,8 +218,7 @@ function generarHTMLPedido(v, esListo = false) {
     const editLock = getSaleEditLockState(v);
     const isLocked = editLock.active;
     const isRecoverable = editLock.stale;
-    const isSyncPending = v._syncState === 'pending';
-    const hasSyncError = v._syncState === 'error';
+    const isSyncPending = v.sincronizacionPendiente === true;
     let iHtml = '';
     (Array.isArray(v.items) ? v.items : []).forEach(i => { 
         // 1. Mostrar Tamaño
@@ -250,12 +267,7 @@ function generarHTMLPedido(v, esListo = false) {
     });
     
     const num = String(v.id || '').replace(/^T-/, '').slice(0, 8).toUpperCase() || '---';
-    const editBdge = v.editado ? `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] px-1 rounded uppercase font-bold ml-2">Modificado</span>` : '';
-    const syncBadge = hasSyncError
-        ? '<span class="bg-red-500/20 text-red-400 border border-red-500/30 text-[9px] px-1 rounded uppercase font-bold">Error nube</span>'
-        : (isSyncPending
-            ? '<span class="bg-sky-500/20 text-sky-400 border border-sky-500/30 text-[9px] px-1 rounded uppercase font-bold">Sincronizando</span>'
-            : '');
+    const editBdge = v.editado ? `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] px-1 rounded uppercase font-bold ml-2 animate-pulse">Modificado</span>` : '';
     const lockBadge = (isLocked || isRecoverable) ? `
         <div class="mt-2 rounded-lg border border-orange-400/50 bg-orange-500/15 px-2.5 py-2 text-orange-300">
             <div class="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider">
@@ -266,6 +278,16 @@ function generarHTMLPedido(v, esListo = false) {
                 ${isLocked
                     ? `Bloqueado por ${escaparHtml(editLock.ownerName)}`
                     : 'Pulsa editar para recuperar el pedido'}
+            </p>
+        </div>` : '';
+    const syncBadge = isSyncPending ? `
+        <div class="mt-2 rounded-lg border border-sky-400/40 bg-sky-500/10 px-2.5 py-2 text-sky-300">
+            <div class="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider">
+                <i data-lucide="cloud-upload" class="w-3.5 h-3.5"></i>
+                Sincronizando
+            </div>
+            <p class="mt-0.5 text-[10px] text-sky-200/80">
+                Guardado en este dispositivo
             </p>
         </div>` : '';
     
@@ -299,7 +321,7 @@ function generarHTMLPedido(v, esListo = false) {
             <button data-action="rechazar-pedido" data-id="${v.id}" ${isLocked ? 'disabled aria-disabled="true"' : ''} class="min-h-11 min-w-11 flex items-center justify-center p-2 rounded-lg transition-colors border border-transparent ${isLocked ? 'text-orange-300/40 cursor-not-allowed' : 'text-slate-400 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/30'}" title="${isLocked ? 'Pedido reservado para edición' : 'Rechazar (Devuelve Stock)'}">
                 <i data-lucide="x" class="w-4 h-4"></i>
             </button>
-            <button data-action="editar-pedido" data-id="${v.id}" ${(isLocked || hasSyncError) ? 'disabled aria-disabled="true"' : ''} class="min-h-11 min-w-11 flex items-center justify-center p-2 rounded-lg transition-colors border border-transparent ${(isLocked || hasSyncError) ? 'text-orange-300/40 cursor-not-allowed' : (isSyncPending ? 'text-sky-300 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30' : 'text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/30')}" title="${hasSyncError ? 'Corrige la sincronización antes de editar' : (isLocked ? 'Pedido bloqueado por edición' : (isSyncPending ? 'Editar inmediatamente el ticket local' : (isRecoverable ? 'Recuperar edición expirada' : 'Devolver a Caja')))}">
+            <button data-action="editar-pedido" data-id="${v.id}" ${isLocked ? 'disabled aria-disabled="true"' : ''} class="min-h-11 min-w-11 flex items-center justify-center p-2 rounded-lg transition-colors border border-transparent ${isLocked ? 'text-orange-300/40 cursor-not-allowed' : (isSyncPending ? 'text-sky-300 hover:text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/30' : 'text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/30')}" title="${isLocked ? 'Pedido bloqueado por edición' : (isSyncPending ? 'Editar inmediatamente este ticket local' : (isRecoverable ? 'Recuperar edición expirada' : 'Devolver a Caja'))}">
                 <i data-lucide="edit" class="w-4 h-4"></i>
             </button>
             <button data-action="despachar-pedido" data-id="${v.id}" ${isLocked ? 'disabled aria-disabled="true"' : ''} class="min-h-11 flex-1 rounded-lg py-2 text-xs font-bold transition-all shadow-lg flex justify-center items-center gap-1 ${isLocked ? 'bg-orange-500/15 border border-orange-400/40 text-orange-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 border border-emerald-500 text-white'}">
@@ -314,13 +336,13 @@ function generarHTMLPedido(v, esListo = false) {
                     <div class="bg-slate-900 text-slate-300 font-mono text-[10px] px-1.5 py-0.5 rounded border border-slate-700">#${num}</div>
                     <span class="text-[10px] text-slate-500 font-bold">${time}</span>
                     ${editBdge}
-                    ${syncBadge}
                 </div>
                 ${badgePago}
             </div>
             ${badgeLocal}
             ${clienteBadge}
             ${lockBadge}
+            ${syncBadge}
             <div class="mb-1 mt-1 border-l-2 border-slate-700 pl-2">
                 ${iHtml}
             </div>
@@ -351,7 +373,7 @@ function actualizarEstadoPedido(idVenta, nuevoEstado) {
     }
 }
 
-async function ejecutarCambioEstado(idVenta, nuevoEstado) {
+function ejecutarCambioEstado(idVenta, nuevoEstado) {
     if (operacionesPedidoEnCurso.has(idVenta)) return;
 
     const venta = pedidosGlobales.find(item => item.id === idVenta);
@@ -366,7 +388,13 @@ async function ejecutarCambioEstado(idVenta, nuevoEstado) {
     let legacyInventoryMovements = [];
     if (nuevoEstado === 'rechazado') {
         try {
-            legacyInventoryMovements = buildLegacyInventoryMovements(venta.items);
+            legacyInventoryMovements = Array.isArray(venta.inventarioMovimientos)
+                && venta.inventarioMovimientos.length > 0
+                ? venta.inventarioMovimientos
+                : buildLegacyInventoryMovements(venta.items).map(movement => {
+                    const { stockAfectado, ...legacyMovement } = movement;
+                    return legacyMovement;
+                });
         } catch (error) {
             console.warn('No se pudo reconstruir todo el inventario legado:', error);
         }
@@ -374,7 +402,7 @@ async function ejecutarCambioEstado(idVenta, nuevoEstado) {
 
     operacionesPedidoEnCurso.add(idVenta);
     try {
-        const result = await transitionSaleTransaction({
+        const result = transitionSaleTransaction({
             saleId: idVenta,
             operationId: createUuid('OP-'),
             nextState: nuevoEstado,
@@ -382,15 +410,16 @@ async function ejecutarCambioEstado(idVenta, nuevoEstado) {
             actor: autorCambio,
             reason: nuevoEstado === 'rechazado' ? 'rechazado_en_preparacion' : 'despachado',
             legacyInventoryMovements,
-            currentSale: venta,
-            catalog: state.productos
+            currentSale: venta
         });
 
         if (nuevoEstado === 'listo') {
             if(window.mostrarToast) {
                 window.mostrarToast(
-                    'Actualizado',
-                    result.alreadyApplied ? 'El pedido ya estaba despachado.' : 'Pedido despachado y en sincronización.',
+                    'Cambio guardado',
+                    result.alreadyApplied
+                        ? 'El cambio ya estaba en la cola.'
+                        : 'Pedido marcado como despachado y sincronizándose.',
                     'emerald'
                 );
             }
@@ -399,8 +428,8 @@ async function ejecutarCambioEstado(idVenta, nuevoEstado) {
                 ? ` No se pudieron reponer ${result.missingProducts.length} productos eliminados.`
                 : '';
             window.mostrarToast(
-                'Rechazado',
-                `${result.alreadyApplied ? 'El pedido ya estaba anulado.' : 'Pedido anulado localmente y stock repuesto.'}${warning}`,
+                'Cambio guardado',
+                `${result.alreadyApplied ? 'El cambio ya estaba en la cola.' : 'Pedido anulado; el stock se repondrá al sincronizar.'}${warning}`,
                 'amber'
             );
         }
@@ -425,29 +454,26 @@ function editarPedido(idVenta) {
     });
 }
 
-function clonePedidoValue(value) {
-    if (typeof structuredClone === 'function') {
-        return structuredClone(value);
-    }
-    return JSON.parse(JSON.stringify(value));
-}
-
-function abrirPedidoEnEditor({
-    idVenta,
-    venta,
-    context,
-    toastTitle,
-    toastMessage,
-    toastColor = 'amber'
+function abrirPedidoLocalPendiente(idVenta, visibleSale, {
+    sourceOperationId,
+    sourceSaleOperationId,
+    ownerId,
+    ownerName
 }) {
     let legacyInventoryMovements = [];
     try {
-        legacyInventoryMovements = buildLegacyInventoryMovements(venta.items);
+        legacyInventoryMovements = buildLegacyInventoryMovements(visibleSale.items)
+            .map(movement => {
+                const { stockAfectado, ...legacyMovement } = movement;
+                return legacyMovement;
+            });
     } catch (error) {
-        console.warn('Inventario legado incompleto al editar:', error);
+        console.warn('Inventario legado incompleto al editar localmente:', error);
     }
 
-    const editItems = clonePedidoValue(venta.items || []);
+    const editItems = typeof structuredClone === 'function'
+        ? structuredClone(visibleSale.items || [])
+        : JSON.parse(JSON.stringify(visibleSale.items || []));
     state.carrito = editItems.map((item, index) => ({
         ...item,
         cartId: getSaleItemCartId(idVenta, item, index)
@@ -455,23 +481,30 @@ function abrirPedidoEnEditor({
     window.ticketEditadoOriginal = true;
     window.ticketEditadoContext = {
         saleId: idVenta,
-        expectedRevision: Number(context.expectedRevision || venta.revision || 1),
-        legacyInventoryMovements: clonePedidoValue(legacyInventoryMovements),
-        previousInventoryMovements: clonePedidoValue(
-            Array.isArray(venta.inventarioMovimientos)
-                ? venta.inventarioMovimientos
-                : legacyInventoryMovements
-        ),
-        localId: venta.localId || state.userLocalId || 'general',
-        localNombre: venta.localNombre || state.userLocal || 'Sin Local',
-        ...context
+        expectedRevision: Number(visibleSale.revision || 1),
+        legacyInventoryMovements,
+        originalInventoryMovements:
+            Array.isArray(visibleSale.inventarioMovimientos)
+            && visibleSale.inventarioMovimientos.length > 0
+                ? visibleSale.inventarioMovimientos
+                : legacyInventoryMovements,
+        localId: visibleSale.localId || state.userLocalId || 'general',
+        localNombre: visibleSale.localNombre || state.userLocal || 'Sin Local',
+        localPendingEdit: true,
+        sourceOperationId,
+        sourceSaleOperationId,
+        lockToken: '',
+        lockOwnerId: ownerId,
+        lockOwnerName: ownerName,
+        lockExpiresAtMs: 0,
+        lockPending: false
     };
 
     const inputCliente = document.getElementById('input-cliente-nombre');
-    if (inputCliente) inputCliente.value = obtenerNombreCliente(venta);
+    if (inputCliente) inputCliente.value = obtenerNombreCliente(visibleSale);
 
     const paymentMethod = String(
-        venta.metodoFinal || venta.metodo_pago || 'efectivo'
+        visibleSale.metodoFinal || visibleSale.metodo_pago || 'efectivo'
     ).toLowerCase();
     const paymentRadio = document.querySelector(
         `input[name="metodo_pago"][value="${paymentMethod}"]`
@@ -485,19 +518,23 @@ function abrirPedidoEnEditor({
         const digitalInput = document.getElementById('input-mixto-yape');
         if (cashInput) {
             cashInput.value = Number(
-                venta.pagoEfectivo ?? venta.pago_efectivo ?? 0
+                visibleSale.pagoEfectivo ?? visibleSale.pago_efectivo ?? 0
             ).toFixed(2);
         }
         if (digitalInput) {
             digitalInput.value = Number(
-                venta.pagoYape ?? venta.pago_yape ?? 0
+                visibleSale.pagoYape ?? visibleSale.pago_yape ?? 0
             ).toFixed(2);
         }
     }
 
     window.actualizarCarritoUI?.();
     window.switchView?.('ventas');
-    window.mostrarToast?.(toastTitle, toastMessage, toastColor);
+    window.mostrarToast?.(
+        'Edición inmediata',
+        'Puedes corregir este ticket sin esperar a Firebase.',
+        'sky'
+    );
 }
 
 async function iniciarEdicionPedido(idVenta) {
@@ -531,6 +568,15 @@ async function iniciarEdicionPedido(idVenta) {
         return;
     }
 
+    if (state.carrito.length > 0) {
+        window.mostrarAlerta?.(
+            'Carrito en uso',
+            'Procesa o vacía la venta actual antes de abrir un pedido para edición.',
+            'amber'
+        );
+        return;
+    }
+
     if (editLockAcquisitionInProgress) {
         window.mostrarToast?.(
             'Preparando edición',
@@ -543,21 +589,21 @@ async function iniciarEdicionPedido(idVenta) {
     const visibleSale = pedidosGlobales.find(v => v.id === idVenta);
     const visibleState = String(visibleSale?.estado || '').toLowerCase();
     if (!visibleSale || !['pendiente', 'editando'].includes(visibleState)) {
-        window.mostrarToast?.(
-            'Pedido no disponible',
-            'El pedido ya cambió de estado.',
-            'amber'
-        );
+        if(window.mostrarToast) {
+            window.mostrarToast('Pedido no disponible', 'El pedido ya cambió de estado.', 'amber');
+        }
         return;
     }
 
     const visibleLock = getSaleEditLockState(visibleSale);
     if (visibleLock.active) {
-        window.mostrarAlerta?.(
-            'Pedido en edición',
-            `${visibleLock.ownerName} ya está modificando este pedido.`,
-            'amber'
-        );
+        if (window.mostrarAlerta) {
+            window.mostrarAlerta(
+                'Pedido en edición',
+                `${visibleLock.ownerName} ya está modificando este pedido.`,
+                'amber'
+            );
+        }
         return;
     }
 
@@ -567,41 +613,23 @@ async function iniciarEdicionPedido(idVenta) {
     const ownerId = state.currentUser?.uid
         || state.currentUser?.email
         || ownerName;
-
-    if (visibleSale._syncState === 'error') {
-        window.mostrarAlerta?.(
-            'Sincronización pendiente de corregir',
-            'Reintenta primero la operación con error para mantener el orden del ticket.',
-            'amber'
-        );
-        return;
-    }
-
     const sourceOperationId = String(
-        visibleSale.lastOperationId
-        || visibleSale._syncOperationId
-        || ''
+        visibleSale.sincronizacionOperacionId || ''
     ).trim();
-    const canEditImmediately = visibleState === 'pendiente' && sourceOperationId;
-    if (canEditImmediately) {
-        const isStillLocal = visibleSale._syncState === 'pending';
-        abrirPedidoEnEditor({
-            idVenta,
-            venta: visibleSale,
-            context: {
-                expectedRevision: Number(visibleSale.revision || 1),
-                localPendingEdit: true,
-                sourceOperationId,
-                lockToken: '',
-                lockOwnerId: String(ownerId),
-                lockOwnerName: ownerName,
-                lockExpiresAtMs: 0
-            },
-            toastTitle: isStillLocal ? 'Edición local' : 'Edición inmediata',
-            toastMessage: isStillLocal
-                ? 'Puedes corregir el pedido sin esperar a Firebase.'
-                : 'El pedido se abrió al instante; los cambios se validarán al sincronizar.',
-            toastColor: 'sky'
+    const sourceSaleOperationId = String(
+        visibleSale.lastOperationId || ''
+    ).trim();
+    if (
+        visibleState === 'pendiente'
+        && visibleSale.sincronizacionPendiente
+        && sourceOperationId
+        && sourceSaleOperationId
+    ) {
+        abrirPedidoLocalPendiente(idVenta, visibleSale, {
+            sourceOperationId,
+            sourceSaleOperationId,
+            ownerId,
+            ownerName
         });
         return;
     }
@@ -613,14 +641,86 @@ async function iniciarEdicionPedido(idVenta) {
 
     editLockAcquisitionInProgress = true;
     operacionesPedidoEnCurso.add(idVenta);
+    let legacyInventoryMovements = [];
     try {
-        const lockResult = await acquireSaleEditLock({
-            saleId: idVenta,
-            lockToken,
-            ownerId,
-            ownerName
-        });
+        legacyInventoryMovements = buildLegacyInventoryMovements(visibleSale.items)
+            .map(movement => {
+                const { stockAfectado, ...legacyMovement } = movement;
+                return legacyMovement;
+            });
+    } catch (error) {
+        console.warn('Inventario legado incompleto al editar:', error);
+    }
 
+    const editItems = typeof structuredClone === 'function'
+        ? structuredClone(visibleSale.items || [])
+        : JSON.parse(JSON.stringify(visibleSale.items || []));
+    state.carrito = editItems.map((item, index) => ({
+        ...item,
+        cartId: getSaleItemCartId(idVenta, item, index)
+    }));
+    window.ticketEditadoOriginal = true;
+    window.ticketEditadoContext = {
+        saleId: idVenta,
+        expectedRevision: Number(visibleSale.revision || 1),
+        legacyInventoryMovements,
+        originalInventoryMovements:
+            Array.isArray(visibleSale.inventarioMovimientos)
+            && visibleSale.inventarioMovimientos.length > 0
+                ? visibleSale.inventarioMovimientos
+                : legacyInventoryMovements,
+        localId: visibleSale.localId || state.userLocalId || 'general',
+        localNombre: visibleSale.localNombre || state.userLocal || 'Sin Local',
+        lockToken,
+        lockOwnerId: ownerId,
+        lockOwnerName: ownerName,
+        lockExpiresAtMs: getTrustedNowMs() + SALE_EDIT_LOCK_TTL_MS,
+        lockPending: true
+    };
+
+    const inputCliente = document.getElementById('input-cliente-nombre');
+    if (inputCliente) inputCliente.value = obtenerNombreCliente(visibleSale);
+
+    const paymentMethod = String(
+        visibleSale.metodoFinal || visibleSale.metodo_pago || 'efectivo'
+    ).toLowerCase();
+    const paymentRadio = document.querySelector(
+        `input[name="metodo_pago"][value="${paymentMethod}"]`
+    );
+    if (paymentRadio) {
+        paymentRadio.checked = true;
+        window.toggleMetodoPago?.(paymentMethod);
+    }
+    if (paymentMethod === 'mixto') {
+        const cashInput = document.getElementById('input-mixto-efectivo');
+        const digitalInput = document.getElementById('input-mixto-yape');
+        if (cashInput) {
+            cashInput.value = Number(
+                visibleSale.pagoEfectivo ?? visibleSale.pago_efectivo ?? 0
+            ).toFixed(2);
+        }
+        if (digitalInput) {
+            digitalInput.value = Number(
+                visibleSale.pagoYape ?? visibleSale.pago_yape ?? 0
+            ).toFixed(2);
+        }
+    }
+
+    window.actualizarCarritoUI?.();
+    window.switchView?.('ventas');
+    window.mostrarToast?.(
+        'Edición abierta',
+        'Puedes editar de inmediato; la reserva se confirma en segundo plano.',
+        'amber'
+    );
+
+    const acquisition = acquireSaleEditLock({
+        saleId: idVenta,
+        lockToken,
+        ownerId,
+        ownerName
+    }).then(async lockResult => {
+        const currentContext = window.ticketEditadoContext;
         const requestBecameObsolete = (
             sessionGeneration !== getVentasSessionGeneration()
             || lifecycleGeneration !== pedidosLifecycleGeneration
@@ -629,49 +729,105 @@ async function iniciarEdicionPedido(idVenta) {
                 || state.currentUser?.email
                 || ''
             )
-            || Boolean(window.ticketEditadoContext?.saleId)
+            || currentContext?.saleId !== idVenta
+            || currentContext?.lockToken !== lockToken
         );
         if (requestBecameObsolete) {
-            try {
-                await releaseSaleEditLock({
-                    saleId: idVenta,
-                    lockToken,
-                    actor: ownerName,
-                    reason: 'solicitud_edicion_obsoleta'
-                });
-            } catch (releaseError) {
+            if (window.ticketEditSubmissionTokens instanceof Set
+                && window.ticketEditSubmissionTokens.has(lockToken)) {
+                return true;
+            }
+            void releaseSaleEditLock({
+                saleId: idVenta,
+                lockToken,
+                actor: ownerName,
+                reason: 'solicitud_edicion_obsoleta'
+            }).catch(releaseError => {
                 console.warn(
-                    'El bloqueo obsoleto se liberará por expiración si la sesión ya terminó:',
+                    'El bloqueo obsoleto se liberará por expiración:',
                     releaseError
                 );
-            }
-            return;
+            });
+            return false;
         }
 
-        abrirPedidoEnEditor({
-            idVenta,
-            venta: lockResult.sale,
-            context: {
-                expectedRevision: lockResult.expectedRevision,
-                localPendingEdit: false,
-                sourceOperationId: '',
+        const visibleRevision = Number(visibleSale.revision || 1);
+        if (Number(lockResult.expectedRevision || 1) !== visibleRevision) {
+            void releaseSaleEditLock({
+                saleId: idVenta,
                 lockToken,
-                lockOwnerId: String(ownerId),
-                lockOwnerName: ownerName,
-                lockExpiresAtMs: lockResult.expiresAtMs
-            },
-            toastTitle: 'Edición bloqueada',
-            toastMessage: 'Este pedido quedó reservado para este dispositivo.'
-        });
-    } catch (error) {
-        console.error('No se pudo bloquear el pedido para edición:', error);
-        window.mostrarAlerta?.(
-            'No se puede editar',
-            error?.message || 'Otro dispositivo tomó el pedido. Actualiza la vista.',
-            'amber'
-        );
-    } finally {
+                actor: ownerName,
+                reason: 'pedido_cambio_durante_reserva'
+            }).catch(() => {});
+            throw Object.assign(
+                new Error('El pedido cambió mientras se abría. Vuelve a intentarlo.'),
+                { code: 'edit-conflict' }
+            );
+        }
+
+        window.ticketEditadoContext = {
+            ...currentContext,
+            expectedRevision: lockResult.expectedRevision,
+            lockExpiresAtMs: lockResult.expiresAtMs,
+            lockPending: false
+        };
+        window.actualizarCarritoUI?.();
+        return true;
+    }).catch(error => {
+        console.error('No se pudo reservar el pedido para edición:', error);
+        const currentContext = window.ticketEditadoContext;
+        if (
+            currentContext?.saleId === idVenta
+            && currentContext?.lockToken === lockToken
+        ) {
+            if (isTemporaryEditLockError(error)) {
+                window.ticketEditadoContext = {
+                    ...currentContext,
+                    lockPending: true,
+                    lockExpiresAtMs: 0
+                };
+                window.actualizarCarritoUI?.();
+                window.mostrarToast?.(
+                    'Edición en modo local',
+                    'Puedes continuar. La reserva se validará al guardar.',
+                    'amber'
+                );
+                return false;
+            }
+            state.carrito = [];
+            window.ticketEditadoOriginal = false;
+            window.ticketEditadoContext = null;
+            [
+                'input-paga-con',
+                'input-mixto-efectivo',
+                'input-mixto-yape',
+                'input-cliente-nombre'
+            ].forEach(inputId => {
+                const input = document.getElementById(inputId);
+                if (input) input.value = '';
+            });
+            const cashRadio = document.querySelector(
+                'input[name="metodo_pago"][value="efectivo"]'
+            );
+            if (cashRadio) cashRadio.checked = true;
+            window.toggleMetodoPago?.('efectivo');
+            window.actualizarCarritoUI?.();
+            window.switchView?.('pedidos');
+            window.mostrarAlerta?.(
+                'No se puede editar',
+                error?.message || 'Otro dispositivo tomó el pedido.',
+                'amber'
+            );
+        }
+        return false;
+    }).finally(() => {
         editLockAcquisitionInProgress = false;
         operacionesPedidoEnCurso.delete(idVenta);
-    }
+        window.ticketEditSubmissionTokens?.delete?.(lockToken);
+        if (window.ticketEditLockPromise === acquisition) {
+            window.ticketEditLockPromise = null;
+        }
+    });
+
+    window.ticketEditLockPromise = acquisition;
 }

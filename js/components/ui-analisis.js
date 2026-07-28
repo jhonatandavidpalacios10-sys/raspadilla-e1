@@ -173,30 +173,18 @@ export function initAnalisis() {
     // Las acciones históricas reutilizan la lógica transaccional de Caja, pero
     // el módulo completo solo se descarga cuando el usuario pulsa uno de estos
     // botones.
-    window.editarOperacionCaja = (...args) => {
-        const [id, type] = args;
-        const currentData = type === 'venta'
-            ? analysisData.find(item => item.id === id)
-            : analysisGastos.find(item => item.id === id);
-        return import('./ui-caja.js')
-            .then(module => module.editarOperacionCaja(...args, currentData?.total ?? currentData?.monto, currentData || null))
-            .catch(error => {
-                console.error('No se pudo cargar la edición de Caja:', error);
-                window.mostrarToast?.('No se pudo cargar', 'Inténtalo nuevamente.', 'red');
-            });
-    };
-    window.eliminarOperacionCaja = (...args) => {
-        const [id, type] = args;
-        const currentData = type === 'venta'
-            ? analysisData.find(item => item.id === id)
-            : analysisGastos.find(item => item.id === id);
-        return import('./ui-caja.js')
-            .then(module => module.eliminarOperacionCaja(...args, currentData || null))
-            .catch(error => {
-                console.error('No se pudo cargar la anulación de Caja:', error);
-                window.mostrarToast?.('No se pudo cargar', 'Inténtalo nuevamente.', 'red');
-            });
-    };
+    window.editarOperacionCaja = (...args) => import('./ui-caja.js')
+        .then(module => module.editarOperacionCaja(...args))
+        .catch(error => {
+            console.error('No se pudo cargar la edición de Caja:', error);
+            window.mostrarToast?.('No se pudo cargar', 'Inténtalo nuevamente.', 'red');
+        });
+    window.eliminarOperacionCaja = (...args) => import('./ui-caja.js')
+        .then(module => module.eliminarOperacionCaja(...args))
+        .catch(error => {
+            console.error('No se pudo cargar la anulación de Caja:', error);
+            window.mostrarToast?.('No se pudo cargar', 'Inténtalo nuevamente.', 'red');
+        });
     
     // Configurar fechas por defecto (Mes actual en lugar de solo hoy para mejor vista de calendario)
     const d = getLimaCalendarDate();
@@ -564,7 +552,7 @@ function showDayDetails(daySummary) {
         if (isAdmin) {
             iHtml += `
             <div class="flex gap-1.5 mt-3 justify-end border-t border-slate-200 dark:border-slate-700/30 pt-2">
-                <button onclick="window.editarOperacionCaja('${v.id}', 'venta')" class="text-slate-500 hover:text-amber-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
+                <button onclick="window.editarOperacionCaja('${v.id}', 'venta', ${Number(v.total || 0)})" class="text-slate-500 hover:text-amber-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
                 <button onclick="window.eliminarOperacionCaja('${v.id}', 'venta')" class="text-slate-500 hover:text-red-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Anular</button>
             </div>
             `;
@@ -600,7 +588,7 @@ function showDayDetails(daySummary) {
         if (isAdmin) {
             gHtml += `
             <div class="flex gap-1.5 justify-end border-t border-red-200 dark:border-red-500/20 pt-2">
-                <button onclick="window.editarOperacionCaja('${g.id}', 'gasto')" class="text-slate-500 hover:text-amber-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
+                <button onclick="window.editarOperacionCaja('${g.id}', 'gasto', ${Number(g.monto || 0)})" class="text-slate-500 hover:text-amber-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
                 <button onclick="window.eliminarOperacionCaja('${g.id}', 'gasto')" class="text-slate-500 hover:text-red-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Borrar</button>
             </div>
             `;

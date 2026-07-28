@@ -196,11 +196,6 @@ function renderListaOperaciones(ventas, gastos) {
         const shortId = String(op.id || '').replace(/^T-/, '').slice(0, 8).toUpperCase();
         const titulo = isVenta ? `Venta #${shortId}` : `Gasto: ${op.descripcion}`;
         const monto = isVenta ? formatMoney(op.total) : formatMoney(op.monto);
-        const syncBadge = op._syncState === 'error'
-            ? '<span class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-bold text-red-700 dark:bg-red-500/20 dark:text-red-300">Error nube</span>'
-            : (op._syncState
-                ? '<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">Sincronizando</span>'
-                : '');
         
         // --- TRAZABILIDAD VISUAL (AUDITORÍA AÑADIDA) ---
         const autorOriginal = op.cajeroEmail || op.creadoPor || 'Vendedor Anónimo';
@@ -208,6 +203,9 @@ function renderListaOperaciones(ventas, gastos) {
         const tagAutor = `<div class="text-[10.5px] text-slate-500 flex items-center mt-1"><i data-lucide="user" class="w-3 h-3 mr-1"></i> Cajero: <b class="ml-1">${autorOriginal}</b> ${autorEdicion}</div>`;
         const clienteNombre = isVenta ? obtenerNombreCliente(op) : '';
         const tagCliente = clienteNombre ? `<div class="text-[10.5px] text-sky-500 flex items-center mt-1"><i data-lucide="user" class="w-3 h-3 mr-1"></i> Cliente: <b class="ml-1">${escaparHtml(clienteNombre)}</b></div>` : '';
+        const syncBadge = op.sincronizacionPendiente
+            ? '<span class="rounded border border-sky-400/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-500">Sincronizando</span>'
+            : '';
 
         let badges = '';
         if (isVenta) {
@@ -274,11 +272,7 @@ async function guardarGasto(e) {
 
     const submitButton = document.querySelector('#form-gasto button[type="submit"]');
     const originalButtonHtml = submitButton?.innerHTML || '';
-    if (submitButton) {
-        submitButton.disabled = true;
-        submitButton.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Confirmando...';
-        if (window.lucide) window.lucide.createIcons({ root: submitButton });
-    }
+    if (submitButton) submitButton.disabled = true;
 
     try {
         const fStr = getTodayDateStr();
@@ -291,7 +285,7 @@ async function guardarGasto(e) {
             };
         }
 
-        await saveExpenseTransaction({
+        saveExpenseTransaction({
             expenseId: gastoPendiente.expenseId,
             operationId: gastoPendiente.operationId,
             expense: {
@@ -310,9 +304,11 @@ async function guardarGasto(e) {
         cerrarModalGasto();
         const formGasto = document.getElementById('form-gasto');
         if(formGasto) formGasto.reset();
-        if(window.mostrarToast) {
-            window.mostrarToast('Gasto registrado', 'Guardado en el dispositivo; Firebase se sincroniza en segundo plano.', 'emerald');
-        }
+        window.mostrarToast?.(
+            'Gasto guardado',
+            'Registrado en este dispositivo y sincronizándose.',
+            'emerald'
+        );
     } catch (error) {
         console.error("Error al guardar gasto:", error);
         if(window.mostrarAlerta) {
@@ -349,7 +345,7 @@ function getActorName() {
     return state.currentUser?.username || state.currentUser?.email || 'Desconocido';
 }
 
-export async function editarOperacionCaja(first, second, fallbackAmount, providedData = null) {
+export async function editarOperacionCaja(first, second, fallbackAmount) {
     const { id, type, fallbackAmount: externalAmount } = normalizeOperationArguments(
         first,
         second,
@@ -360,13 +356,13 @@ export async function editarOperacionCaja(first, second, fallbackAmount, provide
     const operationKey = `edit:${type}:${id}`;
     if (operacionesCajaEnCurso.has(operationKey)) return;
 
-    let currentData = providedData || (type === 'venta'
+    let currentData = type === 'venta'
         ? ventasDelDia.find(item => item.id === id)
-        : gastosDelDia.find(item => item.id === id));
+        : gastosDelDia.find(item => item.id === id);
 
     // El módulo de análisis también reutiliza estas funciones para operaciones
     // históricas que no están incluidas en los listeners de "hoy".
-    if (!currentData) {
+    if (!currentData && !Number.isFinite(Number(externalAmount))) {
         try {
             const collectionName = type === 'venta' ? 'ventas' : 'gastos';
             const snapshot = await getDoc(doc(db, collectionName, id));
@@ -422,7 +418,7 @@ export async function editarOperacionCaja(first, second, fallbackAmount, provide
     operacionesCajaEnCurso.add(operationKey);
     try {
         if (type === 'venta') {
-            await updateSaleAmountTransaction({
+            updateSaleAmountTransaction({
                 saleId: id,
                 operationId: createUuid('OP-'),
                 newTotal: newAmount,
@@ -430,7 +426,7 @@ export async function editarOperacionCaja(first, second, fallbackAmount, provide
                 currentSale: currentData
             });
         } else {
-            await updateExpenseAmountTransaction({
+            updateExpenseAmountTransaction({
                 expenseId: id,
                 operationId: createUuid('OP-'),
                 newAmount,
@@ -441,8 +437,8 @@ export async function editarOperacionCaja(first, second, fallbackAmount, provide
 
         if (window.mostrarToast) {
             window.mostrarToast(
-                'Modificado',
-                'El cambio ya está aplicado; la nube se actualizará en segundo plano.',
+                'Cambio guardado',
+                'La operación se actualizó en este dispositivo y está sincronizándose.',
                 'sky'
             );
         }
@@ -460,7 +456,7 @@ export async function editarOperacionCaja(first, second, fallbackAmount, provide
     }
 }
 
-export async function eliminarOperacionCaja(first, second, providedData = null) {
+export async function eliminarOperacionCaja(first, second) {
     const { id, type } = normalizeOperationArguments(first, second);
     if (!id || !['venta', 'gasto'].includes(type)) return;
     const confirmed = await window.mostrarConfirmacionSistema?.({
@@ -480,24 +476,26 @@ export async function eliminarOperacionCaja(first, second, providedData = null) 
         let result;
 
         if (type === 'venta') {
-            let sale = providedData || ventasDelDia.find(item => item.id === id);
-            if (!sale) {
-                const snapshot = await getDoc(doc(db, 'ventas', id));
-                if (snapshot.exists()) {
-                    sale = { id: snapshot.id, ...snapshot.data() };
-                }
-            }
+            let sale = ventasDelDia.find(item => item.id === id);
 
             let legacyInventoryMovements = [];
             if (sale) {
                 try {
-                    legacyInventoryMovements = buildLegacyInventoryMovements(sale.items);
+                    legacyInventoryMovements =
+                        Array.isArray(sale.inventarioMovimientos)
+                        && sale.inventarioMovimientos.length > 0
+                            ? sale.inventarioMovimientos
+                            : buildLegacyInventoryMovements(sale.items)
+                                .map(movement => {
+                                    const { stockAfectado, ...legacyMovement } = movement;
+                                    return legacyMovement;
+                                });
                 } catch (error) {
                     console.warn('Inventario legado incompleto al anular:', error);
                 }
             }
 
-            result = await transitionSaleTransaction({
+            result = transitionSaleTransaction({
                 saleId: id,
                 operationId: createUuid('OP-'),
                 nextState: 'rechazado',
@@ -505,14 +503,14 @@ export async function eliminarOperacionCaja(first, second, providedData = null) 
                 actor: getActorName(),
                 reason: 'anulado_desde_caja',
                 legacyInventoryMovements,
-                currentSale: sale,
-                catalog: state.productos
+                currentSale: sale
             });
         } else {
-            result = await deleteExpenseTransaction({
+            const expense = gastosDelDia.find(item => item.id === id) || null;
+            result = deleteExpenseTransaction({
                 expenseId: id,
                 operationId: createUuid('OP-'),
-                currentExpense: providedData || gastosDelDia.find(item => item.id === id) || null
+                currentExpense: expense
             });
         }
 
@@ -521,8 +519,8 @@ export async function eliminarOperacionCaja(first, second, providedData = null) 
                 ? ` No se repusieron ${result.missingProducts.length} productos eliminados.`
                 : '';
             window.mostrarToast(
-                'Anulado',
-                `${result?.alreadyApplied ? 'La operación ya estaba anulada.' : 'Operación anulada localmente; Firebase se sincroniza en segundo plano.'}${warning}`,
+                'Cambio guardado',
+                `${result?.alreadyApplied ? 'La anulación ya estaba en la cola.' : 'Operación anulada localmente y sincronizándose.'}${warning}`,
                 'red'
             );
         }
