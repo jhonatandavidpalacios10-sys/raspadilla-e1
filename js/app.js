@@ -17,10 +17,107 @@ import {
 import { hydrateSessionCache } from './core/local-cache.js';
 import { syncTrustedClock } from './utils/helpers.js';
 import './core/dialogs.js';
+import {
+    clearSyncQueueContext,
+    getSyncQueueSummary,
+    processSyncQueue,
+    retryFailedSyncOperations,
+    setSyncQueueContext
+} from './core/sync-queue.js';
 
 // Se inicia en paralelo y no bloquea el arranque offline. En Vercel/Vite usa
 // la hora del mismo sitio para corregir dispositivos con el reloj desfasado.
 void syncTrustedClock();
+
+
+// ---- ESTADO DE SINCRONIZACIÓN LOCAL-FIRST ----
+let syncStatusButton = null;
+
+function ensureSyncStatusButton() {
+    if (syncStatusButton?.isConnected) return syncStatusButton;
+    syncStatusButton = document.createElement('button');
+    syncStatusButton.id = 'sync-status-button';
+    syncStatusButton.type = 'button';
+    syncStatusButton.className = 'hidden fixed right-3 bottom-20 md:bottom-4 z-[90] items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold shadow-lg backdrop-blur transition-all active:scale-95';
+    syncStatusButton.setAttribute('aria-live', 'polite');
+    syncStatusButton.addEventListener('click', async () => {
+        const summary = getSyncQueueSummary();
+        if (summary.failed > 0) {
+            const retried = await retryFailedSyncOperations();
+            window.mostrarToast?.(
+                'Reintentando sincronización',
+                `${retried} operación${retried === 1 ? '' : 'es'} volverán a enviarse.`,
+                'sky'
+            );
+            return;
+        }
+        await processSyncQueue();
+    });
+    document.body.appendChild(syncStatusButton);
+    return syncStatusButton;
+}
+
+function renderSyncQueueStatus(summary = getSyncQueueSummary()) {
+    const button = ensureSyncStatusButton();
+    if (!summary.ownerId || summary.total <= 0) {
+        button.classList.add('hidden');
+        button.classList.remove('flex');
+        return;
+    }
+
+    button.classList.remove(
+        'hidden',
+        'border-red-300', 'bg-red-50/95', 'text-red-700',
+        'dark:border-red-800', 'dark:bg-red-950/95', 'dark:text-red-200',
+        'border-amber-300', 'bg-amber-50/95', 'text-amber-700',
+        'dark:border-amber-800', 'dark:bg-amber-950/95', 'dark:text-amber-200',
+        'border-sky-300', 'bg-sky-50/95', 'text-sky-700',
+        'dark:border-sky-800', 'dark:bg-sky-950/95', 'dark:text-sky-200'
+    );
+    button.classList.add('flex');
+
+    if (summary.failed > 0) {
+        button.classList.add(
+            'border-red-300', 'bg-red-50/95', 'text-red-700',
+            'dark:border-red-800', 'dark:bg-red-950/95', 'dark:text-red-200'
+        );
+        button.innerHTML = `<i data-lucide="cloud-off" class="h-4 w-4"></i><span>${summary.failed} sin sincronizar · Reintentar</span>`;
+        button.title = 'Hay operaciones que requieren reintento.';
+    } else if (!summary.online) {
+        button.classList.add(
+            'border-amber-300', 'bg-amber-50/95', 'text-amber-700',
+            'dark:border-amber-800', 'dark:bg-amber-950/95', 'dark:text-amber-200'
+        );
+        button.innerHTML = `<i data-lucide="cloud-off" class="h-4 w-4"></i><span>${summary.pending} pendiente${summary.pending === 1 ? '' : 's'} sin conexión</span>`;
+        button.title = 'Los cambios están guardados en este dispositivo.';
+    } else {
+        button.classList.add(
+            'border-sky-300', 'bg-sky-50/95', 'text-sky-700',
+            'dark:border-sky-800', 'dark:bg-sky-950/95', 'dark:text-sky-200'
+        );
+        button.innerHTML = `<i data-lucide="cloud-upload" class="h-4 w-4"></i><span>Sincronizando ${summary.pending}</span>`;
+        button.title = 'Los cambios locales se están enviando a Firebase.';
+    }
+
+    window.lucide?.createIcons({ root: button });
+}
+
+function installSyncQueueUi() {
+    ensureSyncStatusButton();
+    renderSyncQueueStatus();
+    window.addEventListener('icepos:sync-queue-changed', event => {
+        renderSyncQueueStatus(event.detail);
+    });
+    window.addEventListener('icepos:sync-operation-failed', event => {
+        const message = event.detail?.message || 'Una operación no pudo llegar a Firebase.';
+        window.mostrarToast?.(
+            'Guardado local, falta sincronizar',
+            `${message} Pulsa el indicador rojo para reintentar.`,
+            'red'
+        );
+    });
+}
+// -------------------------------------------------
 
 // ---- ALTURA REAL DEL VIEWPORT (iPhone / iPad / PWA) ----
 // 100vh puede conservar una altura obsoleta después de recargar la app en iOS.
@@ -611,6 +708,8 @@ async function initializeUserSession(context) {
     resetDataSubscriptions();
     resetVentasSession();
     if (shouldClearMemoryCart) clearCart();
+    await setSyncQueueContext({ ownerId: context.uid });
+    if (token !== sessionToken) return;
     state.productos = [];
     state.locales = [];
     const cachedSession = hydrateSessionCache({
@@ -680,6 +779,7 @@ async function initializeUserSession(context) {
 function cleanupUserSession() {
     sessionToken++;
     activeSessionKey = '';
+    clearSyncQueueContext();
     cancelRoleViewPrefetch();
     if (locationsRetryTimer) {
         clearTimeout(locationsRetryTimer);
@@ -706,6 +806,7 @@ function cleanupUserSession() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+    installSyncQueueUi();
     installLazyNavigation();
     window.addEventListener('icepos:user-context-ready', event => {
         initializeUserSession(event.detail);

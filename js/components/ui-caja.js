@@ -196,6 +196,11 @@ function renderListaOperaciones(ventas, gastos) {
         const shortId = String(op.id || '').replace(/^T-/, '').slice(0, 8).toUpperCase();
         const titulo = isVenta ? `Venta #${shortId}` : `Gasto: ${op.descripcion}`;
         const monto = isVenta ? formatMoney(op.total) : formatMoney(op.monto);
+        const syncBadge = op._syncState === 'error'
+            ? '<span class="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-bold text-red-700 dark:bg-red-500/20 dark:text-red-300">Error nube</span>'
+            : (op._syncState
+                ? '<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">Sincronizando</span>'
+                : '');
         
         // --- TRAZABILIDAD VISUAL (AUDITORÍA AÑADIDA) ---
         const autorOriginal = op.cajeroEmail || op.creadoPor || 'Vendedor Anónimo';
@@ -222,6 +227,7 @@ function renderListaOperaciones(ventas, gastos) {
                     <p class="text-sm font-bold text-slate-800 dark:text-white capitalize flex items-center gap-2">
                         ${titulo}
                         ${op.editadoPor ? '<i data-lucide="alert-circle" class="w-3 h-3 text-amber-500" title="Ticket Editado"></i>' : ''}
+                        ${syncBadge}
                     </p>
                     <div class="mt-1">${badges}</div>
                     ${tagCliente}
@@ -305,7 +311,7 @@ async function guardarGasto(e) {
         const formGasto = document.getElementById('form-gasto');
         if(formGasto) formGasto.reset();
         if(window.mostrarToast) {
-            window.mostrarToast('Gasto confirmado', 'El gasto fue guardado en la nube.', 'emerald');
+            window.mostrarToast('Gasto registrado', 'Guardado en el dispositivo; Firebase se sincroniza en segundo plano.', 'emerald');
         }
     } catch (error) {
         console.error("Error al guardar gasto:", error);
@@ -343,7 +349,7 @@ function getActorName() {
     return state.currentUser?.username || state.currentUser?.email || 'Desconocido';
 }
 
-export async function editarOperacionCaja(first, second, fallbackAmount) {
+export async function editarOperacionCaja(first, second, fallbackAmount, providedData = null) {
     const { id, type, fallbackAmount: externalAmount } = normalizeOperationArguments(
         first,
         second,
@@ -354,9 +360,9 @@ export async function editarOperacionCaja(first, second, fallbackAmount) {
     const operationKey = `edit:${type}:${id}`;
     if (operacionesCajaEnCurso.has(operationKey)) return;
 
-    let currentData = type === 'venta'
+    let currentData = providedData || (type === 'venta'
         ? ventasDelDia.find(item => item.id === id)
-        : gastosDelDia.find(item => item.id === id);
+        : gastosDelDia.find(item => item.id === id));
 
     // El módulo de análisis también reutiliza estas funciones para operaciones
     // históricas que no están incluidas en los listeners de "hoy".
@@ -420,21 +426,23 @@ export async function editarOperacionCaja(first, second, fallbackAmount) {
                 saleId: id,
                 operationId: createUuid('OP-'),
                 newTotal: newAmount,
-                actor: getActorName()
+                actor: getActorName(),
+                currentSale: currentData
             });
         } else {
             await updateExpenseAmountTransaction({
                 expenseId: id,
                 operationId: createUuid('OP-'),
                 newAmount,
-                actor: getActorName()
+                actor: getActorName(),
+                currentExpense: currentData
             });
         }
 
         if (window.mostrarToast) {
             window.mostrarToast(
                 'Modificado',
-                'La operación y el arqueo quedaron confirmados.',
+                'El cambio ya está aplicado; la nube se actualizará en segundo plano.',
                 'sky'
             );
         }
@@ -452,7 +460,7 @@ export async function editarOperacionCaja(first, second, fallbackAmount) {
     }
 }
 
-export async function eliminarOperacionCaja(first, second) {
+export async function eliminarOperacionCaja(first, second, providedData = null) {
     const { id, type } = normalizeOperationArguments(first, second);
     if (!id || !['venta', 'gasto'].includes(type)) return;
     const confirmed = await window.mostrarConfirmacionSistema?.({
@@ -472,7 +480,7 @@ export async function eliminarOperacionCaja(first, second) {
         let result;
 
         if (type === 'venta') {
-            let sale = ventasDelDia.find(item => item.id === id);
+            let sale = providedData || ventasDelDia.find(item => item.id === id);
             if (!sale) {
                 const snapshot = await getDoc(doc(db, 'ventas', id));
                 if (snapshot.exists()) {
@@ -496,12 +504,15 @@ export async function eliminarOperacionCaja(first, second) {
                 allowedStates: ['pendiente', 'listo'],
                 actor: getActorName(),
                 reason: 'anulado_desde_caja',
-                legacyInventoryMovements
+                legacyInventoryMovements,
+                currentSale: sale,
+                catalog: state.productos
             });
         } else {
             result = await deleteExpenseTransaction({
                 expenseId: id,
-                operationId: createUuid('OP-')
+                operationId: createUuid('OP-'),
+                currentExpense: providedData || gastosDelDia.find(item => item.id === id) || null
             });
         }
 
@@ -511,7 +522,7 @@ export async function eliminarOperacionCaja(first, second) {
                 : '';
             window.mostrarToast(
                 'Anulado',
-                `${result?.alreadyApplied ? 'La operación ya estaba anulada.' : 'Operación anulada y arqueo confirmado.'}${warning}`,
+                `${result?.alreadyApplied ? 'La operación ya estaba anulada.' : 'Operación anulada localmente; Firebase se sincroniza en segundo plano.'}${warning}`,
                 'red'
             );
         }

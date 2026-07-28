@@ -117,15 +117,47 @@ function sanitizeRestoredAttempt(attempt) {
 function sanitizeRestoredEditContext(editContext, scope) {
     if (!editContext) return null;
 
-    const lockExpiresAtMs = Number(editContext.lockExpiresAtMs || 0);
     const expectedRevision = Number(editContext.expectedRevision || 0);
+    const localPendingEdit = editContext.localPendingEdit === true;
     if (
         !isSafeIdentifier(editContext.saleId)
-        || !isSafeIdentifier(editContext.lockToken)
-        || !isSafeIdentifier(editContext.lockOwnerId)
-        || String(editContext.lockOwnerId) !== scope.uid
         || !Number.isInteger(expectedRevision)
         || expectedRevision <= 0
+    ) {
+        return null;
+    }
+
+    const common = {
+        saleId: String(editContext.saleId),
+        expectedRevision,
+        legacyInventoryMovements: Array.isArray(editContext.legacyInventoryMovements)
+            ? clonePlainValue(editContext.legacyInventoryMovements)
+            : [],
+        previousInventoryMovements: Array.isArray(editContext.previousInventoryMovements)
+            ? clonePlainValue(editContext.previousInventoryMovements)
+            : [],
+        localId: String(editContext.localId || scope.localId || 'general'),
+        localNombre: String(editContext.localNombre || 'Sin Local')
+    };
+
+    if (localPendingEdit) {
+        if (!isSafeIdentifier(editContext.sourceOperationId)) return null;
+        return {
+            ...common,
+            localPendingEdit: true,
+            sourceOperationId: String(editContext.sourceOperationId),
+            lockToken: '',
+            lockOwnerId: scope.uid,
+            lockOwnerName: String(editContext.lockOwnerName || 'Usuario'),
+            lockExpiresAtMs: 0
+        };
+    }
+
+    const lockExpiresAtMs = Number(editContext.lockExpiresAtMs || 0);
+    if (
+        !isSafeIdentifier(editContext.lockToken)
+        || !isSafeIdentifier(editContext.lockOwnerId)
+        || String(editContext.lockOwnerId) !== scope.uid
         || !Number.isFinite(lockExpiresAtMs)
         || lockExpiresAtMs <= 0
     ) {
@@ -133,13 +165,9 @@ function sanitizeRestoredEditContext(editContext, scope) {
     }
 
     return {
-        saleId: String(editContext.saleId),
-        expectedRevision,
-        legacyInventoryMovements: Array.isArray(editContext.legacyInventoryMovements)
-            ? clonePlainValue(editContext.legacyInventoryMovements)
-            : [],
-        localId: String(editContext.localId || scope.localId || 'general'),
-        localNombre: String(editContext.localNombre || 'Sin Local'),
+        ...common,
+        localPendingEdit: false,
+        sourceOperationId: '',
         lockToken: String(editContext.lockToken),
         lockOwnerId: String(editContext.lockOwnerId),
         lockOwnerName: String(editContext.lockOwnerName || 'Usuario'),
@@ -306,7 +334,7 @@ export async function restoreVentasDraft(context) {
             return false;
         }
 
-        if (editContext) {
+        if (editContext && !editContext.localPendingEdit) {
             try {
                 const lockResult = await acquireSaleEditLock({
                     saleId: editContext.saleId,
@@ -341,7 +369,7 @@ export async function restoreVentasDraft(context) {
             || state.currentUser?.uid !== scope.uid
             || String(state.userLocalId || 'general') !== scope.localId
         ) {
-            if (editContext) {
+            if (editContext && !editContext.localPendingEdit) {
                 void releaseSaleEditLock({
                     saleId: editContext.saleId,
                     lockToken: editContext.lockToken,
@@ -576,8 +604,8 @@ async function refreshEditLockHeartbeat() {
 function limpiarCarritoYEdicion(force = false) {
     if (ventaEnProceso && !force) {
         window.mostrarToast?.(
-            'Venta en confirmación',
-            'Espera la respuesta de la nube antes de vaciar el carrito.',
+            'Venta en proceso',
+            'Espera un instante mientras se guarda en este dispositivo.',
             'amber'
         );
         return false;
@@ -861,7 +889,11 @@ function renderEditBanner() {
     const editContext = window.ticketEditadoContext;
     const detail = document.getElementById('venta-editando-detalle');
     const cancelButton = document.getElementById('btn-cancelar-edicion-pedido');
-    const hasEdit = Boolean(editContext?.saleId && editContext?.lockToken);
+    const isLocalPendingEdit = editContext?.localPendingEdit === true;
+    const hasEdit = Boolean(
+        editContext?.saleId
+        && (editContext?.lockToken || isLocalPendingEdit)
+    );
 
     banner.classList.toggle('hidden', !hasEdit);
     if (!hasEdit) {
@@ -876,13 +908,15 @@ function renderEditBanner() {
     const expiresAtMs = Number(editContext.lockExpiresAtMs || 0);
     const expired = expiresAtMs > 0 && expiresAtMs <= getTrustedNowMs();
     if (detail) {
-        detail.textContent = editLockHeartbeatPromise
-            ? `#${shortId} · renovando reserva…`
-            : (
-                expired
-                    ? `#${shortId} · revalidando reserva…`
-                    : `#${shortId} · reservado para este dispositivo`
-            );
+        detail.textContent = isLocalPendingEdit
+            ? `#${shortId} · edición inmediata, sincronización en segundo plano`
+            : (editLockHeartbeatPromise
+                ? `#${shortId} · renovando reserva…`
+                : (
+                    expired
+                        ? `#${shortId} · revalidando reserva…`
+                        : `#${shortId} · reservado para este dispositivo`
+                ));
     }
     if (cancelButton) {
         cancelButton.disabled = (
@@ -895,7 +929,7 @@ function renderEditBanner() {
             : 'Cancelar';
     }
 
-    if (!expired && expiresAtMs > getTrustedNowMs()) {
+    if (!isLocalPendingEdit && !expired && expiresAtMs > getTrustedNowMs()) {
         editBannerExpiryTimer = setTimeout(() => {
             editBannerExpiryTimer = null;
             renderEditBanner();
@@ -905,7 +939,7 @@ function renderEditBanner() {
 }
 
 function solicitarVaciarCarrito() {
-    if (window.ticketEditadoContext?.lockToken) {
+    if (window.ticketEditadoContext?.saleId) {
         solicitarCancelarEdicion();
         return false;
     }
@@ -926,6 +960,22 @@ function solicitarCancelarEdicion() {
         return;
     }
     const editContext = window.ticketEditadoContext;
+    if (editContext?.localPendingEdit) {
+        const clearLocalEdit = () => {
+            limpiarCarritoYEdicion(true);
+            resetPaymentInputs();
+            actualizarCarritoUI();
+        };
+        if (window.mostrarConfirmacion) {
+            window.mostrarConfirmacion(
+                '¿Cancelar la edición? El ticket conservará su versión anterior.',
+                clearLocalEdit
+            );
+        } else {
+            clearLocalEdit();
+        }
+        return;
+    }
     if (!editContext?.lockToken) {
         limpiarCarritoYEdicion();
         actualizarCarritoUI();
@@ -1620,13 +1670,13 @@ export function actualizarCarritoUI() {
         list.classList.remove('hidden'); 
         list.innerHTML = html; 
         if(btn) {
-            const catalogPending = !state.inventoryFresh;
-            const isBlocked = isSaleInteractionLocked() || catalogPending;
+            const catalogUnavailable = state.productos.length === 0;
+            const isBlocked = isSaleInteractionLocked() || catalogUnavailable;
             btn.classList.toggle('opacity-50', isBlocked);
             btn.classList.toggle('cursor-not-allowed', isBlocked);
             btn.disabled = isBlocked;
-            if (!ventaEnProceso && catalogPending) {
-                btn.innerHTML = '<i data-lucide="refresh-cw" class="w-5 h-5 animate-spin"></i> Actualizando catálogo...';
+            if (!ventaEnProceso && catalogUnavailable) {
+                btn.innerHTML = '<i data-lucide="refresh-cw" class="w-5 h-5 animate-spin"></i> Cargando catálogo...';
             } else if (!ventaEnProceso && cobroButtonDefaultHtml) {
                 btn.innerHTML = cobroButtonDefaultHtml;
             }
@@ -1789,10 +1839,10 @@ function getCurrentCatalogUnitPrice(item, localId) {
 }
 
 function validateFreshCatalogPricing(items, localId) {
-    if (!state.inventoryFresh) {
+    if (!Array.isArray(state.productos) || state.productos.length === 0) {
         throw new SalesIntegrityError(
-            'catalog-not-synced',
-            'Espera unos segundos mientras se actualizan precios y stock.'
+            'catalog-not-available',
+            'El catálogo local todavía no está disponible.'
         );
     }
 
@@ -1821,6 +1871,8 @@ function resolveSaleAttempt({ editContext, cart, totals, payment, localId, clien
     const fingerprint = JSON.stringify({
         saleId: editContext?.saleId || '',
         lockToken: editContext?.lockToken || '',
+        localPendingEdit: editContext?.localPendingEdit === true,
+        sourceOperationId: editContext?.sourceOperationId || '',
         expectedRevision: Number(editContext?.expectedRevision || 0),
         cart,
         totals,
@@ -2021,7 +2073,7 @@ function showSaleError(error) {
     let message = error?.message || 'No se pudo confirmar la venta.';
 
     if (error?.code === 'unavailable' || error?.code === 'failed-precondition') {
-        message = 'Necesitas conexión estable para confirmar la venta. El carrito se conservó.';
+        message = 'No se pudo guardar la venta en este dispositivo. El carrito se conservó.';
     } else if (error?.code === 'insufficient-stock') {
         const available = error.details?.disponible;
         message = `${error.message}${Number.isFinite(available) ? ` Disponible: ${available}.` : ''}`;
@@ -2050,23 +2102,16 @@ async function procesarCobroFinal() {
 
     try {
         const cart = cloneCart(state.carrito);
-        let editContext = window.ticketEditadoContext || null;
-        if (
-            editContext
-            && Number(editContext.lockExpiresAtMs || 0)
-                <= getTrustedNowMs() + EDIT_LOCK_RENEWAL_MARGIN_MS
-        ) {
-            const lockRenewed = await refreshEditLockHeartbeat();
-            if (!lockRenewed) return;
-            editContext = window.ticketEditadoContext || null;
-            if (!editContext) return;
-        }
+        const editContext = window.ticketEditadoContext || null;
+        // El guardado local no espera una renovación remota del bloqueo. La
+        // transacción en segundo plano valida el token y la revisión antes de
+        // aplicar la edición, evitando congelar Caja cuando Firebase está lento.
         const localId = editContext?.localId || state.userLocalId || 'general';
         if (!editContext) validateFreshCatalogPricing(cart, localId);
-        else if (!state.inventoryFresh) {
+        else if (!Array.isArray(state.productos) || state.productos.length === 0) {
             throw new SalesIntegrityError(
-                'catalog-not-synced',
-                'Espera unos segundos mientras se actualizan precios y stock.'
+                'catalog-not-available',
+                'El catálogo local todavía no está disponible.'
             );
         }
         const totals = validateCartAndTotals(cart);
@@ -2124,7 +2169,8 @@ async function procesarCobroFinal() {
             operationId,
             sale,
             inventoryMovements,
-            editContext
+            editContext,
+            catalog: state.productos
         });
 
         if (sessionGeneration !== ventasSessionGeneration) {
@@ -2146,8 +2192,8 @@ async function procesarCobroFinal() {
         if(window.mostrarToast) {
             const shortId = saleId.replace(/^T-/, '').slice(0, 8).toUpperCase();
             window.mostrarToast(
-                editContext ? 'Venta Actualizada' : 'Venta Exitosa',
-                `Ticket #${shortId} confirmado en la nube.`,
+                editContext ? 'Venta actualizada' : 'Venta registrada',
+                `Ticket #${shortId} guardado. La nube se sincroniza en segundo plano.`,
                 'emerald'
             );
         }

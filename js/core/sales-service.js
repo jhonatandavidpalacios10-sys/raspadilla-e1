@@ -6,6 +6,10 @@ import {
     serverTimestamp
 } from './firebase-setup.js';
 import { getTrustedNowMs } from '../utils/helpers.js';
+import {
+    enqueueSyncOperation,
+    registerSyncHandler
+} from './sync-queue.js';
 
 const MAX_DISTINCT_PRODUCTS_PER_OPERATION = 450;
 const MONEY_EPSILON = 0.009;
@@ -442,7 +446,11 @@ function resolveMovementStockFlags(movements, productReads) {
     });
 }
 
-function queueProductDeltas(transaction, productReads, { requireAll = true } = {}) {
+function queueProductDeltas(
+    transaction,
+    productReads,
+    { requireAll = true, operationId = '' } = {}
+) {
     const missingProducts = [];
 
     productReads.forEach(({ delta, ref, snapshot }) => {
@@ -458,7 +466,8 @@ function queueProductDeltas(transaction, productReads, { requireAll = true } = {
                 : Number(product.stock);
         const currentSales = toFiniteNumber(product.ventasTotales);
         const nextData = {
-            ventasTotales: Math.max(0, currentSales + delta.salesDelta)
+            ventasTotales: Math.max(0, currentSales + delta.salesDelta),
+            ...(operationId ? { lastInventoryOperationId: operationId } : {})
         };
 
         if (currentStock !== null) {
@@ -837,7 +846,7 @@ function reconcileSaleItemsWithCatalog({
     });
 }
 
-export async function saveSaleTransaction({
+async function commitSaveSaleTransaction({
     saleId,
     operationId,
     sale,
@@ -875,27 +884,6 @@ export async function saveSaleTransaction({
                 return { saleId, alreadyApplied: true, edited: true };
             }
 
-            const editLock = getSaleEditLockState(previousSale);
-            if (!editContext.lockToken) {
-                throw new SalesIntegrityError(
-                    'missing-sale-edit-lock',
-                    'Vuelve a abrir el pedido antes de guardar los cambios.'
-                );
-            }
-            if (editLock.token !== editContext.lockToken) {
-                throw new SalesIntegrityError(
-                    'sale-edit-lock-lost',
-                    editLock.active
-                        ? `El bloqueo pasó a ${editLock.ownerName}.`
-                        : 'El bloqueo de edición ya no te pertenece.',
-                    {
-                        ownerId: editLock.ownerId,
-                        ownerName: editLock.ownerName,
-                        expiresAtMs: editLock.expiresAtMs
-                    }
-                );
-            }
-
             const currentRevision = Number(previousSale.revision || 1);
             if (currentRevision !== Number(editContext.expectedRevision || 1)) {
                 throw new SalesIntegrityError(
@@ -905,11 +893,50 @@ export async function saveSaleTransaction({
             }
 
             const currentState = String(previousSale.estado || 'pendiente').toLowerCase();
-            if (currentState !== 'editando') {
-                throw new SalesIntegrityError(
-                    'invalid-sale-state',
-                    'El pedido ya no se encuentra en modo edición.'
-                );
+            if (editContext.localPendingEdit === true) {
+                const sourceOperationId = String(editContext.sourceOperationId || '');
+                if (
+                    !sourceOperationId
+                    || String(previousSale.lastOperationId || '') !== sourceOperationId
+                ) {
+                    throw new SalesIntegrityError(
+                        'edit-conflict',
+                        'La venta local cambió antes de aplicar esta edición.'
+                    );
+                }
+                if (currentState !== 'pendiente') {
+                    throw new SalesIntegrityError(
+                        'invalid-sale-state',
+                        'El pedido ya cambió de estado y no admite esta edición local.'
+                    );
+                }
+            } else {
+                const editLock = getSaleEditLockState(previousSale);
+                if (!editContext.lockToken) {
+                    throw new SalesIntegrityError(
+                        'missing-sale-edit-lock',
+                        'Vuelve a abrir el pedido antes de guardar los cambios.'
+                    );
+                }
+                if (editLock.token !== editContext.lockToken) {
+                    throw new SalesIntegrityError(
+                        'sale-edit-lock-lost',
+                        editLock.active
+                            ? `El bloqueo pasó a ${editLock.ownerName}.`
+                            : 'El bloqueo de edición ya no te pertenece.',
+                        {
+                            ownerId: editLock.ownerId,
+                            ownerName: editLock.ownerName,
+                            expiresAtMs: editLock.expiresAtMs
+                        }
+                    );
+                }
+                if (currentState !== 'editando') {
+                    throw new SalesIntegrityError(
+                        'invalid-sale-state',
+                        'El pedido ya no se encuentra en modo edición.'
+                    );
+                }
             }
 
             const storedPreviousMovements = normalizeStoredMovements(
@@ -1031,7 +1058,10 @@ export async function saveSaleTransaction({
             const read = readsById.get(delta.productoId);
             return { delta, ref: read.ref, snapshot: read.snapshot };
         });
-        queueProductDeltas(transaction, productReads, { requireAll: true });
+        queueProductDeltas(transaction, productReads, {
+            requireAll: true,
+            operationId
+        });
 
         let finalSale = {
             ...saleForCommit,
@@ -1236,7 +1266,7 @@ export async function releaseSaleEditLock({
     });
 }
 
-export async function transitionSaleTransaction({
+async function commitTransitionSaleTransaction({
     saleId,
     operationId,
     nextState,
@@ -1328,7 +1358,7 @@ export async function transitionSaleTransaction({
             missingProducts = queueProductDeltas(
                 transaction,
                 productReads,
-                { requireAll: false }
+                { requireAll: false, operationId }
             );
             queueCashDelta(
                 transaction,
@@ -1411,7 +1441,7 @@ function calculateEditedPayments(sale, newTotal) {
     return { method, cash, digital };
 }
 
-export async function updateSaleAmountTransaction({
+async function commitUpdateSaleAmountTransaction({
     saleId,
     operationId,
     newTotal,
@@ -1492,7 +1522,7 @@ export async function updateSaleAmountTransaction({
     });
 }
 
-export async function updateExpenseAmountTransaction({
+async function commitUpdateExpenseAmountTransaction({
     expenseId,
     operationId,
     newAmount,
@@ -1541,7 +1571,7 @@ export async function updateExpenseAmountTransaction({
     });
 }
 
-export async function saveExpenseTransaction({
+async function commitSaveExpenseTransaction({
     expenseId,
     operationId,
     expense
@@ -1601,7 +1631,7 @@ export async function saveExpenseTransaction({
     });
 }
 
-export async function deleteExpenseTransaction({ expenseId, operationId }) {
+async function commitDeleteExpenseTransaction({ expenseId, operationId }) {
     const expenseRef = doc(db, 'gastos', expenseId);
     return runTransaction(db, async transaction => {
         const snapshot = await transaction.get(expenseRef);
@@ -1623,3 +1653,444 @@ export async function deleteExpenseTransaction({ expenseId, operationId }) {
         return { expenseId, operationId, alreadyApplied: false };
     });
 }
+
+function resolveLocalMovementStockFlags(movements, catalog = []) {
+    const productsById = new Map(
+        (Array.isArray(catalog) ? catalog : [])
+            .filter(product => product?.id)
+            .map(product => [String(product.id), product])
+    );
+
+    return normalizeStoredMovements(movements, null).map(movement => {
+        if (typeof movement.stockAfectado === 'boolean') return movement;
+        const product = productsById.get(String(movement.productoId));
+        const stockAfectado = Boolean(
+            product
+            && product.stock !== null
+            && product.stock !== undefined
+            && product.stock !== ''
+        );
+        return { ...movement, stockAfectado };
+    });
+}
+
+function assertLocalInventoryDeltas({
+    previousMovements = [],
+    nextMovements = [],
+    catalog = []
+}) {
+    const productsById = new Map(
+        (Array.isArray(catalog) ? catalog : [])
+            .filter(product => product?.id)
+            .map(product => [String(product.id), product])
+    );
+
+    buildProductDelta(previousMovements, nextMovements).forEach(delta => {
+        const product = productsById.get(String(delta.productoId));
+        if (!product) {
+            throw new SalesIntegrityError(
+                'missing-product',
+                'Uno o más productos ya no existen en el catálogo.',
+                { productIds: [delta.productoId] }
+            );
+        }
+        if (
+            product.stock === null
+            || product.stock === undefined
+            || product.stock === ''
+            || delta.stockDelta >= 0
+        ) return;
+
+        const currentStock = Number(product.stock);
+        if (!Number.isFinite(currentStock)) {
+            throw new SalesIntegrityError(
+                'invalid-stock',
+                `El producto ${product.nombre || delta.productoId} tiene stock inválido.`
+            );
+        }
+        if (currentStock + delta.stockDelta < 0) {
+            throw new SalesIntegrityError(
+                'insufficient-stock',
+                `Stock insuficiente para ${product.nombre || 'un producto'}.`,
+                {
+                    productoId: delta.productoId,
+                    productoNombre: product.nombre || '',
+                    disponible: currentStock,
+                    solicitado: Math.abs(delta.stockDelta)
+                }
+            );
+        }
+    });
+}
+
+function getOptimisticDependencyOperationId(entity = null) {
+    const syncState = String(entity?._syncState || '').toLowerCase();
+    if (!['pending', 'error'].includes(syncState)) return '';
+    return String(
+        entity?._syncOperationId
+        || entity?.lastOperationId
+        || ''
+    ).trim();
+}
+
+function buildOptimisticInventoryChanges({
+    operationId,
+    previousMovements = [],
+    nextMovements = [],
+    catalog = []
+}) {
+    const previous = resolveLocalMovementStockFlags(previousMovements, catalog);
+    const next = resolveLocalMovementStockFlags(nextMovements, catalog);
+    return buildProductDelta(previous, next).map(delta => ({
+        collection: 'productos',
+        id: delta.productoId,
+        action: 'patch',
+        increments: {
+            stock: delta.stockDelta,
+            ventasTotales: delta.salesDelta
+        },
+        confirmField: 'lastInventoryOperationId'
+    }));
+}
+
+export async function saveSaleTransaction({
+    saleId,
+    operationId,
+    sale,
+    inventoryMovements,
+    editContext = null,
+    catalog = []
+}) {
+    if (!saleId || !operationId) {
+        throw new SalesIntegrityError(
+            'missing-operation-id',
+            'No se pudo generar un identificador seguro para la venta.'
+        );
+    }
+    assertSaleAmounts(sale);
+
+    const requestedMovements = resolveLocalMovementStockFlags(
+        inventoryMovements,
+        catalog
+    );
+    const isEdit = Boolean(editContext);
+    const previousMovements = isEdit
+        ? resolveLocalMovementStockFlags(
+            editContext.previousInventoryMovements
+            || editContext.legacyInventoryMovements
+            || [],
+            catalog
+        )
+        : [];
+    assertLocalInventoryDeltas({
+        previousMovements,
+        nextMovements: requestedMovements,
+        catalog
+    });
+    const optimisticSale = {
+        ...sale,
+        id: saleId,
+        inventarioMovimientos: requestedMovements,
+        lastOperationId: operationId,
+        lastOperationType: isEdit ? 'editar_venta' : 'crear_venta',
+        revision: isEdit
+            ? Number(editContext?.expectedRevision || 1) + 1
+            : 1,
+        estado: 'pendiente',
+        ...(isEdit
+            ? {
+                editado: true,
+                edicionActiva: false,
+                edicionToken: null,
+                fechaEdicion: getTrustedNowMs()
+            }
+            : {
+                editado: false,
+                edicionActiva: false
+            })
+    };
+
+    await enqueueSyncOperation({
+        id: operationId,
+        type: 'sale.save',
+        payload: {
+            saleId,
+            operationId,
+            sale,
+            inventoryMovements,
+            editContext
+        },
+        optimisticChanges: [
+            {
+                collection: 'ventas',
+                id: saleId,
+                action: isEdit ? 'patch' : 'upsert',
+                data: optimisticSale,
+                createIfMissing: !isEdit,
+                confirmField: 'lastOperationId'
+            },
+            ...buildOptimisticInventoryChanges({
+                operationId,
+                previousMovements,
+                nextMovements: requestedMovements,
+                catalog
+            })
+        ],
+        metadata: { label: isEdit ? 'Editar venta' : 'Crear venta' },
+        dependsOnOperationIds: editContext?.localPendingEdit
+            ? [String(editContext.sourceOperationId || '')]
+            : []
+    });
+
+    return { saleId, alreadyApplied: false, edited: isEdit, queued: true };
+}
+
+export async function transitionSaleTransaction({
+    saleId,
+    operationId,
+    nextState,
+    allowedStates,
+    actor,
+    reason = '',
+    legacyInventoryMovements = [],
+    currentSale = null,
+    catalog = []
+}) {
+    const normalizedNextState = String(nextState || '').toLowerCase();
+    if (!saleId || !operationId || !normalizedNextState) {
+        throw new SalesIntegrityError(
+            'missing-operation-id',
+            'No se pudo identificar de forma segura el cambio del pedido.'
+        );
+    }
+
+    const shouldRestoreInventory = normalizedNextState === 'rechazado';
+    const storedMovements = currentSale?.inventarioMovimientos || [];
+    const restoreMovements = storedMovements.length > 0
+        ? storedMovements
+        : legacyInventoryMovements;
+    const optimisticChanges = [{
+        collection: 'ventas',
+        id: saleId,
+        action: 'patch',
+        data: {
+            estado: normalizedNextState,
+            modificadoPor: actor || 'Desconocido',
+            fechaModificacion: getTrustedNowMs(),
+            motivoCambio: reason || '',
+            inventarioRestaurado: shouldRestoreInventory,
+            lastOperationId: operationId,
+            lastOperationType:
+                normalizedNextState === 'rechazado' ? 'anular_venta' : 'cambiar_estado',
+            revision: Number(currentSale?.revision || 1) + 1
+        },
+        confirmField: 'lastOperationId'
+    }];
+
+    if (shouldRestoreInventory) {
+        optimisticChanges.push(...buildOptimisticInventoryChanges({
+            operationId,
+            previousMovements: restoreMovements,
+            nextMovements: [],
+            catalog
+        }));
+    }
+
+    await enqueueSyncOperation({
+        id: operationId,
+        type: 'sale.transition',
+        payload: {
+            saleId,
+            operationId,
+            nextState,
+            allowedStates,
+            actor,
+            reason,
+            legacyInventoryMovements
+        },
+        optimisticChanges,
+        metadata: { label: shouldRestoreInventory ? 'Anular venta' : 'Cambiar pedido' },
+        dependsOnOperationIds: [getOptimisticDependencyOperationId(currentSale)]
+    });
+
+    return {
+        saleId,
+        alreadyApplied: false,
+        previousState: String(currentSale?.estado || ''),
+        missingProducts: [],
+        queued: true
+    };
+}
+
+export async function updateSaleAmountTransaction({
+    saleId,
+    operationId,
+    newTotal,
+    actor,
+    currentSale = null
+}) {
+    const normalizedTotal = roundMoney(newTotal);
+    if (normalizedTotal <= 0) {
+        throw new SalesIntegrityError(
+            'non-positive-total',
+            'El total corregido debe ser mayor que cero.'
+        );
+    }
+
+    const payments = currentSale
+        ? calculateEditedPayments(currentSale, normalizedTotal)
+        : null;
+    await enqueueSyncOperation({
+        id: operationId,
+        type: 'sale.update-amount',
+        payload: { saleId, operationId, newTotal: normalizedTotal, actor },
+        optimisticChanges: [{
+            collection: 'ventas',
+            id: saleId,
+            action: 'patch',
+            data: {
+                total: normalizedTotal,
+                ...(payments
+                    ? {
+                        pago_efectivo: payments.cash,
+                        pagoEfectivo: payments.cash,
+                        pago_yape: payments.digital,
+                        pagoYape: payments.digital,
+                        metodoFinal: payments.method,
+                        metodo_pago: payments.method
+                    }
+                    : {}),
+                editado: true,
+                editadoPor: actor || 'Desconocido',
+                fechaEdicion: getTrustedNowMs(),
+                lastOperationId: operationId,
+                lastOperationType: 'editar_monto',
+                revision: Number(currentSale?.revision || 1) + 1
+            },
+            confirmField: 'lastOperationId'
+        }],
+        metadata: { label: 'Editar monto de venta' },
+        dependsOnOperationIds: [getOptimisticDependencyOperationId(currentSale)]
+    });
+    return { saleId, alreadyApplied: false, queued: true };
+}
+
+export async function updateExpenseAmountTransaction({
+    expenseId,
+    operationId,
+    newAmount,
+    actor,
+    currentExpense = null
+}) {
+    const normalizedAmount = roundMoney(newAmount);
+    if (normalizedAmount <= 0) {
+        throw new SalesIntegrityError(
+            'non-positive-expense',
+            'El gasto debe ser mayor que cero.'
+        );
+    }
+
+    await enqueueSyncOperation({
+        id: operationId,
+        type: 'expense.update-amount',
+        payload: { expenseId, operationId, newAmount: normalizedAmount, actor },
+        optimisticChanges: [{
+            collection: 'gastos',
+            id: expenseId,
+            action: 'patch',
+            data: {
+                monto: normalizedAmount,
+                editadoPor: actor || 'Desconocido',
+                fechaEdicion: getTrustedNowMs(),
+                lastOperationId: operationId,
+                lastOperationType: 'editar_gasto',
+                revision: Number(currentExpense?.revision || 1) + 1
+            },
+            confirmField: 'lastOperationId'
+        }],
+        metadata: { label: 'Editar gasto' },
+        dependsOnOperationIds: [getOptimisticDependencyOperationId(currentExpense)]
+    });
+    return { expenseId, alreadyApplied: false, queued: true };
+}
+
+export async function saveExpenseTransaction({ expenseId, operationId, expense }) {
+    if (!expenseId || !operationId) {
+        throw new SalesIntegrityError(
+            'missing-operation-id',
+            'No se pudo generar un identificador seguro para el gasto.'
+        );
+    }
+    const amount = roundMoney(expense?.monto);
+    const description = String(expense?.descripcion || '').trim();
+    const date = String(expense?.fechaStr || '').trim();
+    if (!description || amount <= 0 || !date) {
+        throw new SalesIntegrityError(
+            'invalid-expense',
+            'Completa una descripción, fecha y monto válido para el gasto.'
+        );
+    }
+
+    const optimisticExpense = {
+        ...expense,
+        id: expenseId,
+        monto: amount,
+        fechaHora: Number(expense.fechaHora) || getTrustedNowMs(),
+        revision: 1,
+        lastOperationId: operationId,
+        lastOperationType: 'crear_gasto'
+    };
+    await enqueueSyncOperation({
+        id: operationId,
+        type: 'expense.save',
+        payload: { expenseId, operationId, expense },
+        optimisticChanges: [{
+            collection: 'gastos',
+            id: expenseId,
+            action: 'upsert',
+            data: optimisticExpense,
+            createIfMissing: true,
+            confirmField: 'lastOperationId'
+        }],
+        metadata: { label: 'Registrar gasto' }
+    });
+    return { expenseId, alreadyApplied: false, queued: true };
+}
+
+export async function deleteExpenseTransaction({
+    expenseId,
+    operationId,
+    currentExpense = null
+}) {
+    if (!expenseId || !operationId) {
+        throw new SalesIntegrityError(
+            'missing-operation-id',
+            'No se pudo identificar el gasto que se anulará.'
+        );
+    }
+    await enqueueSyncOperation({
+        id: operationId,
+        type: 'expense.delete',
+        payload: { expenseId, operationId },
+        optimisticChanges: [{
+            collection: 'gastos',
+            id: expenseId,
+            action: 'delete',
+            confirmField: ''
+        }],
+        metadata: {
+            label: 'Eliminar gasto',
+            amount: Number(currentExpense?.monto || 0)
+        },
+        dependsOnOperationIds: [getOptimisticDependencyOperationId(currentExpense)]
+    });
+    return { expenseId, operationId, alreadyApplied: false, queued: true };
+}
+
+registerSyncHandler('sale.save', commitSaveSaleTransaction);
+registerSyncHandler('sale.transition', commitTransitionSaleTransaction);
+registerSyncHandler('sale.update-amount', commitUpdateSaleAmountTransaction);
+registerSyncHandler('expense.update-amount', commitUpdateExpenseAmountTransaction);
+registerSyncHandler('expense.save', commitSaveExpenseTransaction);
+registerSyncHandler('expense.delete', commitDeleteExpenseTransaction);
+

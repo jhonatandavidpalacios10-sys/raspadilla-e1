@@ -173,18 +173,30 @@ export function initAnalisis() {
     // Las acciones históricas reutilizan la lógica transaccional de Caja, pero
     // el módulo completo solo se descarga cuando el usuario pulsa uno de estos
     // botones.
-    window.editarOperacionCaja = (...args) => import('./ui-caja.js')
-        .then(module => module.editarOperacionCaja(...args))
-        .catch(error => {
-            console.error('No se pudo cargar la edición de Caja:', error);
-            window.mostrarToast?.('No se pudo cargar', 'Inténtalo nuevamente.', 'red');
-        });
-    window.eliminarOperacionCaja = (...args) => import('./ui-caja.js')
-        .then(module => module.eliminarOperacionCaja(...args))
-        .catch(error => {
-            console.error('No se pudo cargar la anulación de Caja:', error);
-            window.mostrarToast?.('No se pudo cargar', 'Inténtalo nuevamente.', 'red');
-        });
+    window.editarOperacionCaja = (...args) => {
+        const [id, type] = args;
+        const currentData = type === 'venta'
+            ? analysisData.find(item => item.id === id)
+            : analysisGastos.find(item => item.id === id);
+        return import('./ui-caja.js')
+            .then(module => module.editarOperacionCaja(...args, currentData?.total ?? currentData?.monto, currentData || null))
+            .catch(error => {
+                console.error('No se pudo cargar la edición de Caja:', error);
+                window.mostrarToast?.('No se pudo cargar', 'Inténtalo nuevamente.', 'red');
+            });
+    };
+    window.eliminarOperacionCaja = (...args) => {
+        const [id, type] = args;
+        const currentData = type === 'venta'
+            ? analysisData.find(item => item.id === id)
+            : analysisGastos.find(item => item.id === id);
+        return import('./ui-caja.js')
+            .then(module => module.eliminarOperacionCaja(...args, currentData || null))
+            .catch(error => {
+                console.error('No se pudo cargar la anulación de Caja:', error);
+                window.mostrarToast?.('No se pudo cargar', 'Inténtalo nuevamente.', 'red');
+            });
+    };
     
     // Configurar fechas por defecto (Mes actual en lugar de solo hoy para mejor vista de calendario)
     const d = getLimaCalendarDate();

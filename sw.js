@@ -1,14 +1,23 @@
-const CACHE_NAME = 'raffaelito-v7'; // <-- VERSIÓN ACTUALIZADA (v7) para forzar la actualización
-const ASSETS_TO_CACHE = [
+const CACHE_NAME = 'raffaelito-v9'; // Cola local-first y sincronización en segundo plano
+
+const LOCAL_ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
   '/assets/css/styles.css',
-  '/assets/img/logo.png', // <-- ¡CORREGIDO! Ahora busca el PNG cuadrado
+  '/assets/img/logo.png',
   '/js/app.js',
   '/js/core/auth.js',
   '/js/core/firebase-setup.js',
   '/js/core/store.js',
+  '/js/core/data-service.js',
+  '/js/core/local-cache.js',
+  '/js/core/sale-draft-store.js',
+  '/js/core/sales-service.js',
+  '/js/core/sync-queue.js',
+  '/js/core/inventory-service.js',
+  '/js/core/dialogs.js',
+  '/js/core/icons.js',
   '/js/components/ui-ventas.js',
   '/js/components/ui-inventario.js',
   '/js/components/ui-caja.js',
@@ -16,66 +25,82 @@ const ASSETS_TO_CACHE = [
   '/js/components/ui-pedidos.js',
   '/js/components/ui-analisis.js',
   '/js/components/ui-respaldo.js',
-  '/js/utils/helpers.js',
+  '/js/utils/helpers.js'
+];
+
+const OPTIONAL_EXTERNAL_ASSETS = [
   'https://cdn.tailwindcss.com',
   'https://unpkg.com/lucide@latest'
 ];
 
-// Instalar y almacenar en caché
-self.addEventListener('install', (event) => {
-  // CLAVE MODO FANTASMA: Fuerza al nuevo SW a instalarse inmediatamente sin esperar que cierren la app
-  self.skipWaiting(); 
-  
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      console.log('SW: Archivos almacenados en caché exitosamente.');
-      return cache.addAll(ASSETS_TO_CACHE);
-    })
-  );
+self.addEventListener('install', event => {
+  self.skipWaiting();
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    // Los recursos propios son obligatorios. Los CDN son opcionales para que
+    // una caída externa no impida instalar la versión offline de la app.
+    await cache.addAll(LOCAL_ASSETS_TO_CACHE);
+    await Promise.allSettled(
+      OPTIONAL_EXTERNAL_ASSETS.map(url => cache.add(url))
+    );
+  })());
 });
 
-// Limpiar cachés antiguos si hay una nueva versión
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('SW: Limpiando caché antigua', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-  );
-  // CLAVE MODO FANTASMA: Obliga al nuevo SW a tomar el control de las pestañas abiertas inmediatamente
-  self.clients.claim(); 
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    const cacheNames = await caches.keys();
+    await Promise.all(
+      cacheNames
+        .filter(cacheName => cacheName !== CACHE_NAME)
+        .map(cacheName => caches.delete(cacheName))
+    );
+    await self.clients.claim();
+  })());
 });
 
-// Estrategia: Stale-While-Revalidate (Primero caché, luego red)
-self.addEventListener('fetch', (event) => {
-  // Ignorar peticiones a Firestore (Firebase se encarga de ellas con su propia persistencia)
-  if (event.request.url.includes('firestore.googleapis.com')) {
-    return; 
-  }
+function isFirebaseRequest(url) {
+  return url.includes('firestore.googleapis.com')
+    || url.includes('identitytoolkit.googleapis.com')
+    || url.includes('securetoken.googleapis.com');
+}
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      const fetchPromise = fetch(event.request).then((networkResponse) => {
-        // Actualizar la caché silenciosamente
-        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
-          const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  if (request.method !== 'GET' || isFirebaseRequest(request.url)) return;
+
+  event.respondWith((async () => {
+    const cachedResponse = await caches.match(request);
+    const networkPromise = fetch(request)
+      .then(async networkResponse => {
+        if (
+          networkResponse
+          && networkResponse.status === 200
+          && ['basic', 'cors', 'opaque'].includes(networkResponse.type)
+        ) {
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(request, networkResponse.clone());
         }
         return networkResponse;
-      }).catch(() => {
-        // Si no hay red, no hacer nada especial, solo usar caché
-      });
+      })
+      .catch(() => null);
 
-      // Retorna la caché inmediatamente si existe, si no, espera la red
-      return cachedResponse || fetchPromise;
-    })
-  );
+    if (cachedResponse) {
+      event.waitUntil(networkPromise);
+      return cachedResponse;
+    }
+
+    const networkResponse = await networkPromise;
+    if (networkResponse) return networkResponse;
+
+    if (request.mode === 'navigate') {
+      const appShell = await caches.match('/index.html');
+      if (appShell) return appShell;
+    }
+
+    return new Response('Sin conexión', {
+      status: 503,
+      statusText: 'Offline',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+    });
+  })());
 });

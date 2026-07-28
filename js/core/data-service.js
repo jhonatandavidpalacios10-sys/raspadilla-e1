@@ -9,6 +9,7 @@ import {
 import { state } from './store.js';
 import { getTodayDateStr } from '../utils/helpers.js';
 import { persistLocationsCache } from './local-cache.js';
+import { mergePendingCollectionRows } from './sync-queue.js';
 
 const sharedSubscriptions = new Map();
 
@@ -47,7 +48,16 @@ function makeScopedQuery(collectionName, constraints = [], requestedLocalId = 't
     };
 }
 
-function subscribeShared(key, queryRef, onData, onError) {
+function publishSharedEntry(entry) {
+    const remoteRows = Array.from(entry.rowsById.values());
+    const mergedRows = mergePendingCollectionRows(entry.collectionName, remoteRows);
+    entry.rows = entry.localRowFilter
+        ? mergedRows.filter(entry.localRowFilter)
+        : mergedRows;
+    entry.callbacks.forEach(callback => callback(entry.rows));
+}
+
+function subscribeShared(key, queryRef, onData, onError, options = {}) {
     let entry = sharedSubscriptions.get(key);
 
     if (!entry) {
@@ -56,6 +66,10 @@ function subscribeShared(key, queryRef, onData, onError) {
             errorCallbacks: new Set(),
             rowsById: new Map(),
             rows: null,
+            collectionName: String(options.collectionName || key.split(':')[0] || ''),
+            localRowFilter: typeof options.localRowFilter === 'function'
+                ? options.localRowFilter
+                : null,
             unsubscribe: null,
             closed: false
         };
@@ -74,8 +88,7 @@ function subscribeShared(key, queryRef, onData, onError) {
                         ...change.doc.data({ serverTimestamps: 'estimate' })
                     });
                 });
-                entry.rows = Array.from(entry.rowsById.values());
-                entry.callbacks.forEach(callback => callback(entry.rows));
+                publishSharedEntry(entry);
             },
             error => {
                 if (entry.closed) return;
@@ -119,11 +132,28 @@ function subscribeShared(key, queryRef, onData, onError) {
     };
 }
 
+globalThis.addEventListener?.('icepos:sync-queue-changed', event => {
+    const changedCollections = new Set(event.detail?.collections || []);
+    sharedSubscriptions.forEach(entry => {
+        if (entry.closed) return;
+        if (changedCollections.size > 0 && !changedCollections.has(entry.collectionName)) return;
+        publishSharedEntry(entry);
+    });
+});
+
+function rowMatchesScope(row, scope) {
+    if (scope.mode === 'local') {
+        return String(row.localId || '') === String(scope.localId || '');
+    }
+    if (scope.mode === 'legacy') {
+        return !row.localId || row.localId === '' || row.localId === 'general';
+    }
+    return true;
+}
+
 function deliverForScope(scope, onData) {
     if (scope.mode !== 'legacy') return onData;
-    return rows => onData(rows.filter(row => (
-        !row.localId || row.localId === '' || row.localId === 'general'
-    )));
+    return rows => onData(rows.filter(row => rowMatchesScope(row, scope)));
 }
 
 export function subscribeDailySales(onData, onError, date = getTodayDateStr(), requestedLocalId = 'todas') {
@@ -134,7 +164,14 @@ export function subscribeDailySales(onData, onError, date = getTodayDateStr(), r
         `ventas:${date}:${scope.key}`,
         ref,
         deliverForScope(scope, onData),
-        onError
+        onError,
+        {
+            collectionName: 'ventas',
+            localRowFilter: row => (
+                String(row.fechaStr || '') === String(date)
+                && rowMatchesScope(row, scope)
+            )
+        }
     );
 }
 
@@ -146,7 +183,14 @@ export function subscribeDailyExpenses(onData, onError, date = getTodayDateStr()
         `gastos:${date}:${scope.key}`,
         ref,
         deliverForScope(scope, onData),
-        onError
+        onError,
+        {
+            collectionName: 'gastos',
+            localRowFilter: row => (
+                String(row.fechaStr || '') === String(date)
+                && rowMatchesScope(row, scope)
+            )
+        }
     );
 }
 
@@ -168,10 +212,18 @@ function subscribeRange(collectionName, startDate, endDate, onData, onError, req
             primaryRelease();
             const fallbackRef = query(collection(db, collectionName), ...constraints);
             fallbackRelease = subscribeShared(
-                `${collectionName}:${startDate}:${endDate}:fallback`,
+                `${collectionName}:${startDate}:${endDate}:fallback:${scope.key}`,
                 fallbackRef,
                 rows => onData(rows.filter(row => row.localId === scope.localId)),
-                onError
+                onError,
+                {
+                    collectionName,
+                    localRowFilter: row => (
+                        String(row.fechaStr || '') >= String(startDate)
+                        && String(row.fechaStr || '') <= String(endDate)
+                        && rowMatchesScope(row, scope)
+                    )
+                }
             );
             return;
         }
@@ -182,7 +234,15 @@ function subscribeRange(collectionName, startDate, endDate, onData, onError, req
         `${collectionName}:${startDate}:${endDate}:${scope.key}`,
         ref,
         deliver,
-        handlePrimaryError
+        handlePrimaryError,
+        {
+            collectionName,
+            localRowFilter: row => (
+                String(row.fechaStr || '') >= String(startDate)
+                && String(row.fechaStr || '') <= String(endDate)
+                && rowMatchesScope(row, scope)
+            )
+        }
     );
 
     return () => {
