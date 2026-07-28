@@ -1,28 +1,44 @@
 import { initAuth, login, logout } from './core/auth.js';
-import { initVentas } from './components/ui-ventas.js'; 
-import { initInventario } from './components/ui-inventario.js';
-import { initCaja } from './components/ui-caja.js'; 
-import { initUsuarios, cargarUsuariosYLocales } from './components/ui-usuarios.js';
-import { initPedidos } from './components/ui-pedidos.js'; 
-import { initAnalisis } from './components/ui-analisis.js'; 
-import { initRespaldo } from './components/ui-respaldo.js';
+import {
+    flushVentasDraftForReload,
+    initVentas,
+    isSaleOperationInProgress,
+    resetVentasSession,
+    restoreVentasDraft
+} from './components/ui-ventas.js';
+import { initInventario, destroyInventario } from './components/ui-inventario.js';
 import { auth, onAuthStateChanged, db, doc, getDoc } from './core/firebase-setup.js';
-import { state } from './core/store.js';
+import { state, clearCart } from './core/store.js';
+import {
+    populateLocationFilters,
+    resetDataSubscriptions,
+    subscribeLocations
+} from './core/data-service.js';
+import { hydrateSessionCache } from './core/local-cache.js';
+import { syncTrustedClock } from './utils/helpers.js';
+import './core/dialogs.js';
 
+// Se inicia en paralelo y no bloquea el arranque offline. En Vercel/Vite usa
+// la hora del mismo sitio para corregir dispositivos con el reloj desfasado.
+void syncTrustedClock();
 
 // ---- ALTURA REAL DEL VIEWPORT (iPhone / iPad / PWA) ----
 // 100vh puede conservar una altura obsoleta después de recargar la app en iOS.
 // Esta variable sigue el área realmente visible y evita que el panel de cobro
 // termine debajo de la barra del navegador o del menú inferior.
 let viewportFrameId = null;
+let lastViewportHeight = 0;
 
 function actualizarAlturaViewportApp() {
     const alturaVisible = window.visualViewport?.height || window.innerHeight;
     if (!Number.isFinite(alturaVisible) || alturaVisible <= 0) return;
+    const roundedHeight = Math.round(alturaVisible);
+    if (roundedHeight === lastViewportHeight) return;
+    lastViewportHeight = roundedHeight;
 
     document.documentElement.style.setProperty(
         '--app-viewport-height',
-        `${Math.round(alturaVisible)}px`
+        `${roundedHeight}px`
     );
 }
 
@@ -50,6 +66,7 @@ if (window.visualViewport) {
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
         programarAjusteViewport();
+        void syncTrustedClock({ force: true });
         setTimeout(programarAjusteViewport, 100);
     }
 });
@@ -61,67 +78,216 @@ document.addEventListener('focusout', () => {
 });
 // -----------------------------------------------------------------
 
-// ---- REGISTRO DEL SERVICE WORKER (Background Sync & Offline) ----
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-            .then(registration => {
-                console.log('ServiceWorker registrado con éxito con alcance:', registration.scope);
+// ---- SERVICE WORKER: ACTUALIZACIÓN VOLUNTARIA Y SEGURA ----
+let serviceWorkerRegistration = null;
+let pendingServiceWorker = null;
+let reloadWhenSafeAfterControllerChange = false;
+let safeWorkerReloadInProgress = false;
+let lastWorkerCheck = 0;
+const updateSafetyChannel = typeof BroadcastChannel === 'function'
+    ? new BroadcastChannel('raffaelito:update-safety:v1')
+    : null;
+const updateSafetyChecks = new Map();
 
-                // --- RADAR DE ACTUALIZACIONES (Modo Fantasma) ---
-                // 1. Revisar cuando la app vuelve a ser visible (ej. al regresar de otra app o desbloquear)
-                document.addEventListener('visibilitychange', () => {
-                    if (document.visibilityState === 'visible') {
-                        registration.update();
+function isCurrentTabBusy() {
+    return (
+        state.carrito.length > 0
+        || isSaleOperationInProgress()
+        || Boolean(window.ticketEditadoContext?.saleId)
+    );
+}
+
+async function reloadAfterControllerChangeWhenSafe() {
+    if (
+        !reloadWhenSafeAfterControllerChange
+        || isCurrentTabBusy()
+        || safeWorkerReloadInProgress
+    ) return false;
+
+    safeWorkerReloadInProgress = true;
+    try {
+        const draftFlushed = await flushVentasDraftForReload();
+        if (!draftFlushed) return false;
+        if (
+            !reloadWhenSafeAfterControllerChange
+            || isCurrentTabBusy()
+        ) return false;
+
+        reloadWhenSafeAfterControllerChange = false;
+        window.location.reload();
+        return true;
+    } finally {
+        safeWorkerReloadInProgress = false;
+    }
+}
+
+window.addEventListener(
+    'icepos:update-safety-changed',
+    reloadAfterControllerChangeWhenSafe
+);
+
+updateSafetyChannel?.addEventListener('message', event => {
+    const message = event.data || {};
+    if (message.type === 'CHECK_UPDATE_SAFETY' && message.requestId) {
+        updateSafetyChannel.postMessage({
+            type: 'UPDATE_SAFETY_STATUS',
+            requestId: message.requestId,
+            busy: isCurrentTabBusy()
+        });
+        return;
+    }
+    if (
+        message.type === 'UPDATE_SAFETY_STATUS'
+        && message.requestId
+        && message.busy === true
+    ) {
+        const check = updateSafetyChecks.get(message.requestId);
+        if (check) check.busy = true;
+    }
+});
+
+async function isAnotherTabBusy() {
+    if (!updateSafetyChannel) return false;
+    const requestId = (
+        globalThis.crypto?.randomUUID?.()
+        || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    const check = { busy: false };
+    updateSafetyChecks.set(requestId, check);
+    updateSafetyChannel.postMessage({
+        type: 'CHECK_UPDATE_SAFETY',
+        requestId
+    });
+    await new Promise(resolve => setTimeout(resolve, 350));
+    updateSafetyChecks.delete(requestId);
+    return check.busy;
+}
+
+async function canApplyPendingUpdate() {
+    if (isCurrentTabBusy()) {
+        window.mostrarToast?.(
+            'Actualización pendiente',
+            'Termina la operación o vacía el carrito antes de actualizar.',
+            'amber'
+        );
+        return false;
+    }
+    if (await isAnotherTabBusy()) {
+        window.mostrarToast?.(
+            'Otra pestaña está ocupada',
+            'Termina la venta abierta en la otra pestaña antes de actualizar.',
+            'amber'
+        );
+        return false;
+    }
+    return true;
+}
+
+async function applyPendingUpdate() {
+    if (!await canApplyPendingUpdate()) return;
+
+    if (!pendingServiceWorker) {
+        window.location.reload();
+        return;
+    }
+
+    const activate = async () => {
+        if (!await canApplyPendingUpdate()) return;
+        pendingServiceWorker?.postMessage({ type: 'SKIP_WAITING' });
+    };
+
+    if (window.mostrarConfirmacion) {
+        window.mostrarConfirmacion(
+            'Hay una versión nueva lista. ¿Actualizar ahora?',
+            () => void activate()
+        );
+    } else {
+        void activate();
+    }
+}
+
+function registerPendingWorker(worker) {
+    if (!worker) return;
+    pendingServiceWorker = worker;
+
+    if (state.carrito.length === 0) {
+        window.mostrarToast?.(
+            'Actualización disponible',
+            'Pulsa “Reparar / Actualizar App” cuando quieras aplicarla.',
+            'emerald'
+        );
+    }
+}
+
+window.forzarActualizacionApp = async () => {
+    if (!('serviceWorker' in navigator)) {
+        window.location.reload();
+        return;
+    }
+
+    try {
+        serviceWorkerRegistration ||= await navigator.serviceWorker.getRegistration();
+        if (!serviceWorkerRegistration) {
+            serviceWorkerRegistration = await navigator.serviceWorker.register('/sw.js');
+        }
+        await serviceWorkerRegistration.update();
+        registerPendingWorker(serviceWorkerRegistration.waiting);
+        void applyPendingUpdate();
+    } catch (error) {
+        console.error('No se pudo comprobar la actualización:', error);
+        window.mostrarToast?.('Sin conexión', 'No se pudo comprobar una versión nueva.', 'red');
+    }
+};
+
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', async () => {
+        try {
+            serviceWorkerRegistration = await navigator.serviceWorker.register('/sw.js');
+            registerPendingWorker(serviceWorkerRegistration.waiting);
+
+            serviceWorkerRegistration.addEventListener('updatefound', () => {
+                const installingWorker = serviceWorkerRegistration.installing;
+                installingWorker?.addEventListener('statechange', () => {
+                    if (
+                        installingWorker.state === 'installed'
+                        && navigator.serviceWorker.controller
+                    ) {
+                        registerPendingWorker(serviceWorkerRegistration.waiting || installingWorker);
                     }
                 });
-
-                // 2. Revisar periódicamente cada 5 minutos en segundo plano
-                setInterval(() => {
-                    registration.update();
-                }, 5 * 60 * 1000);
-            })
-            .catch(error => {
-                console.error('El registro del ServiceWorker falló:', error);
             });
+        } catch (error) {
+            console.warn('El modo sin conexión no pudo iniciarse:', error);
+        }
+    });
 
-        // EL "EXPULSOR" (Modo Fantasma): Pantalla de Instalación tipo App Nativa
-        let refreshing = false;
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-            if (!refreshing) {
-                refreshing = true;
-                
-                // 1. Crear pantalla bloqueante de instalación
-                const updateScreen = document.createElement('div');
-                updateScreen.className = 'fixed inset-0 z-[9999] bg-slate-950 flex flex-col items-center justify-center text-white transition-opacity duration-300';
-                updateScreen.innerHTML = `
-                    <div class="flex flex-col items-center max-w-sm text-center px-6">
-                        <i data-lucide="download-cloud" class="w-20 h-20 text-sky-500 mb-6 animate-bounce drop-shadow-[0_0_15px_rgba(14,165,233,0.5)]"></i>
-                        <h2 class="text-2xl font-black mb-2">Instalando Actualización...</h2>
-                        <p class="text-slate-400 text-sm mb-8 leading-relaxed">Por favor, no cierres la aplicación. Aplicando nuevas mejoras y optimizaciones del sistema en segundo plano.</p>
-                        
-                        <!-- Barra de progreso simulada -->
-                        <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden shadow-inner">
-                            <div class="h-full bg-sky-500 rounded-full animate-[progress_3s_ease-in-out_forwards] shadow-[0_0_10px_rgba(14,165,233,0.8)]" style="width: 0%;"></div>
-                        </div>
-                        <p class="text-[10px] text-slate-500 mt-4 uppercase font-bold tracking-widest">No apagues tu dispositivo</p>
-                    </div>
-                `;
-                
-                document.body.appendChild(updateScreen);
-                if(window.lucide) window.lucide.createIcons();
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+        const tabWasBusy = isCurrentTabBusy();
+        reloadWhenSafeAfterControllerChange = true;
+        if (!tabWasBusy) {
+            void reloadAfterControllerChangeWhenSafe();
+            return;
+        }
+        window.mostrarToast?.(
+            'Actualización lista',
+            'Esta pestaña se actualizará después de terminar la venta o edición abierta.',
+            'amber'
+        );
+    });
 
-                // 2. Inyectar animación de progreso temporal
-                const style = document.createElement('style');
-                style.textContent = '@keyframes progress { 0% { width: 0%; } 100% { width: 100%; } }';
-                document.head.appendChild(style);
-
-                // 3. Esperar 3 segundos (tiempo de la animación) y luego recargar forzosamente
-                setTimeout(() => {
-                    window.location.reload();
-                }, 3000);
-            }
-        });
+    document.addEventListener('visibilitychange', () => {
+        if (
+            document.visibilityState === 'visible'
+            && reloadWhenSafeAfterControllerChange
+        ) {
+            void reloadAfterControllerChangeWhenSafe();
+            return;
+        }
+        if (document.visibilityState !== 'visible' || !serviceWorkerRegistration) return;
+        const now = Date.now();
+        if (now - lastWorkerCheck < 60 * 60 * 1000) return;
+        lastWorkerCheck = now;
+        serviceWorkerRegistration.update().catch(() => {});
     });
 }
 // -----------------------------------------------------------------
@@ -184,7 +350,7 @@ function renderProfiles() {
                 </div>
             `).join('');
         }
-        if(window.lucide) window.lucide.createIcons();
+        if(window.lucide) window.lucide.createIcons({ root: list });
     } else {
         if(subtitle) subtitle.textContent = "Punto de Venta Profesional";
         if(profilesSec) {
@@ -197,9 +363,355 @@ function renderProfiles() {
 }
 // ---------------------------------------------------
 
+const lazyViews = {
+    pedidos: {
+        load: () => import('./components/ui-pedidos.js'),
+        init: module => module.initPedidos(),
+        destroy: module => module.destroyPedidos?.()
+    },
+    caja: {
+        load: () => import('./components/ui-caja.js'),
+        init: module => module.initCaja(),
+        destroy: module => module.destroyCaja?.()
+    },
+    analisis: {
+        load: () => import('./components/ui-analisis.js'),
+        init: module => module.initAnalisis(),
+        destroy: module => module.destroyAnalisis?.()
+    },
+    usuarios: {
+        load: () => import('./components/ui-usuarios.js'),
+        init: module => module.initUsuarios(),
+        destroy: module => module.destroyUsuarios?.()
+    },
+    respaldo: {
+        load: () => import('./components/ui-respaldo.js'),
+        init: module => module.initRespaldo(),
+        destroy: module => module.destroyRespaldo?.()
+    }
+};
+
+const loadedViewModules = new Map();
+const persistentInitializedViews = new Set();
+const activeViewModules = new Set();
+const viewActivationPromises = new Map();
+const viewImportPromises = new Map();
+const viewLifecycleGenerations = new Map();
+let currentLiveView = 'ventas';
+let activeSessionKey = '';
+let lastSessionUid = '';
+let sessionToken = 0;
+let locationsRetryTimer = null;
+let unsubscribeLocations = null;
+let sessionRetryTimer = null;
+let sessionRetryContextKey = '';
+let sessionRetryAttempts = 0;
+let viewPrefetchIdleHandle = null;
+let viewPrefetchTimer = null;
+
+function importViewModuleCode(viewName) {
+    const config = lazyViews[viewName];
+    if (!config) return Promise.resolve(null);
+    if (loadedViewModules.has(viewName)) {
+        return Promise.resolve(loadedViewModules.get(viewName));
+    }
+    if (viewImportPromises.has(viewName)) {
+        return viewImportPromises.get(viewName);
+    }
+
+    const request = config.load()
+        .then(module => {
+            loadedViewModules.set(viewName, module);
+            return module;
+        })
+        .finally(() => {
+            if (viewImportPromises.get(viewName) === request) {
+                viewImportPromises.delete(viewName);
+            }
+        });
+    viewImportPromises.set(viewName, request);
+    return request;
+}
+
+function cancelRoleViewPrefetch() {
+    if (
+        viewPrefetchIdleHandle !== null
+        && typeof globalThis.cancelIdleCallback === 'function'
+    ) {
+        globalThis.cancelIdleCallback(viewPrefetchIdleHandle);
+    }
+    if (viewPrefetchTimer !== null) clearTimeout(viewPrefetchTimer);
+    viewPrefetchIdleHandle = null;
+    viewPrefetchTimer = null;
+}
+
+function scheduleRoleViewPrefetch(role) {
+    cancelRoleViewPrefetch();
+
+    const connection = navigator.connection
+        || navigator.mozConnection
+        || navigator.webkitConnection;
+    if (
+        connection?.saveData
+        || ['slow-2g', '2g'].includes(String(connection?.effectiveType || ''))
+    ) {
+        return;
+    }
+
+    const normalizedRole = String(role || '').trim().toLowerCase();
+    const preferredViews = ['admin', 'administrador', 'master'].includes(normalizedRole)
+        ? ['pedidos', 'caja', 'analisis']
+        : ['pedidos'];
+    const allowedViews = preferredViews.filter(viewName => {
+        const nav = document.getElementById(`nav-${viewName}`);
+        return nav && !nav.classList.contains('hidden');
+    });
+    if (allowedViews.length === 0) return;
+
+    const prefetch = () => {
+        viewPrefetchIdleHandle = null;
+        viewPrefetchTimer = null;
+        allowedViews.reduce(
+            (chain, viewName) => chain.then(() => (
+                importViewModuleCode(viewName).catch(error => {
+                    console.debug(`No se pudo precargar ${viewName}:`, error);
+                })
+            )),
+            Promise.resolve()
+        );
+    };
+
+    if (typeof globalThis.requestIdleCallback === 'function') {
+        viewPrefetchIdleHandle = globalThis.requestIdleCallback(prefetch, {
+            timeout: 4000
+        });
+    } else {
+        viewPrefetchTimer = setTimeout(prefetch, 1200);
+    }
+}
+
+async function loadViewModule(viewName) {
+    const config = lazyViews[viewName];
+    if (!config) return null;
+    if (activeViewModules.has(viewName)) return loadedViewModules.get(viewName) || null;
+    if (viewActivationPromises.has(viewName)) return viewActivationPromises.get(viewName);
+    const lifecycleGeneration = viewLifecycleGenerations.get(viewName) || 0;
+
+    const activation = (async () => {
+        const module = await importViewModuleCode(viewName);
+        if (viewName === 'usuarios') {
+            if (!persistentInitializedViews.has(viewName)) {
+                await config.init(module);
+                persistentInitializedViews.add(viewName);
+            }
+            await module.cargarUsuariosYLocales();
+        } else {
+            await config.init(module);
+        }
+        if ((viewLifecycleGenerations.get(viewName) || 0) !== lifecycleGeneration) {
+            config.destroy(module);
+            return module;
+        }
+        activeViewModules.add(viewName);
+        return module;
+    })();
+
+    viewActivationPromises.set(viewName, activation);
+    try {
+        return await activation;
+    } finally {
+        if (viewActivationPromises.get(viewName) === activation) {
+            viewActivationPromises.delete(viewName);
+        }
+    }
+}
+
+function stopViewModule(viewName) {
+    viewLifecycleGenerations.set(
+        viewName,
+        (viewLifecycleGenerations.get(viewName) || 0) + 1
+    );
+    const config = lazyViews[viewName];
+    const module = loadedViewModules.get(viewName);
+    if (config && module) config.destroy(module);
+    activeViewModules.delete(viewName);
+}
+
+function stopAllViewModules() {
+    const viewNames = new Set([
+        ...loadedViewModules.keys(),
+        ...viewActivationPromises.keys()
+    ]);
+    viewNames.forEach(stopViewModule);
+    activeViewModules.clear();
+    currentLiveView = 'ventas';
+}
+
+function installLazyNavigation() {
+    if (window.__iceposLazyNavigationInstalled || typeof window.switchView !== 'function') return;
+    window.__iceposLazyNavigationInstalled = true;
+    const switchViewBase = window.switchView;
+
+    window.switchView = async viewName => {
+        if (currentLiveView === viewName && activeViewModules.has(viewName)) {
+            switchViewBase(viewName);
+            return;
+        }
+        if (currentLiveView !== viewName) stopViewModule(currentLiveView);
+
+        switchViewBase(viewName);
+        currentLiveView = viewName;
+
+        try {
+            await loadViewModule(viewName);
+            if (currentLiveView !== viewName) {
+                stopViewModule(viewName);
+            } else if (lazyViews[viewName] && !activeViewModules.has(viewName)) {
+                await loadViewModule(viewName);
+            }
+        } catch (error) {
+            console.error(`No se pudo abrir la vista ${viewName}:`, error);
+            window.mostrarToast?.(
+                'No se pudo cargar',
+                'Verifica tu conexión e inténtalo nuevamente.',
+                'red'
+            );
+        }
+    };
+}
+
+async function initializeUserSession(context) {
+    const key = `${context.uid}:${context.role}:${context.localId || ''}`;
+    if (key === activeSessionKey) return;
+    cancelRoleViewPrefetch();
+    const token = ++sessionToken;
+    const contextChanged = Boolean(activeSessionKey && activeSessionKey !== key);
+    if (sessionRetryContextKey !== key) {
+        sessionRetryContextKey = key;
+        sessionRetryAttempts = 0;
+    }
+    if (sessionRetryTimer) {
+        clearTimeout(sessionRetryTimer);
+        sessionRetryTimer = null;
+    }
+    if (locationsRetryTimer) {
+        clearTimeout(locationsRetryTimer);
+        locationsRetryTimer = null;
+    }
+    unsubscribeLocations?.();
+    unsubscribeLocations = null;
+
+    const shouldClearMemoryCart = Boolean(
+        contextChanged || (lastSessionUid && lastSessionUid !== context.uid)
+    );
+    lastSessionUid = context.uid;
+
+    stopAllViewModules();
+    destroyInventario();
+    resetDataSubscriptions();
+    resetVentasSession();
+    if (shouldClearMemoryCart) clearCart();
+    state.productos = [];
+    state.locales = [];
+    const cachedSession = hydrateSessionCache({
+        role: context.role,
+        localId: context.localId || ''
+    });
+    if (cachedSession.locationsLoaded) populateLocationFilters();
+    window.renderProductosVenta?.();
+    window.actualizarCarritoUI?.();
+    activeSessionKey = key;
+    window.switchView?.('ventas');
+
+    try {
+        initVentas();
+        await restoreVentasDraft(context);
+        if (token !== sessionToken) return;
+        const startLocationsSync = () => {
+            if (token !== sessionToken) return;
+            unsubscribeLocations?.();
+            unsubscribeLocations = subscribeLocations(() => {}, error => {
+                if (token !== sessionToken) return;
+                console.warn('No se pudieron actualizar las sedes:', error);
+                unsubscribeLocations = null;
+                clearTimeout(locationsRetryTimer);
+                locationsRetryTimer = setTimeout(startLocationsSync, 5000);
+            });
+        };
+        startLocationsSync();
+
+        try {
+            await initInventario();
+        } catch (inventoryError) {
+            if (!cachedSession.productsLoaded) throw inventoryError;
+            console.warn('Se está usando el catálogo local mientras reconecta:', inventoryError);
+        }
+        if (token !== sessionToken) return;
+
+        if (!unsubscribeLocations && !locationsRetryTimer) {
+            locationsRetryTimer = setTimeout(() => {
+                startLocationsSync();
+            }, 5000);
+        }
+
+        window.renderProductosVenta?.();
+        window.actualizarCarritoUI?.();
+        sessionRetryAttempts = 0;
+        scheduleRoleViewPrefetch(context.role);
+    } catch (error) {
+        if (token === sessionToken) activeSessionKey = '';
+        console.error('Error inicializando la sesión:', error);
+        window.mostrarToast?.(
+            'Sincronización incompleta',
+            'La sesión inició, pero algunos datos no pudieron cargarse.',
+            'amber'
+        );
+        if (token === sessionToken && sessionRetryAttempts < 3) {
+            sessionRetryAttempts++;
+            sessionRetryTimer = setTimeout(() => {
+                if (token === sessionToken && auth.currentUser?.uid === context.uid) {
+                    initializeUserSession(context);
+                }
+            }, 3000 * sessionRetryAttempts);
+        }
+    }
+}
+
+function cleanupUserSession() {
+    sessionToken++;
+    activeSessionKey = '';
+    cancelRoleViewPrefetch();
+    if (locationsRetryTimer) {
+        clearTimeout(locationsRetryTimer);
+        locationsRetryTimer = null;
+    }
+    unsubscribeLocations?.();
+    unsubscribeLocations = null;
+    if (sessionRetryTimer) {
+        clearTimeout(sessionRetryTimer);
+        sessionRetryTimer = null;
+    }
+    sessionRetryContextKey = '';
+    sessionRetryAttempts = 0;
+    stopAllViewModules();
+    destroyInventario();
+    resetDataSubscriptions();
+    resetVentasSession();
+    window.switchView?.('ventas');
+    clearCart();
+    state.productos = [];
+    state.locales = [];
+    window.renderProductosVenta?.();
+    window.actualizarCarritoUI?.();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+    installLazyNavigation();
+    window.addEventListener('icepos:user-context-ready', event => {
+        initializeUserSession(event.detail);
+    });
+    window.addEventListener('icepos:user-signed-out', cleanupUserSession);
     initAuth(); 
-    let datosCargados = false;
     
     renderProfiles();
 
@@ -227,7 +739,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 passInput.type = 'password';
                 btn.innerHTML = '<i data-lucide="eye" class="w-5 h-5 text-slate-400"></i>';
             }
-            if(window.lucide) window.lucide.createIcons();
+            if(window.lucide) window.lucide.createIcons({ root: btn });
         }
     });
 
@@ -246,13 +758,13 @@ document.addEventListener("DOMContentLoaded", () => {
             
             const originalHtml = btnLogin.innerHTML;
             btnLogin.innerHTML = '<div class="w-10 h-10 flex items-center justify-center shrink-0"><i data-lucide="loader-2" class="w-6 h-6 animate-spin text-sky-500"></i></div><span class="text-xs font-bold text-sky-500 mt-2">Cargando...</span>';
-            if(window.lucide) window.lucide.createIcons();
+            if(window.lucide) window.lucide.createIcons({ root: btnLogin });
             
             try {
                 await login(email, pass);
             } catch (err) {
                 btnLogin.innerHTML = originalHtml;
-                if(window.lucide) window.lucide.createIcons();
+                if(window.lucide) window.lucide.createIcons({ root: btnLogin });
                 
                 if (err.message === "CUENTA_ELIMINADA" || err.message === "CUENTA_DESACTIVADA") {
                     removeAccount(email);
@@ -266,38 +778,11 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    // Escuchador del Estado de Autenticación
-    onAuthStateChanged(auth, async (user) => {
-        if (user && !datosCargados) {
-            try {
-                await new Promise(resolve => setTimeout(resolve, 300));
-
-                await initUsuarios(); 
-                await cargarUsuariosYLocales(); 
-                
-                initVentas(); 
-                initPedidos(); 
-                initRespaldo();
-                initCaja(); 
-                initAnalisis(); 
-                
-                await initInventario(); 
-                if (typeof window.cargarInventarioDesdeFirebase === 'function') {
-                    await window.cargarInventarioDesdeFirebase();
-                }
-                
-                if (typeof window.renderProductosVenta === 'function') window.renderProductosVenta();
-                if (typeof window.actualizarCarritoUI === 'function') window.actualizarCarritoUI();
-                
-                datosCargados = true;
-            } catch(e) {
-                console.error("Error inicializando componentes modulares:", e);
-                datosCargados = true; 
-            }
-        } else if (!user) { 
-            datosCargados = false; 
-            renderProfiles();
-        }
+    // Mantiene actualizada únicamente la pantalla de perfiles. La carga de
+    // módulos se inicia cuando Auth confirma rol y sede mediante el evento de
+    // contexto, evitando consultas con una sede todavía vacía.
+    onAuthStateChanged(auth, user => {
+        if (!user) renderProfiles();
     });
 
     const lf = document.getElementById('login-form'); 
@@ -310,7 +795,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const ot = bs.innerHTML; 
             bs.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin inline"></i> Conectando...'; 
             bs.disabled = true;
-            if(window.lucide) window.lucide.createIcons(); 
+            if(window.lucide) window.lucide.createIcons({ root: bs }); 
             
             try { 
                 const inputUser = document.getElementById('login-username');
@@ -351,12 +836,32 @@ document.addEventListener("DOMContentLoaded", () => {
                 
                 bs.innerHTML = ot; 
                 bs.disabled = false; 
-                if(window.lucide) window.lucide.createIcons(); 
+                if(window.lucide) window.lucide.createIcons({ root: bs }); 
             }
         });
     }
     
     const hL = async () => { 
+        if (
+            isSaleOperationInProgress()
+            || Boolean(window.ticketEditadoContext?.saleId)
+        ) {
+            window.mostrarToast?.(
+                'Operación en curso',
+                'Termina o cancela la edición antes de cerrar sesión.',
+                'amber'
+            );
+            window.switchView?.('ventas');
+            return;
+        }
+        if (await isAnotherTabBusy()) {
+            window.mostrarToast?.(
+                'Otra pestaña está ocupada',
+                'Termina la venta o edición abierta en la otra pestaña antes de cerrar sesión.',
+                'amber'
+            );
+            return;
+        }
         try { 
             await logout(); 
             if(lf) lf.reset(); 

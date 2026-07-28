@@ -1,6 +1,6 @@
-import { db, collection, query, where, onSnapshot } from '../core/firebase-setup.js';
 import { formatMoney, getTodayDateStr, obtenerNombreCliente, escaparHtml } from '../utils/helpers.js';
 import { state } from '../core/store.js';
+import { subscribeSalesRange, subscribeExpensesRange } from '../core/data-service.js';
 
 let analysisData = []; 
 let analysisGastos = []; 
@@ -12,42 +12,270 @@ let unsubscribeGastos = null;
 let readyV = false;
 let readyG = false;
 let analisisInicializado = false; // CANDADO AÑADIDO
+let analysisEventsController = null;
+const analysisLoadErrors = new Set();
+let analysisByDate = new Map();
+let currentRangeSummary = createEmptyAnalysisSummary();
+let breakdownCloseTimer = null;
+
+function toAmount(value) {
+    const amount = Number(value);
+    return Number.isFinite(amount) ? amount : 0;
+}
+
+function createEmptyAnalysisSummary(dStr = '') {
+    return {
+        dStr,
+        ventas: [],
+        gastos: [],
+        tIng: 0,
+        tEfe: 0,
+        tYap: 0,
+        tTar: 0,
+        tOtros: 0,
+        tGas: 0
+    };
+}
+
+function getSalePaymentBreakdown(sale) {
+    const total = toAmount(sale?.total);
+    const hasCashValue = sale?.pago_efectivo !== undefined || sale?.pagoEfectivo !== undefined;
+    const hasDigitalValue = sale?.pago_yape !== undefined || sale?.pagoYape !== undefined;
+    let efectivo = toAmount(sale?.pago_efectivo ?? sale?.pagoEfectivo);
+    let yape = toAmount(sale?.pago_yape ?? sale?.pagoYape);
+    let tarjeta = 0;
+    const metodo = String(sale?.metodo_pago || sale?.metodoFinal || '').trim().toLowerCase();
+
+    // Compatibilidad con ventas antiguas que guardaban únicamente el método.
+    if (!hasCashValue && !hasDigitalValue) {
+        if (metodo === 'yape' || metodo === 'plin') yape = total;
+        else if (metodo === 'tarjeta') tarjeta = total;
+        else efectivo = total;
+    } else if (metodo === 'tarjeta' && efectivo === 0 && yape === 0) {
+        tarjeta = total;
+    }
+
+    const otros = total - efectivo - yape - tarjeta;
+    return {
+        efectivo,
+        yape,
+        tarjeta,
+        otros: Math.abs(otros) >= 0.005 ? otros : 0
+    };
+}
+
+function addSaleToSummary(summary, sale) {
+    const payment = getSalePaymentBreakdown(sale);
+    summary.ventas.push(sale);
+    summary.tIng += toAmount(sale?.total);
+    summary.tEfe += payment.efectivo;
+    summary.tYap += payment.yape;
+    summary.tTar += payment.tarjeta;
+    summary.tOtros += payment.otros;
+}
+
+function addExpenseToSummary(summary, expense) {
+    summary.gastos.push(expense);
+    summary.tGas += toAmount(expense?.monto);
+}
+
+function buildAnalysisAggregates(ventas, gastos) {
+    const rangeSummary = createEmptyAnalysisSummary();
+    const groupedByDate = new Map();
+    const getDaySummary = dStr => {
+        if (!groupedByDate.has(dStr)) {
+            groupedByDate.set(dStr, createEmptyAnalysisSummary(dStr));
+        }
+        return groupedByDate.get(dStr);
+    };
+
+    ventas.forEach(venta => {
+        addSaleToSummary(rangeSummary, venta);
+        if (venta?.fechaStr) addSaleToSummary(getDaySummary(venta.fechaStr), venta);
+    });
+
+    gastos.forEach(gasto => {
+        addExpenseToSummary(rangeSummary, gasto);
+        if (gasto?.fechaStr) addExpenseToSummary(getDaySummary(gasto.fechaStr), gasto);
+    });
+
+    return { rangeSummary, groupedByDate };
+}
+
+function toLocalDateInput(date) {
+    return [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0')
+    ].join('-');
+}
+
+function getLimaCalendarDate() {
+    const [year, month, day] = getTodayDateStr().split('-').map(Number);
+    // Mediodía evita que la conversión local del navegador cambie el día.
+    return new Date(year, month - 1, day, 12, 0, 0, 0);
+}
+
+function isAdminUser() {
+    return ['admin', 'administrador', 'master'].includes(
+        String(state.userRole || '').trim().toLowerCase()
+    );
+}
+
+function getOperationTime(record) {
+    const timestamp = record?.timestamp;
+    let date = null;
+    if (timestamp && typeof timestamp.toDate === 'function') date = timestamp.toDate();
+    else if (timestamp && typeof timestamp.toMillis === 'function') date = new Date(timestamp.toMillis());
+    else if (Number.isFinite(timestamp?.seconds)) date = new Date(timestamp.seconds * 1000);
+    else if (Number.isFinite(Number(record?.fechaHora))) date = new Date(Number(record.fechaHora));
+    return date && Number.isFinite(date.getTime())
+        ? date.toLocaleTimeString('es-PE', {
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: 'America/Lima'
+        })
+        : '--:--';
+}
+
+function ensureSelectedDayExpenseCard() {
+    const grossCard = document.getElementById('card-bruto-dia');
+    const cardsGrid = grossCard?.parentElement;
+    if (!cardsGrid) return;
+
+    cardsGrid.classList.remove('grid-cols-2');
+    cardsGrid.classList.add('grid-cols-3');
+
+    if (document.getElementById('card-gastos-dia')) return;
+    const expenseCard = document.createElement('div');
+    expenseCard.id = 'card-gastos-dia';
+    expenseCard.className = 'bg-slate-900 rounded-lg p-2 border border-slate-700 text-center cursor-pointer hover:border-red-500 transition-colors';
+    expenseCard.innerHTML = `
+        <p class="text-[10px] text-slate-400 uppercase mb-0.5">Gastos</p>
+        <p class="text-sm md:text-base font-bold text-red-400" id="selectedDayGastos">${formatMoney(0)}</p>
+    `;
+    cardsGrid.appendChild(expenseCard);
+}
 
 export function initAnalisis() {
     // FIX CRÍTICO: Prevenir duplicación de eventos al rotar turnos
     if (analisisInicializado) return;
     analisisInicializado = true;
+    analysisEventsController = new AbortController();
+    const eventOptions = { signal: analysisEventsController.signal };
 
     window.updateAnalysisRange = updateAnalysisRange; 
     window.setAnalysisRange = setAnalysisRange; 
     window.changeAnalysisMonth = changeAnalysisMonth; 
     window.showBreakdown = showBreakdown; 
     window.closeBreakdownModal = closeBreakdownModal;
+    ensureSelectedDayExpenseCard();
+    // Las acciones históricas reutilizan la lógica transaccional de Caja, pero
+    // el módulo completo solo se descarga cuando el usuario pulsa uno de estos
+    // botones.
+    window.editarOperacionCaja = (...args) => import('./ui-caja.js')
+        .then(module => module.editarOperacionCaja(...args))
+        .catch(error => {
+            console.error('No se pudo cargar la edición de Caja:', error);
+            window.mostrarToast?.('No se pudo cargar', 'Inténtalo nuevamente.', 'red');
+        });
+    window.eliminarOperacionCaja = (...args) => import('./ui-caja.js')
+        .then(module => module.eliminarOperacionCaja(...args))
+        .catch(error => {
+            console.error('No se pudo cargar la anulación de Caja:', error);
+            window.mostrarToast?.('No se pudo cargar', 'Inténtalo nuevamente.', 'red');
+        });
     
     // Configurar fechas por defecto (Mes actual en lugar de solo hoy para mejor vista de calendario)
-    const d = new Date();
+    const d = getLimaCalendarDate();
+    currentDateAnalysis = new Date(d);
     const firstDay = new Date(d.getFullYear(), d.getMonth(), 1);
     const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0);
     
-    document.getElementById('filterStartDate').value = firstDay.toISOString().split('T')[0]; 
-    document.getElementById('filterEndDate').value = lastDay.toISOString().split('T')[0];
+    document.getElementById('filterStartDate').value = toLocalDateInput(firstDay); 
+    document.getElementById('filterEndDate').value = toLocalDateInput(lastDay);
 
     // Eventos
     document.getElementById('filterStartDate')?.addEventListener('change', () => {
         currentDateAnalysis = new Date(document.getElementById('filterStartDate').value + "T00:00:00");
         updateAnalysisRange();
-    });
-    document.getElementById('filterEndDate')?.addEventListener('change', updateAnalysisRange);
-    document.getElementById('analisisLocalFilter')?.addEventListener('change', processAndRenderAnalysis); // En vivo desde RAM
+    }, eventOptions);
+    document.getElementById('filterEndDate')?.addEventListener('change', updateAnalysisRange, eventOptions);
+    document.getElementById('analisisLocalFilter')?.addEventListener('change', updateAnalysisRange, eventOptions);
     
-    document.getElementById('btn-filtro-hoy')?.addEventListener('click', () => setAnalysisRange('hoy'));
-    document.getElementById('btn-filtro-semana')?.addEventListener('click', () => setAnalysisRange('semana'));
-    document.getElementById('btn-filtro-mes')?.addEventListener('click', () => setAnalysisRange('mes'));
+    document.getElementById('btn-filtro-hoy')?.addEventListener('click', () => setAnalysisRange('hoy'), eventOptions);
+    document.getElementById('btn-filtro-semana')?.addEventListener('click', () => setAnalysisRange('semana'), eventOptions);
+    document.getElementById('btn-filtro-mes')?.addEventListener('click', () => setAnalysisRange('mes'), eventOptions);
     
-    document.getElementById('btn-mes-prev')?.addEventListener('click', () => changeAnalysisMonth(-1));
-    document.getElementById('btn-mes-next')?.addEventListener('click', () => changeAnalysisMonth(1));
+    document.getElementById('btn-mes-prev')?.addEventListener('click', () => changeAnalysisMonth(-1), eventOptions);
+    document.getElementById('btn-mes-next')?.addEventListener('click', () => changeAnalysisMonth(1), eventOptions);
+    document.getElementById('card-bruto-dia')?.addEventListener('click', () => {
+        if (window.currentSelectedDayObj) {
+            showBreakdown('BRUTO', window.currentSelectedDayObj);
+        }
+    }, eventOptions);
+    document.getElementById('card-ganancia-dia')?.addEventListener('click', () => {
+        if (window.currentSelectedDayObj) {
+            showBreakdown('CAJA', window.currentSelectedDayObj);
+        }
+    }, eventOptions);
+    document.getElementById('card-gastos-dia')?.addEventListener('click', () => {
+        if (window.currentSelectedDayObj) {
+            showBreakdown('GASTOS', window.currentSelectedDayObj);
+        }
+    }, eventOptions);
+    document.getElementById('analysisRangeSummary')?.addEventListener('click', event => {
+        const trigger = event.target.closest('[data-analysis-breakdown]');
+        if (trigger) showBreakdown(trigger.dataset.analysisBreakdown, null);
+    }, eventOptions);
 
     updateAnalysisRange(); 
+}
+
+export function destroyAnalisis() {
+    if (unsubscribeVentas) {
+        unsubscribeVentas();
+        unsubscribeVentas = null;
+    }
+    if (unsubscribeGastos) {
+        unsubscribeGastos();
+        unsubscribeGastos = null;
+    }
+    if (analysisEventsController) {
+        analysisEventsController.abort();
+        analysisEventsController = null;
+    }
+
+    analysisData = [];
+    analysisGastos = [];
+    readyV = false;
+    readyG = false;
+    analysisLoadErrors.clear();
+    analisisInicializado = false;
+    analysisByDate = new Map();
+    currentRangeSummary = createEmptyAnalysisSummary();
+    window.currentSelectedDayObj = null;
+    closeBreakdownModal();
+}
+
+function finishAnalysisLoad() {
+    if (!readyV || !readyG) return;
+    if (analysisLoadErrors.size === 0) {
+        processAndRenderAnalysis();
+        return;
+    }
+
+    const summary = document.getElementById('analysisRangeSummary');
+    if (summary) {
+        summary.innerHTML = `
+            <div class="col-span-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-center">
+                <p class="text-sm font-bold text-amber-400">No se pudo completar el análisis.</p>
+                <p class="text-xs text-slate-400 mt-1">Revisa la conexión y vuelve a intentarlo.</p>
+                <button id="btn-reintentar-analisis" class="mt-3 px-3 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold">Reintentar</button>
+            </div>`;
+        summary.querySelector('#btn-reintentar-analisis')
+            ?.addEventListener('click', updateAnalysisRange, { once: true });
+    }
 }
 
 function updateAnalysisRange() {
@@ -61,39 +289,42 @@ function updateAnalysisRange() {
 
     const cSum = document.getElementById('analysisRangeSummary');
     if(cSum) cSum.innerHTML = '<div class="col-span-4 text-center py-2"><i data-lucide="loader-2" class="w-5 h-5 animate-spin mx-auto text-sky-500"></i></div>';
-    if(window.lucide) window.lucide.createIcons();
+    if(window.lucide && cSum) window.lucide.createIcons({ root: cSum });
 
-    const qV = query(collection(db, "ventas"), where("fechaStr", ">=", fS), where("fechaStr", "<=", fE));
-    const qG = query(collection(db, "gastos"), where("fechaStr", ">=", fS), where("fechaStr", "<=", fE));
-    
     readyV = false;
     readyG = false;
+    analysisLoadErrors.clear();
+    const localFilter = document.getElementById('analisisLocalFilter');
+    const selectedLocal = localFilter ? localFilter.value : 'todas';
 
-    // Escucha en tiempo real de ventas
-    unsubscribeVentas = onSnapshot(qV, (snapshot) => {
-        analysisData = [];
-        // FIX: Time-jump bug
-        snapshot.forEach(d => { analysisData.push({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }); });
+    unsubscribeVentas = subscribeSalesRange(fS, fE, rows => {
+        analysisData = rows;
         readyV = true;
-        if(readyV && readyG) processAndRenderAnalysis();
-    }, (error) => {
+        finishAnalysisLoad();
+    }, error => {
         console.error("Error cargando ventas para análisis:", error);
-    });
+        analysisData = [];
+        readyV = true;
+        analysisLoadErrors.add('ventas');
+        finishAnalysisLoad();
+    }, selectedLocal);
 
-    // Escucha en tiempo real de gastos
-    unsubscribeGastos = onSnapshot(qG, (snapshot) => {
-        analysisGastos = [];
-        // FIX: Time-jump bug
-        snapshot.forEach(d => { analysisGastos.push({ id: d.id, ...d.data({ serverTimestamps: 'estimate' }) }); });
+    unsubscribeGastos = subscribeExpensesRange(fS, fE, rows => {
+        analysisGastos = rows;
         readyG = true;
-        if(readyV && readyG) processAndRenderAnalysis();
-    }, (error) => {
+        finishAnalysisLoad();
+    }, error => {
         console.error("Error cargando gastos para análisis:", error);
-    });
+        analysisGastos = [];
+        readyG = true;
+        analysisLoadErrors.add('gastos');
+        finishAnalysisLoad();
+    }, selectedLocal);
 }
 
 function processAndRenderAnalysis() {
-    let lF = document.getElementById('analisisLocalFilter')?.value || 'todas';
+    const localFilter = document.getElementById('analisisLocalFilter');
+    let lF = localFilter ? localFilter.value : 'todas';
     const miSedeId = state.userLocalId || "";
 
     let filteredVentas = [];
@@ -102,19 +333,19 @@ function processAndRenderAnalysis() {
     // FIX CRÍTICO: Procesar ventas con filtro local unificado
     analysisData.forEach(v => { 
         let mostrar = false;
-        if (state.userRole === 'admin' || state.userRole === 'master') {
+        if (isAdminUser()) {
             mostrar = (lF === 'todas') || (v.localId === lF) || (lF === '' && (!v.localId || v.localId === '' || v.localId === 'general'));
         } else {
             mostrar = (v.localId === miSedeId || (!v.localId && miSedeId === "") || (v.localId === 'general' && miSedeId === ""));
         }
         
-        if (mostrar && v.estado !== 'rechazado') filteredVentas.push(v); 
+        if (mostrar && String(v.estado || '').toLowerCase() !== 'rechazado') filteredVentas.push(v); 
     });
     
     // FIX CRÍTICO: Procesar gastos con filtro local unificado
     analysisGastos.forEach(g => { 
         let mostrar = false;
-        if (state.userRole === 'admin' || state.userRole === 'master') {
+        if (isAdminUser()) {
             mostrar = (lF === 'todas') || (g.localId === lF) || (lF === '' && (!g.localId || g.localId === '' || g.localId === 'general'));
         } else {
             mostrar = (g.localId === miSedeId || (!g.localId && miSedeId === "") || (g.localId === 'general' && miSedeId === ""));
@@ -122,44 +353,41 @@ function processAndRenderAnalysis() {
         if (mostrar) filteredGastos.push(g); 
     });
 
-    // Totales globales
-    let ing = 0, cost = 0, efe = 0, yap = 0, tar = 0, gas = 0;
-    filteredVentas.forEach(v => { 
-        ing += parseFloat(v.total||0); 
-        efe += parseFloat(v.pago_efectivo || v.pagoEfectivo || 0); 
-        yap += parseFloat(v.pago_yape || v.pagoYape || 0); 
-        if (String(v.metodo_pago).toLowerCase() === 'tarjeta' || String(v.metodoFinal).toLowerCase() === 'tarjeta') {
-            tar += parseFloat(v.total||0);
-        }
-    });
-    
-    filteredGastos.forEach(g => { gas += parseFloat(g.monto||0); });
+    // Una sola agrupación por fecha alimenta el resumen, calendario y detalle.
+    // Evita volver a recorrer todo el rango por cada casilla del calendario.
+    const aggregates = buildAnalysisAggregates(filteredVentas, filteredGastos);
+    currentRangeSummary = aggregates.rangeSummary;
+    analysisByDate = aggregates.groupedByDate;
+    const {
+        tIng: ing,
+        tGas: gas
+    } = currentRangeSummary;
 
     // Actualizar UI de Tarjetas Superiores
     const cSum = document.getElementById('analysisRangeSummary');
     if(cSum) {
         cSum.innerHTML = `
-            <div class="bg-white dark:bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-200 dark:border-slate-700 text-center cursor-pointer hover:border-sky-500 transition-colors shadow-sm" onclick="window.showBreakdown('BRUTO', null, ${ing}, ${efe}, ${yap}, ${tar}, ${gas})">
+            <button type="button" data-analysis-breakdown="BRUTO" aria-label="Ver desglose de ingresos" class="w-full bg-white dark:bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-200 dark:border-slate-700 text-center cursor-pointer hover:border-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 transition-colors shadow-sm">
                 <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
                     <i data-lucide="trending-up" class="w-3.5 h-3.5 text-sky-500"></i>
                     <p class="text-[10px] md:text-[11px] text-slate-500 uppercase font-bold tracking-wider">Ingresos</p>
                 </div>
                 <p class="text-sm md:text-xl font-black text-slate-800 dark:text-white" id="tot-ingresos">${formatMoney(ing)}</p>
-            </div>
-            <div class="bg-white dark:bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-200 dark:border-slate-700 text-center cursor-pointer hover:border-emerald-500 transition-colors shadow-sm" onclick="window.showBreakdown('GANANCIA', null, ${ing}, ${efe}, ${yap}, ${tar}, ${gas})">
+            </button>
+            <button type="button" data-analysis-breakdown="CAJA" aria-label="Ver desglose de caja neta" class="w-full bg-white dark:bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-200 dark:border-slate-700 text-center cursor-pointer hover:border-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 transition-colors shadow-sm">
                 <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
                     <i data-lucide="pie-chart" class="w-3.5 h-3.5 text-emerald-500"></i>
-                    <p class="text-[10px] md:text-[11px] text-slate-500 uppercase font-bold tracking-wider">Ganancia Neta</p>
+                    <p class="text-[10px] md:text-[11px] text-slate-500 uppercase font-bold tracking-wider">Caja Neta</p>
                 </div>
                 <p class="text-sm md:text-xl font-black text-emerald-500" id="tot-neta">${formatMoney(ing - gas)}</p>
-            </div>
-            <div class="bg-white dark:bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-200 dark:border-slate-700 text-center shadow-sm">
+            </button>
+            <button type="button" data-analysis-breakdown="GASTOS" aria-label="Ver desglose de gastos" class="w-full bg-white dark:bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-200 dark:border-slate-700 text-center cursor-pointer hover:border-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 transition-colors shadow-sm">
                 <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
                     <i data-lucide="trending-down" class="w-3.5 h-3.5 text-red-500"></i>
                     <p class="text-[10px] md:text-[11px] text-slate-500 uppercase font-bold tracking-wider">Gastos</p>
                 </div>
                 <p class="text-sm md:text-xl font-bold text-red-500" id="tot-gastos">${formatMoney(gas)}</p>
-            </div>
+            </button>
             <div class="bg-white dark:bg-slate-800 rounded-xl p-3 md:p-4 border border-slate-200 dark:border-slate-700 text-center shadow-sm">
                 <div class="flex items-center justify-center gap-1.5 mb-1 opacity-80">
                     <i data-lucide="list-checks" class="w-3.5 h-3.5 text-purple-500"></i>
@@ -170,30 +398,18 @@ function processAndRenderAnalysis() {
         `;
     }
     
-    if(window.lucide) window.lucide.createIcons();
-    renderCalendar(filteredVentas, filteredGastos);
+    if(window.lucide && cSum) window.lucide.createIcons({ root: cSum });
+    renderCalendar(analysisByDate);
 
     // Re-render en vivo del detalle del día seleccionado
     if (window.currentSelectedDayObj) {
         const dStr = window.currentSelectedDayObj.dStr;
-        const vDay = filteredVentas.filter(v => v.fechaStr === dStr);
-        const gDay = filteredGastos.filter(g => g.fechaStr === dStr);
-        
-        let tIngD = 0, tEfeD = 0, tYapD = 0, tTarD = 0, tGasD = 0;
-        vDay.forEach(v => { 
-            tIngD += parseFloat(v.total||0); 
-            tEfeD += parseFloat(v.pago_efectivo || v.pagoEfectivo || 0); 
-            tYapD += parseFloat(v.pago_yape || v.pagoYape || 0); 
-            if (String(v.metodo_pago).toLowerCase() === 'tarjeta' || String(v.metodoFinal).toLowerCase() === 'tarjeta') tTarD += parseFloat(v.total||0);
-        });
-        gDay.forEach(g => { tGasD += parseFloat(g.monto||0); });
-
-        showDayDetails(dStr, vDay, gDay, tIngD, tEfeD, tYapD, tTarD, tGasD);
+        showDayDetails(analysisByDate.get(dStr) || createEmptyAnalysisSummary(dStr));
     }
 }
 
 function setAnalysisRange(tipo) {
-    const d = new Date(); 
+    const d = getLimaCalendarDate(); 
     let fS = new Date(d); 
     let fE = new Date(d);
     
@@ -206,8 +422,8 @@ function setAnalysisRange(tipo) {
         fE = new Date(d.getFullYear(), d.getMonth() + 1, 0);
     }
     
-    document.getElementById('filterStartDate').value = fS.toISOString().split('T')[0];
-    document.getElementById('filterEndDate').value = fE.toISOString().split('T')[0];
+    document.getElementById('filterStartDate').value = toLocalDateInput(fS);
+    document.getElementById('filterEndDate').value = toLocalDateInput(fE);
     currentDateAnalysis = new Date(fS);
     updateAnalysisRange();
 }
@@ -224,14 +440,14 @@ function changeAnalysisMonth(delta) {
     const lastDay = new Date(y, m + 1, 0);
     
     // 3. Modificar los filtros de fecha visibles
-    document.getElementById('filterStartDate').value = firstDay.toISOString().split('T')[0];
-    document.getElementById('filterEndDate').value = lastDay.toISOString().split('T')[0];
+    document.getElementById('filterStartDate').value = toLocalDateInput(firstDay);
+    document.getElementById('filterEndDate').value = toLocalDateInput(lastDay);
     
     // 4. Forzar descarga de los datos del nuevo mes desde Firebase
     updateAnalysisRange();
 }
 
-function renderCalendar(filteredVentas, filteredGastos) {
+function renderCalendar(groupedByDate) {
     const y = currentDateAnalysis.getFullYear(); 
     const m = currentDateAnalysis.getMonth();
     const lbl = document.getElementById('calendarMonthLabel'); 
@@ -251,13 +467,8 @@ function renderCalendar(filteredVentas, filteredGastos) {
     
     for (let d = 1; d <= daysInM; d++) {
         const dStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-        
-        const vDay = filteredVentas.filter(v => v.fechaStr === dStr);
-        const gDay = filteredGastos.filter(g => g.fechaStr === dStr);
-        
-        let tIng = 0, tGas = 0;
-        vDay.forEach(v => { tIng += parseFloat(v.total||0); });
-        gDay.forEach(g => { tGas += parseFloat(g.monto||0); });
+        const daySummary = groupedByDate.get(dStr) || createEmptyAnalysisSummary(dStr);
+        const { tIng, tGas } = daySummary;
 
         const isToday = dStr === getTodayDateStr(); 
         const hasData = tIng > 0 || tGas > 0;
@@ -284,21 +495,20 @@ function renderCalendar(filteredVentas, filteredGastos) {
             </div>
         `;
         
-        div.onclick = () => showDayDetails(dStr, vDay, gDay, tIng, 0, 0, 0, tGas); // Totales exactos se recalculan en showDayDetails
+        div.onclick = () => showDayDetails(daySummary);
         grid.appendChild(div);
     }
 }
 
-function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
-    // Recalcular montos exactos para breakdown
-    let tEfe = 0, tYap = 0, tTar = 0;
-    ventas.forEach(v => {
-        tEfe += parseFloat(v.pago_efectivo || v.pagoEfectivo || 0); 
-        tYap += parseFloat(v.pago_yape || v.pagoYape || 0); 
-        if (String(v.metodo_pago).toLowerCase() === 'tarjeta' || String(v.metodoFinal).toLowerCase() === 'tarjeta') tTar += parseFloat(v.total||0);
-    });
-
-    window.currentSelectedDayObj = { dStr, ventas, gastos, tIng, tEfe, tYap, tTar, tGas };
+function showDayDetails(daySummary) {
+    const {
+        dStr,
+        ventas,
+        gastos,
+        tIng,
+        tGas
+    } = daySummary;
+    window.currentSelectedDayObj = daySummary;
     
     const fSplit = dStr.split('-');
     const dateObj = new Date(fSplit[0], fSplit[1]-1, fSplit[2]);
@@ -307,6 +517,8 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
     document.getElementById('selectedDateLabel').textContent = fechaLegible;
     document.getElementById('selectedDayIngresos').textContent = formatMoney(tIng);
     document.getElementById('selectedDayGanancias').textContent = formatMoney(tIng - tGas);
+    const selectedDayGastos = document.getElementById('selectedDayGastos');
+    if (selectedDayGastos) selectedDayGastos.textContent = formatMoney(tGas);
     
     const list = document.getElementById('selectedDayTransactions'); 
     if(!list) return;
@@ -314,16 +526,16 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
     
     if (ventas.length === 0 && gastos.length === 0) { 
         list.innerHTML = '<div class="text-center py-8"><i data-lucide="calendar-x" class="w-12 h-12 mx-auto text-slate-400 mb-2 opacity-50"></i><p class="text-xs text-slate-500">No hay movimientos registrados este día.</p></div>'; 
-        if(window.lucide) window.lucide.createIcons();
+        if(window.lucide) window.lucide.createIcons({ root: list });
         return; 
     }
     
-    const isAdmin = state.userRole === 'master' || state.userRole === 'admin';
+    const isAdmin = isAdminUser();
     let lHtml = '';
     
     ventas.forEach(v => {
         // FIX: Mostrar hora correcta o actual si no hay timestamp temporal
-        const time = v.timestamp ? new Date(v.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        const time = getOperationTime(v);
         const num = v.id.split('-')[1] || '--';
         const cantItems = v.items ? v.items.reduce((s,i) => s + i.cantidad, 0) : 0;
         const localInfo = v.localNombre ? ` • <span class="text-[9px] uppercase tracking-wider">${v.localNombre}</span>` : '';
@@ -340,8 +552,8 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
         if (isAdmin) {
             iHtml += `
             <div class="flex gap-1.5 mt-3 justify-end border-t border-slate-200 dark:border-slate-700/30 pt-2">
-                <button onclick="window.editarOperacionCaja('venta', '${v.id}', ${v.total})" class="text-slate-500 hover:text-amber-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
-                <button onclick="window.eliminarOperacionCaja('venta', '${v.id}')" class="text-slate-500 hover:text-red-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Anular</button>
+                <button onclick="window.editarOperacionCaja('${v.id}', 'venta')" class="text-slate-500 hover:text-amber-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
+                <button onclick="window.eliminarOperacionCaja('${v.id}', 'venta')" class="text-slate-500 hover:text-red-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Anular</button>
             </div>
             `;
         }
@@ -369,15 +581,15 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
     
     gastos.forEach(g => { 
         // FIX: Mostrar hora correcta o actual si no hay timestamp temporal
-        const time = g.timestamp ? new Date(g.timestamp.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        const time = getOperationTime(g);
         const localInfo = g.localNombre && g.localNombre !== 'Global' ? ` • <span class="text-[9px] uppercase tracking-wider">${g.localNombre}</span>` : '';
         
         let gHtml = `<div id="det-${g.id}" class="hidden mt-3 pt-2">`;
         if (isAdmin) {
             gHtml += `
             <div class="flex gap-1.5 justify-end border-t border-red-200 dark:border-red-500/20 pt-2">
-                <button onclick="window.editarOperacionCaja('gasto', '${g.id}', ${g.monto})" class="text-slate-500 hover:text-amber-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
-                <button onclick="window.eliminarOperacionCaja('gasto', '${g.id}')" class="text-slate-500 hover:text-red-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Borrar</button>
+                <button onclick="window.editarOperacionCaja('${g.id}', 'gasto')" class="text-slate-500 hover:text-amber-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
+                <button onclick="window.eliminarOperacionCaja('${g.id}', 'gasto')" class="text-slate-500 hover:text-red-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Borrar</button>
             </div>
             `;
         }
@@ -403,139 +615,191 @@ function showDayDetails(dStr, ventas, gastos, tIng, _tEfe, _tYap, _tTar, tGas) {
     });
     
     list.innerHTML = lHtml; 
-    if(window.lucide) window.lucide.createIcons();
+    if(window.lucide) window.lucide.createIcons({ root: list });
 }
 
 /**
- * Reconstruye el modal interno de detalle de ingresos exactamente como la imagen proporcionada.
+ * Muestra un resumen ya filtrado y agregado. El modal nunca vuelve a consultar
+ * ni a filtrar Firestore, por lo que sus cifras son las mismas de la tarjeta.
  */
-function showBreakdown(type, dayObj, gIng = null, gEfe = null, gYap = null, gTar = null, gGas = null) {
-    const m = document.getElementById('breakdownModal'); 
-    if(!m) return;
-    
-    const cL = document.getElementById('brkCategoriesList'); 
-    cL.innerHTML = '';
-    
-    let dVentas = dayObj ? dayObj.ventas : analysisData;
-    let tIng = dayObj ? dayObj.tIng : gIng;
-    let tEfe = dayObj ? dayObj.tEfe : gEfe;
-    let tYap = dayObj ? dayObj.tYap : gYap;
-    let tTar = dayObj ? dayObj.tTar : gTar;
-    let tGas = dayObj ? dayObj.tGas : gGas;
-    
-    const fechaText = dayObj ? dayObj.dStr : `${document.getElementById('filterStartDate').value} - ${document.getElementById('filterEndDate').value}`;
-    
-    const paymentContainer = document.getElementById('brkEfectivo').parentElement.parentElement;
-    
-    if (type === 'BRUTO') {
-        document.getElementById('brkTitle').innerHTML = `
-            <div class="flex flex-col">
-                <span class="text-lg font-bold text-slate-800 dark:text-white">Desglose de Ingresos (Bruto)</span>
-                <span class="text-[10px] text-slate-500 font-normal mt-0.5">${fechaText}</span>
-            </div>
-        `;
-        
-        paymentContainer.innerHTML = `
-            <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mb-2">
-                <span class="text-sm font-bold text-slate-800 dark:text-white flex items-center"><i data-lucide="banknote" class="w-4 h-4 inline mr-2 text-emerald-500"></i> Efectivo</span>
-                <span class="font-black text-slate-800 dark:text-white text-base">${formatMoney(tEfe)}</span>
-            </div>
-            <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mb-2">
-                <span class="text-sm font-bold text-slate-800 dark:text-white flex items-center"><i data-lucide="alert-circle" class="w-4 h-4 inline mr-2 text-purple-500"></i> Yape / Plin</span>
-                <span class="font-black text-slate-800 dark:text-white text-base">${formatMoney(tYap)}</span>
-            </div>
-            <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
-                <span class="text-sm font-bold text-slate-800 dark:text-white flex items-center"><i data-lucide="credit-card" class="w-4 h-4 inline mr-2 text-sky-500"></i> Tarjeta</span>
-                <span class="font-black text-slate-800 dark:text-white text-base">${formatMoney(tTar)}</span>
-            </div>
-        `;
-        
-        let catTotals = {};
-        
-        // FIX CRÍTICO: Recalcular por las ventas ya filtradas en RAM usando la lógica unificada
-        let lF = document.getElementById('analisisLocalFilter')?.value || 'todas';
-        const miSedeId = state.userLocalId || "";
-        
-        dVentas.forEach(v => { 
-            let mostrar = false;
-            if (state.userRole === 'admin' || state.userRole === 'master') {
-                mostrar = (lF === 'todas') || (v.localId === lF) || (lF === '' && (!v.localId || v.localId === '' || v.localId === 'general'));
-            } else {
-                mostrar = (v.localId === miSedeId || (!v.localId && miSedeId === "") || (v.localId === 'general' && miSedeId === ""));
-            }
+function showBreakdown(type, dayObj) {
+    const modal = document.getElementById('breakdownModal');
+    const title = document.getElementById('brkTitle');
+    const paymentContainer = document.getElementById('brkPaymentSummary');
+    const categoriesContainer = document.getElementById('brkCategories');
+    const categoriesList = document.getElementById('brkCategoriesList');
+    if (!modal || !title || !paymentContainer || !categoriesContainer || !categoriesList) return;
 
-            if (mostrar && v.estado !== 'rechazado') {
-                v.items?.forEach(i => { 
-                    const catStr = String(i.categoria || 'otros').toLowerCase();
-                    if(catTotals[catStr] === undefined) catTotals[catStr] = 0;
-                    catTotals[catStr] += (i.precio * i.cantidad); 
-                }); 
-            }
+    const summary = dayObj || currentRangeSummary;
+    const normalizedType = String(type || 'BRUTO').trim().toUpperCase();
+    const isIncome = normalizedType === 'BRUTO' || normalizedType === 'INGRESOS';
+    const isExpenses = normalizedType === 'GASTOS';
+    const fechaText = dayObj
+        ? dayObj.dStr
+        : `${document.getElementById('filterStartDate')?.value || ''} - ${document.getElementById('filterEndDate')?.value || ''}`;
+    const neto = summary.tIng - summary.tGas;
+
+    const paymentRows = `
+        <div class="flex justify-between items-center bg-sky-50 dark:bg-sky-500/10 p-3 rounded-xl border border-sky-200 dark:border-sky-500/30 shadow-sm">
+            <span class="text-sm font-bold text-sky-700 dark:text-sky-400 flex items-center"><i data-lucide="trending-up" class="w-4 h-4 mr-2"></i> Ingresos</span>
+            <span class="font-black text-sky-700 dark:text-sky-400 text-base">${formatMoney(summary.tIng)}</span>
+        </div>
+        <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+            <span class="text-sm font-bold text-slate-800 dark:text-white flex items-center"><i data-lucide="banknote" class="w-4 h-4 mr-2 text-emerald-500"></i> Efectivo</span>
+            <span class="font-black text-slate-800 dark:text-white text-base">${formatMoney(summary.tEfe)}</span>
+        </div>
+        <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+            <span class="text-sm font-bold text-slate-800 dark:text-white flex items-center"><i data-lucide="smartphone" class="w-4 h-4 mr-2 text-purple-500"></i> Yape / Plin</span>
+            <span class="font-black text-slate-800 dark:text-white text-base">${formatMoney(summary.tYap)}</span>
+        </div>
+        ${Math.abs(summary.tTar) >= 0.005 ? `
+            <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                <span class="text-sm font-bold text-slate-800 dark:text-white flex items-center"><i data-lucide="credit-card" class="w-4 h-4 mr-2 text-cyan-500"></i> Tarjeta</span>
+                <span class="font-black text-slate-800 dark:text-white text-base">${formatMoney(summary.tTar)}</span>
+            </div>
+        ` : ''}
+        ${Math.abs(summary.tOtros) >= 0.005 ? `
+            <div class="flex justify-between items-center bg-amber-50 dark:bg-amber-500/10 p-3 rounded-xl border border-amber-200 dark:border-amber-500/30 shadow-sm">
+                <span class="text-sm font-bold text-amber-700 dark:text-amber-400 flex items-center"><i data-lucide="circle-dollar-sign" class="w-4 h-4 mr-2"></i> Otros / ajuste</span>
+                <span class="font-black text-amber-700 dark:text-amber-400 text-base">${formatMoney(summary.tOtros)}</span>
+            </div>
+        ` : ''}
+    `;
+
+    if (isIncome) {
+        title.innerHTML = `
+            <div class="flex flex-col">
+                <span class="text-lg font-bold text-slate-800 dark:text-white">Desglose de Ingresos</span>
+                <span class="text-[10px] text-slate-500 font-normal mt-0.5">${escaparHtml(fechaText)}</span>
+            </div>
+        `;
+        paymentContainer.innerHTML = paymentRows;
+
+        const categoryTotals = new Map();
+        summary.ventas.forEach(venta => {
+            venta.items?.forEach(item => {
+                const category = String(item.categoria || 'otros').trim().toLowerCase() || 'otros';
+                categoryTotals.set(
+                    category,
+                    (categoryTotals.get(category) || 0) + toAmount(item.precio) * toAmount(item.cantidad)
+                );
+            });
         });
-        
-        let htmlCats = `<p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 mt-4">Desglose por Categorías</p>`;
-        
-        for (const [catName, totalCat] of Object.entries(catTotals)) {
+
+        let categoriesHtml = '<p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 mt-4">Desglose por categorías</p>';
+        if (categoryTotals.size === 0) {
+            categoriesHtml += '<p class="text-xs text-slate-500 text-center py-3">No hay ventas en este periodo.</p>';
+        }
+        for (const [category, total] of categoryTotals) {
             let icon = 'tag';
-            if (catName.includes('cerveza') || catName.includes('vaso')) icon = 'cup-soda';
-            if (catName.includes('vodka') || catName.includes('ron') || catName.includes('vino')) icon = 'wine';
-            if (catName.includes('extra') || catName.includes('tabaco') || catName.includes('snack')) icon = 'package';
-            if (catName.includes('gaseosa')) icon = 'droplets';
-            
-            htmlCats += `
+            if (category.includes('cerveza') || category.includes('vaso')) icon = 'cup-soda';
+            if (category.includes('vodka') || category.includes('ron') || category.includes('vino')) icon = 'wine';
+            if (category.includes('extra') || category.includes('tabaco') || category.includes('snack')) icon = 'package';
+            if (category.includes('gaseosa')) icon = 'droplets';
+            categoriesHtml += `
                 <div class="flex justify-between items-center bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-200 dark:border-slate-700/50 mb-2 shadow-sm">
-                    <div class="flex items-center gap-3">
-                        <i data-lucide="${icon}" class="w-4 h-4 text-slate-500"></i>
-                        <span class="text-sm font-bold text-slate-800 dark:text-white capitalize">${catName}</span>
+                    <div class="flex items-center gap-3 min-w-0">
+                        <i data-lucide="${icon}" class="w-4 h-4 text-slate-500 shrink-0"></i>
+                        <span class="text-sm font-bold text-slate-800 dark:text-white capitalize truncate">${escaparHtml(category)}</span>
                     </div>
-                    <span class="text-sm text-emerald-500 font-bold">${formatMoney(totalCat)}</span>
+                    <span class="text-sm text-emerald-500 font-bold shrink-0 ml-2">${formatMoney(total)}</span>
                 </div>
             `;
         }
-        
-        cL.innerHTML = htmlCats;
-        document.getElementById('brkCategories').classList.remove('hidden');
-        
-    } else {
-        document.getElementById('brkTitle').innerHTML = `
+        categoriesList.innerHTML = categoriesHtml;
+    } else if (isExpenses) {
+        title.innerHTML = `
             <div class="flex flex-col">
-                <span class="text-lg font-bold text-slate-800 dark:text-white">Análisis de Ganancia</span>
-                <span class="text-[10px] text-slate-500 font-normal mt-0.5">${fechaText}</span>
+                <span class="text-lg font-bold text-slate-800 dark:text-white">Desglose de Gastos</span>
+                <span class="text-[10px] text-slate-500 font-normal mt-0.5">${escaparHtml(fechaText)}</span>
             </div>
         `;
-        
         paymentContainer.innerHTML = `
-            <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mb-2">
-                <span class="text-sm font-bold text-slate-800 dark:text-white flex items-center"><i data-lucide="trending-up" class="w-4 h-4 inline mr-2 text-sky-500"></i> Ingreso Total</span>
-                <span class="font-black text-slate-800 dark:text-white text-base">${formatMoney(tIng)}</span>
-            </div>
             <div class="flex justify-between items-center bg-red-50 dark:bg-red-500/10 p-3 rounded-xl border border-red-200 dark:border-red-500/30 shadow-sm">
-                <span class="text-sm font-bold text-red-500 flex items-center"><i data-lucide="trending-down" class="w-4 h-4 inline mr-2 text-red-500"></i> Gastos/Retiros</span>
-                <span class="font-black text-red-500 text-base">-${formatMoney(tGas)}</span>
+                <span class="text-sm font-bold text-red-600 dark:text-red-400 flex items-center"><i data-lucide="trending-down" class="w-4 h-4 mr-2"></i> Gastos</span>
+                <span class="font-black text-red-600 dark:text-red-400 text-base">${formatMoney(summary.tGas)}</span>
+            </div>
+            <div class="flex justify-between items-center bg-white dark:bg-slate-800 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                <span class="text-sm font-bold text-slate-600 dark:text-slate-300 flex items-center"><i data-lucide="list-checks" class="w-4 h-4 mr-2 text-slate-500"></i> Movimientos</span>
+                <span class="font-black text-slate-800 dark:text-white text-base">${summary.gastos.length}</span>
             </div>
         `;
-        
-        cL.innerHTML = `
-            <div class="bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 p-4 rounded-xl mt-4 flex justify-between items-center shadow-sm">
-                <div>
-                    <p class="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">Caja Neta Real</p>
-                    <p class="text-xs text-emerald-600/70 dark:text-emerald-500/70">Dinero disponible tras egresos</p>
+
+        const expenseTotals = new Map();
+        summary.gastos.forEach(gasto => {
+            const label = String(gasto.categoria || gasto.tipo || gasto.descripcion || 'Otros').trim() || 'Otros';
+            expenseTotals.set(label, (expenseTotals.get(label) || 0) + toAmount(gasto.monto));
+        });
+
+        let expensesHtml = '<p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 mt-4">Detalle de egresos</p>';
+        if (expenseTotals.size === 0) {
+            expensesHtml += '<p class="text-xs text-slate-500 text-center py-3">No hay gastos en este periodo.</p>';
+        }
+        for (const [label, total] of expenseTotals) {
+            expensesHtml += `
+                <div class="flex justify-between items-center bg-red-50 dark:bg-red-500/5 p-3 rounded-xl border border-red-200 dark:border-red-500/20 mb-2 shadow-sm">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <i data-lucide="receipt" class="w-4 h-4 text-red-500 shrink-0"></i>
+                        <span class="text-sm font-bold text-slate-800 dark:text-white truncate">${escaparHtml(label)}</span>
+                    </div>
+                    <span class="text-sm text-red-500 font-bold shrink-0 ml-2">${formatMoney(total)}</span>
                 </div>
-                <span class="text-2xl font-black text-emerald-500">${formatMoney(tIng - tGas)}</span>
+            `;
+        }
+        categoriesList.innerHTML = expensesHtml;
+    } else {
+        const netPanelClasses = neto >= 0
+            ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30'
+            : 'bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/30';
+        const netLabelClasses = neto >= 0
+            ? 'text-emerald-600 dark:text-emerald-400'
+            : 'text-red-600 dark:text-red-400';
+        const netDescriptionClasses = neto >= 0
+            ? 'text-emerald-600/70 dark:text-emerald-500/70'
+            : 'text-red-600/70 dark:text-red-500/70';
+        const netValueClasses = neto >= 0 ? 'text-emerald-500' : 'text-red-500';
+        title.innerHTML = `
+            <div class="flex flex-col">
+                <span class="text-lg font-bold text-slate-800 dark:text-white">Análisis de Caja Neta</span>
+                <span class="text-[10px] text-slate-500 font-normal mt-0.5">${escaparHtml(fechaText)}</span>
             </div>
         `;
-        document.getElementById('brkCategories').classList.remove('hidden');
+        paymentContainer.innerHTML = `
+            ${paymentRows}
+            <div class="flex justify-between items-center bg-red-50 dark:bg-red-500/10 p-3 rounded-xl border border-red-200 dark:border-red-500/30 shadow-sm">
+                <span class="text-sm font-bold text-red-600 dark:text-red-400 flex items-center"><i data-lucide="trending-down" class="w-4 h-4 mr-2"></i> Gastos</span>
+                <span class="font-black text-red-600 dark:text-red-400 text-base">${formatMoney(summary.tGas)}</span>
+            </div>
+        `;
+        categoriesList.innerHTML = `
+            <div class="${netPanelClasses} border p-4 rounded-xl mt-4 flex justify-between items-center gap-3 shadow-sm">
+                <div>
+                    <p class="text-[10px] font-bold ${netLabelClasses} uppercase tracking-widest mb-1">Caja Neta</p>
+                    <p class="text-xs ${netDescriptionClasses}">Ingresos menos gastos</p>
+                </div>
+                <span class="text-2xl font-black ${netValueClasses} shrink-0">${formatMoney(neto)}</span>
+            </div>
+        `;
     }
-    
-    m.classList.remove('hidden'); 
-    setTimeout(() => m.classList.remove('opacity-0'), 10); 
-    if(window.lucide) window.lucide.createIcons();
+
+    if (breakdownCloseTimer) {
+        clearTimeout(breakdownCloseTimer);
+        breakdownCloseTimer = null;
+    }
+    categoriesContainer.classList.remove('hidden');
+    modal.classList.remove('hidden');
+    setTimeout(() => modal.classList.remove('opacity-0'), 10);
+    if(window.lucide) window.lucide.createIcons({ root: modal });
 }
 
 function closeBreakdownModal() { 
     const m = document.getElementById('breakdownModal'); 
     if(m) {
+        if (breakdownCloseTimer) clearTimeout(breakdownCloseTimer);
         m.classList.add('opacity-0'); 
-        setTimeout(() => m.classList.add('hidden'), 300); 
+        breakdownCloseTimer = setTimeout(() => {
+            m.classList.add('hidden');
+            breakdownCloseTimer = null;
+        }, 300); 
     }
 }

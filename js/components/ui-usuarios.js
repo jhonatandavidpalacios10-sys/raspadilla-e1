@@ -1,5 +1,6 @@
-import { db, collection, getDocs, doc, updateDoc, deleteDoc, setDoc, getDoc, secondaryAuth, createUserWithEmailAndPassword, updatePassword, signInWithEmailAndPassword, query, where, writeBatch } from '../core/firebase-setup.js';
+import { db, collection, getDocs, addDoc, doc, updateDoc, deleteDoc, setDoc, getDoc, secondaryAuth, createUserWithEmailAndPassword, updatePassword, signInWithEmailAndPassword, query, where, writeBatch } from '../core/firebase-setup.js';
 import { state } from '../core/store.js';
+import { populateLocationFilters } from '../core/data-service.js';
 
 let listaUsuariosEl, listaLocalesEl, selectLocalUsuario; 
 const MASTER_UID = "kRG6hOWsWHfoJwWLCXAkqRuVNLk2";
@@ -76,7 +77,7 @@ async function sincronizarDirectorioLogin() {
             if (btn) {
                 btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline mr-2"></i> Procesando...';
                 btn.disabled = true;
-                if(window.lucide) window.lucide.createIcons();
+                if(window.lucide) window.lucide.createIcons({ root: btn });
             }
 
             try {
@@ -115,7 +116,7 @@ async function sincronizarDirectorioLogin() {
                 if (btn) {
                     btn.innerHTML = originalHtml;
                     btn.disabled = false;
-                    if(window.lucide) window.lucide.createIcons();
+                    if(window.lucide) window.lucide.createIcons({ root: btn });
                 }
             }
         });
@@ -185,7 +186,7 @@ function abrirModalEditarUsuario(uid, username, email, oldPass, rol, localId, lo
     
     m.classList.remove('hidden'); 
     setTimeout(() => m.classList.remove('opacity-0'), 10);
-    if(window.lucide) window.lucide.createIcons();
+    if(window.lucide) window.lucide.createIcons({ root: m });
 }
 
 async function ejecutarEditarUsuario() {
@@ -209,7 +210,7 @@ async function ejecutarEditarUsuario() {
     const btn = document.getElementById('btn-confirm-edit-user'); 
     const originalText = btn.innerHTML;
     btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline"></i> Actualizando...'; 
-    if(window.lucide) window.lucide.createIcons(); 
+    if(window.lucide) window.lucide.createIcons({ root: btn }); 
     btn.disabled = true;
 
     try {
@@ -306,24 +307,21 @@ async function cargarLocales() {
         state.locales = []; 
         let html = '';
         
-        let optionsHtml = '<option value="todas">Todas las Sedes / General</option>'; 
         let asignHtml = '<option value="">Sin Asignar</option>';
         
         snap.forEach(d => { 
             const loc = { id: d.id, ...d.data() }; 
             state.locales.push(loc); 
             html += `<div class="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-3 rounded-xl flex items-center justify-between mb-2 transition-colors hover:border-emerald-500/50"><div><span class="font-bold text-slate-800 dark:text-white text-sm">${loc.nombre}</span></div><div class="flex gap-2"><button data-action="eliminar-local" data-id="${loc.id}" class="text-slate-400 hover:text-red-500 p-1 transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div></div>`; 
-            optionsHtml += `<option value="${loc.id}">${loc.nombre}</option>`; 
             asignHtml += `<option value="${loc.id}">${loc.nombre}</option>`;
         });
-        
-        optionsHtml += '<option value="">Sin Asignar / Antiguas</option>';
+        state.locales.sort((a, b) => (
+            String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es')
+        ));
 
         listaLocalesEl.innerHTML = html || '<p class="text-xs text-slate-500 p-2">Sin sucursales registradas.</p>';
         if (selectLocalUsuario) selectLocalUsuario.innerHTML = asignHtml;
-        
-        const selectoresGlobales = ['filtro-local-caja', 'analisisLocalFilter', 'filtro-local-pedidos', 'exportLocalFilter'];
-        selectoresGlobales.forEach(f => { const el = document.getElementById(f); if(el) el.innerHTML = optionsHtml; });
+        populateLocationFilters();
 
     } catch (e) { console.error("Error al cargar sedes:", e); }
 }
@@ -360,7 +358,7 @@ async function cargarUsuarios() {
         }
         
         listaUsuariosEl.innerHTML = html || '<p class="text-xs text-slate-500 p-2">Sin usuarios.</p>'; 
-        if (window.lucide) window.lucide.createIcons();
+        if (window.lucide) window.lucide.createIcons({ root: listaUsuariosEl });
     } catch (e) {
         console.error("Error cargando usuarios:", e);
     }
@@ -381,7 +379,7 @@ function genU(u, opts) {
     
     if (isPrivileged) {
         const permisosJson = (u.permisos && u.permisos.length > 0) ? JSON.stringify(u.permisos).replace(/"/g, '&quot;') : '';
-        const btnEditHtml = `<button data-action="editar-pass" data-uid="${u.uid}" data-username="${usernameDisplay}" data-email="${u.email}" data-oldpass="${u.pass_visible || ''}" data-rol="${u.rol}" data-localid="${u.localId || ''}" data-localnombre="${u.localNombre || ''}" data-permisos="${permisosJson}" title="Editar Cuenta" class="text-amber-500 hover:text-amber-600 p-0.5 ml-1 transition-colors"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>`;
+        const btnEditHtml = `<button data-action="editar-pass" data-uid="${u.uid}" data-username="${usernameDisplay}" data-email="${u.email}" data-oldpass="${u.pass_visible || ''}" data-rol="${u.rol}" data-localid="${u.localId || ''}" data-localnombre="${u.localNombre || ''}" data-permisos="${permisosJson}" title="Editar Cuenta" class="min-h-8 min-w-8 flex items-center justify-center text-amber-500 hover:text-amber-600 p-0.5 ml-1 transition-colors"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i></button>`;
         passHtml = `<div class="flex items-center gap-1 mt-1 bg-slate-100 dark:bg-slate-900 w-fit px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700"><span class="text-[10px] text-sky-500 font-mono tracking-wider">${passDisplay}</span>${u.pass_visible ? `<button data-action="copiar-pass" data-pass="${u.pass_visible}" title="Copiar Contraseña" class="text-slate-400 hover:text-slate-600 dark:hover:text-white p-0.5 transition-colors"><i data-lucide="copy" class="w-3.5 h-3.5"></i></button>` : ''}${btnEditHtml}</div>`;
     }
 
@@ -409,17 +407,17 @@ function genU(u, opts) {
     }
     
     const inactiveBadge = isInactive ? `<span class="bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-500/30 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ml-2">Desactivado</span>` : '';
-    const renderRoleSelector = isMe ? `<span class="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 ${roleTextColor} rounded px-2 py-1 text-xs font-bold uppercase tracking-wider">${u.rol}</span>` : `<select data-action="cambiar-rol" data-uid="${u.uid}" class="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded px-1 py-1 text-xs cursor-pointer outline-none focus:border-sky-500 transition-colors">${roleOptions}</select>`;
+    const renderRoleSelector = isMe ? `<span class="min-h-11 flex items-center bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 ${roleTextColor} rounded-lg px-2 py-1 text-xs font-bold uppercase tracking-wider">${u.rol}</span>` : `<select data-action="cambiar-rol" data-uid="${u.uid}" class="min-h-11 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded-lg px-2 py-1 text-xs cursor-pointer outline-none focus:border-sky-500 transition-colors">${roleOptions}</select>`;
 
     // Mostrar el correo oculto real solo si es Master
     const correoOcultoHtml = state.userRole === 'master' ? `<p class="text-[9px] text-slate-400 font-mono mt-0.5" title="Correo interno del sistema">${u.email}</p>` : '';
 
     return `
-    <div class="border ${cardBorderColor} rounded-xl p-3 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-2 mb-2 transition-all hover:shadow-md">
-        <div class="flex items-center gap-3">
+    <div class="border ${cardBorderColor} rounded-xl p-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-2 transition-all hover:shadow-md min-w-0">
+        <div class="flex items-center gap-3 min-w-0">
             <div class="w-8 h-8 rounded-full ${userIconBg} flex items-center justify-center ${userIconColor} shrink-0"><i data-lucide="${userIconType}" class="w-4 h-4"></i></div>
-            <div>
-                <p class="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2 capitalize">${usernameDisplay} ${isMe ? '<span class="text-[9px] bg-slate-800 text-white px-1.5 py-0.5 rounded uppercase">Tú</span>' : ''} ${inactiveBadge}</p>
+            <div class="min-w-0">
+                <p class="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2 capitalize min-w-0"><span class="truncate">${usernameDisplay}</span> ${isMe ? '<span class="text-[9px] bg-slate-800 text-white px-1.5 py-0.5 rounded uppercase shrink-0">Tú</span>' : ''} ${inactiveBadge}</p>
                 <p class="text-[10px] ${roleTextColor}">Rol: <span class="uppercase font-bold tracking-wide">${u.rol}</span></p>
                 ${correoOcultoHtml}
                 ${passHtml}
@@ -427,10 +425,10 @@ function genU(u, opts) {
         </div>
         ${(u.uid === MASTER_UID && !isMe) ? 
             `<span class="bg-amber-500 text-white px-2 py-0.5 rounded text-xs font-bold shadow-md">Dueño Principal</span>` : 
-            `<div class="flex gap-2 w-full lg:w-auto mt-2 lg:mt-0 items-center">
-                <select data-action="cambiar-local" data-uid="${u.uid}" class="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded px-1 py-1 text-xs cursor-pointer outline-none focus:border-sky-500 transition-colors">${opts.replace(`value="${u.localId || ''}"`, `value="${u.localId || ''}" selected`)}</select>
+            `<div class="flex gap-2 w-full sm:w-auto mt-2 sm:mt-0 items-center min-w-0">
+                <select data-action="cambiar-local" data-uid="${u.uid}" class="min-h-11 min-w-0 flex-1 sm:flex-none bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded-lg px-2 py-1 text-xs cursor-pointer outline-none focus:border-sky-500 transition-colors">${opts.replace(`value="${u.localId || ''}"`, `value="${u.localId || ''}" selected`)}</select>
                 ${renderRoleSelector}
-                ${!isMe ? `<button data-action="eliminar-usuario" data-uid="${u.uid}" data-activo="${!isInactive}" title="${isInactive ? 'Eliminar Definitivamente (Solo Master)' : 'Desactivar Acceso'}" class="text-red-500 hover:text-red-600 bg-red-50 dark:bg-slate-900 border border-red-200 dark:border-slate-700 rounded p-1 transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : ''}
+                ${!isMe ? `<button data-action="eliminar-usuario" data-uid="${u.uid}" data-activo="${!isInactive}" title="${isInactive ? 'Eliminar Definitivamente (Solo Master)' : 'Desactivar Acceso'}" class="min-h-11 min-w-11 flex items-center justify-center text-red-500 hover:text-red-600 bg-red-50 dark:bg-slate-900 border border-red-200 dark:border-slate-700 rounded-lg p-1 transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : ''}
             </div>`
         }
     </div>`;
@@ -439,17 +437,50 @@ function genU(u, opts) {
 async function guardarLocal(e) { 
     e.preventDefault(); 
     const n = document.getElementById('nuevo-local-nombre').value.trim(); 
-    if(n) { 
+    if (!n) return;
+    if (state.locales.some(local => (
+        String(local.nombre || '').trim().toLowerCase() === n.toLowerCase()
+    ))) {
+        window.mostrarToast?.('Sede duplicada', 'Ya existe una sede con ese nombre.', 'amber');
+        return;
+    }
+
+    try {
         await addDoc(collection(db, "locales"), { nombre: n }); 
-        cargarUsuariosYLocales(); 
+        await cargarUsuariosYLocales(); 
         document.getElementById('nuevo-local-nombre').value = ''; 
-    } 
+        window.mostrarToast?.('Sede creada', 'La sede ya está disponible en los filtros.', 'emerald');
+    } catch (error) {
+        console.error('No se pudo crear la sede:', error);
+        window.mostrarAlerta?.('No se pudo crear', 'Revisa la conexión e inténtalo nuevamente.', 'red');
+    }
 }
 
 async function eliminarLocal(id) { 
-    if(window.mostrarConfirmacion) window.mostrarConfirmacion("¿Eliminar sede definitivamente?", async () => { 
-        await deleteDoc(doc(db, "locales", id)); 
-        cargarUsuariosYLocales(); 
+    if(window.mostrarConfirmacion) window.mostrarConfirmacion("¿Eliminar sede definitivamente?", async () => {
+        try {
+            const referencedCollections = ['usuarios', 'productos', 'ventas', 'gastos'];
+            const references = await Promise.all(
+                referencedCollections.map(name => getDocs(
+                    query(collection(db, name), where('localId', '==', id))
+                ))
+            );
+            if (references.some(snapshot => !snapshot.empty)) {
+                window.mostrarAlerta?.(
+                    'Sede en uso',
+                    'No se puede eliminar mientras tenga usuarios, productos, ventas o gastos asociados.',
+                    'amber'
+                );
+                return;
+            }
+
+            await deleteDoc(doc(db, "locales", id)); 
+            await cargarUsuariosYLocales();
+            window.mostrarToast?.('Sede eliminada', 'La sede fue retirada de los filtros.', 'emerald');
+        } catch (error) {
+            console.error('No se pudo eliminar la sede:', error);
+            window.mostrarAlerta?.('No se pudo eliminar', 'Revisa la conexión e inténtalo nuevamente.', 'red');
+        }
     }); 
 }
 
@@ -473,7 +504,7 @@ async function guardarNuevoUsuario(e) {
     const btn = document.querySelector('#form-usuario button[type="submit"]'); 
     const btnOriginal = btn.innerHTML; 
     btn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin inline"></i> Creando...'; 
-    if(window.lucide) window.lucide.createIcons(); 
+    if(window.lucide) window.lucide.createIcons({ root: btn }); 
     btn.disabled = true;
 
     try { 

@@ -1,33 +1,51 @@
 import { db, collection, getDocs, doc, writeBatch, setDoc, getDoc, onSnapshot } from '../core/firebase-setup.js';
 import { state } from '../core/store.js';
+import { buildLegacyInventoryMovements } from '../core/sales-service.js';
+import { getTodayDateStr } from '../utils/helpers.js';
 
 let sysEstadoUnsubscribe = null;
 let respaldoInicializado = false; // CANDADO AÑADIDO
+let limpiandoLogoObsoleto = false;
+let respaldoEventsController = null;
+const LOGO_PREDETERMINADO = '/assets/img/logo.png';
 
 export function initRespaldo() { 
     // FIX CRÍTICO: Prevenir duplicación de eventos al rotar turnos
     if (respaldoInicializado) return;
     respaldoInicializado = true;
+    respaldoEventsController = new AbortController();
+    const eventOptions = { signal: respaldoEventsController.signal };
 
     // Eventos de Backup
-    document.getElementById('btn-exportar-backup')?.addEventListener('click', exportBackup);
+    document.getElementById('btn-exportar-backup')?.addEventListener('click', exportBackup, eventOptions);
     document.getElementById('btn-importar-backup')?.addEventListener('click', () => {
         document.getElementById('importFileInput').click();
-    });
-    document.getElementById('importFileInput')?.addEventListener('change', handleImportBackup);
+    }, eventOptions);
+    document.getElementById('importFileInput')?.addEventListener('change', handleImportBackup, eventOptions);
 
     // Evento: Borrado Seguro (Solo Master)
-    document.getElementById('btn-borrado-masivo')?.addEventListener('click', iniciarBorradoSeguro);
+    document.getElementById('btn-borrado-masivo')?.addEventListener('click', iniciarBorradoSeguro, eventOptions);
 
     // Conectar el botón de suspensión directamente
-    document.getElementById('btn-toggle-sistema')?.addEventListener('click', toggleSistemaLock);
+    document.getElementById('btn-toggle-sistema')?.addEventListener('click', toggleSistemaLock, eventOptions);
 
-    // FIX IDENTIDAD CORPORATIVA: Faltaba escuchar el cambio del input de archivo para el logo
-    document.getElementById('input-logo-app')?.addEventListener('change', subirLogoApp);
+    // Sin Firebase Storage no se guardan archivos dentro de Firestore. El logo
+    // personalizado se conserva únicamente como una URL HTTPS pública.
+    document.getElementById('input-logo-app')?.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            solicitarLogoUrl();
+        }
+    }, eventOptions);
+    const btnCambiarLogo = document.getElementById('btn-cambiar-logo');
+    if (btnCambiarLogo) {
+        btnCambiarLogo.onclick = solicitarLogoUrl;
+        btnCambiarLogo.innerHTML = '<i data-lucide="link" class="w-5 h-5"></i> Usar URL de Logo';
+    }
 
     // Funciones globales expuestas para el HTML
     window.toggleSistemaLock = toggleSistemaLock;
-    window.subirLogoApp = subirLogoApp;
+    window.subirLogoApp = solicitarLogoUrl;
     window.resetLogoApp = resetLogoApp;
     window.cambiarNombreApp = cambiarNombreApp;
     window.sincronizarPopularidad = sincronizarPopularidad; // NUEVA EXPOSICIÓN
@@ -40,7 +58,10 @@ export function initRespaldo() {
         
         if (!btn || !txt) return;
 
-        if (docSnap.exists() && docSnap.data().cerrado === true) {
+        const configuracion = docSnap.exists() ? docSnap.data() : {};
+        reemplazarLogoObsoleto(configuracion.logoUrl);
+
+        if (configuracion.cerrado === true) {
             txt.textContent = "Desconectado (Error 503)";
             txt.className = "text-xs font-bold text-red-500 animate-pulse";
             
@@ -59,8 +80,21 @@ export function initRespaldo() {
             btn.classList.remove('bg-emerald-600', 'hover:bg-emerald-500', 'shadow-emerald-500/20');
             btn.classList.add('bg-red-600', 'hover:bg-red-500', 'shadow-red-500/20');
         }
-        if (window.lucide) window.lucide.createIcons();
+        if (window.lucide) window.lucide.createIcons({ root: btn });
     });
+}
+
+export function destroyRespaldo() {
+    sysEstadoUnsubscribe?.();
+    sysEstadoUnsubscribe = null;
+    respaldoEventsController?.abort();
+    respaldoEventsController = null;
+    respaldoInicializado = false;
+    if (deleteTimer) {
+        clearInterval(deleteTimer);
+        deleteTimer = null;
+    }
+    document.getElementById('countdown-overlay')?.remove();
 }
 
 // -----------------------------------------------------
@@ -80,7 +114,7 @@ async function cambiarNombreApp() {
     const btn = document.getElementById('btn-cambiar-nombre');
     const originalText = btn.innerHTML;
     btn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Guardando...';
-    if(window.lucide) window.lucide.createIcons();
+    if(window.lucide) window.lucide.createIcons({ root: btn });
     btn.disabled = true;
 
     try {
@@ -97,45 +131,135 @@ async function cambiarNombreApp() {
     } finally {
         btn.innerHTML = originalText;
         btn.disabled = false;
-        if(window.lucide) window.lucide.createIcons();
+        if(window.lucide) window.lucide.createIcons({ root: btn });
     }
 }
 
-async function subirLogoApp(e) {
-    const file = e.target.files[0];
-    if (!file) return;
+function normalizarLogoUrl(valor) {
+    try {
+        const url = new URL(String(valor || '').trim());
+        return url.protocol === 'https:' ? url.href : null;
+    } catch (_) {
+        return null;
+    }
+}
 
-    if (file.size > 800 * 1024) {
-        if(window.mostrarAlerta) window.mostrarAlerta("Imagen muy pesada", "El logo debe pesar menos de 800KB para guardarse gratuitamente.", "amber");
+function validarCargaImagen(url) {
+    return new Promise((resolve, reject) => {
+        const imagen = new Image();
+        const timeout = setTimeout(() => reject(new Error('Tiempo de espera agotado')), 10000);
+        imagen.onload = () => {
+            clearTimeout(timeout);
+            resolve();
+        };
+        imagen.onerror = () => {
+            clearTimeout(timeout);
+            reject(new Error('La URL no devolvió una imagen accesible'));
+        };
+        imagen.src = url;
+    });
+}
+
+async function solicitarLogoUrl() {
+    const inputLogo = document.getElementById('input-logo-app');
+    const valor = inputLogo?.value || '';
+
+    const logoUrl = normalizarLogoUrl(valor);
+    if (!logoUrl) {
+        if (window.mostrarAlerta) {
+            window.mostrarAlerta('URL inválida', 'Ingresa una URL pública que comience con https://.', 'amber');
+        }
         return;
     }
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-        const base64 = event.target.result;
-        try {
-            if(window.mostrarToast) window.mostrarToast("Procesando", "Actualizando imagen corporativa...", "sky");
-            await setDoc(doc(db, "configuracion", "estado_sistema"), { 
-                logoUrl: base64,
-                fechaLogo: new Date().toISOString()
-            }, { merge: true });
-            if(window.mostrarToast) window.mostrarToast("Éxito", "Logo actualizado globalmente", "emerald");
-        } catch (err) {
-            console.error(err);
-            if(window.mostrarAlerta) window.mostrarAlerta("Error", "No se pudo guardar la imagen.", "red");
+    const btn = document.getElementById('btn-cambiar-logo');
+    const originalHtml = btn?.innerHTML || '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Validando...';
+        if (window.lucide) window.lucide.createIcons({ root: btn });
+    }
+
+    try {
+        await validarCargaImagen(logoUrl);
+        await setDoc(doc(db, 'configuracion', 'estado_sistema'), {
+            logoUrl,
+            fechaLogo: new Date().toISOString()
+        }, { merge: true });
+        try { localStorage.setItem('app_custom_logo', logoUrl); } catch (_) {}
+        if (inputLogo) inputLogo.value = '';
+        if (window.mostrarToast) window.mostrarToast('Éxito', 'Logo actualizado globalmente.', 'emerald');
+    } catch (err) {
+        console.error('No se pudo establecer el logo remoto:', err);
+        if (window.mostrarAlerta) {
+            window.mostrarAlerta(
+                'Logo no disponible',
+                'La URL no cargó una imagen pública. Revisa el enlace e inténtalo nuevamente.',
+                'red'
+            );
         }
-    };
-    reader.readAsDataURL(file);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+            if (window.lucide) window.lucide.createIcons({ root: btn });
+        }
+    }
+}
+
+function esLogoEmpaquetadoObsoleto(logoUrl) {
+    try {
+        const parsedUrl = new URL(logoUrl, window.location.origin);
+        return (
+            parsedUrl.origin === window.location.origin
+            && /^\/assets\/img\/logo\.[^/]+$/i.test(parsedUrl.pathname)
+            && parsedUrl.pathname !== LOGO_PREDETERMINADO
+        );
+    } catch (_) {
+        return false;
+    }
+}
+
+async function reemplazarLogoObsoleto(logoUrl) {
+    const requiereReemplazo = (
+        typeof logoUrl === 'string'
+        && (logoUrl.startsWith('data:') || esLogoEmpaquetadoObsoleto(logoUrl))
+    );
+    if (limpiandoLogoObsoleto || !requiereReemplazo) return;
+    if (state.userRole !== 'master') return;
+
+    limpiandoLogoObsoleto = true;
+    try {
+        await setDoc(doc(db, 'configuracion', 'estado_sistema'), {
+            logoUrl: LOGO_PREDETERMINADO,
+            fechaLogo: new Date().toISOString()
+        }, { merge: true });
+        try { localStorage.setItem('app_custom_logo', LOGO_PREDETERMINADO); } catch (_) {}
+    } catch (err) {
+        console.error('No se pudo reemplazar el logo obsoleto:', err);
+    } finally {
+        limpiandoLogoObsoleto = false;
+    }
 }
 
 async function resetLogoApp() {
     if(!window.mostrarConfirmacion) return;
     window.mostrarConfirmacion("¿Restaurar el nombre y logo originales de la app?", async () => {
-        await setDoc(doc(db, "configuracion", "estado_sistema"), { 
-            logoUrl: "assets/img/logo.svg",
-            nombreApp: "Raffaelito"
-        }, { merge: true });
-        window.location.reload();
+        try {
+            await setDoc(doc(db, "configuracion", "estado_sistema"), { 
+                logoUrl: LOGO_PREDETERMINADO,
+                nombreApp: "Raffaelito"
+            }, { merge: true });
+            try { localStorage.setItem('app_custom_logo', LOGO_PREDETERMINADO); } catch (_) {}
+            window.location.reload();
+        } catch (error) {
+            console.error('No se pudo restaurar la identidad visual:', error);
+            window.mostrarAlerta?.(
+                'No se pudo restaurar',
+                'Revisa la conexión e inténtalo nuevamente.',
+                'red'
+            );
+        }
     });
 }
 
@@ -167,11 +291,55 @@ async function toggleSistemaLock() {
 // -----------------------------------------------------
 // 3. EXPORTAR / IMPORTAR BACKUPS
 // -----------------------------------------------------
+function serializeBackupValue(value) {
+    if (value === null || value === undefined) return value;
+    if (value instanceof Date) {
+        return { __iceposType: 'timestamp', iso: value.toISOString() };
+    }
+    if (typeof value?.toDate === 'function') {
+        return { __iceposType: 'timestamp', iso: value.toDate().toISOString() };
+    }
+    if (Array.isArray(value)) return value.map(serializeBackupValue);
+    if (typeof value === 'object') {
+        return Object.fromEntries(
+            Object.entries(value).map(([key, child]) => [
+                key,
+                serializeBackupValue(child)
+            ])
+        );
+    }
+    return value;
+}
+
+function deserializeBackupValue(value) {
+    if (value === null || value === undefined) return value;
+    if (
+        typeof value === 'object'
+        && !Array.isArray(value)
+        && value.__iceposType === 'timestamp'
+        && typeof value.iso === 'string'
+    ) {
+        const date = new Date(value.iso);
+        if (Number.isFinite(date.getTime())) return date;
+    }
+    if (Array.isArray(value)) return value.map(deserializeBackupValue);
+    if (typeof value === 'object') {
+        return Object.fromEntries(
+            Object.entries(value).map(([key, child]) => [
+                key,
+                deserializeBackupValue(child)
+            ])
+        );
+    }
+    return value;
+}
+
 async function exportBackup() {
     const chkInv = document.getElementById('chkExpInv')?.checked; 
     const chkVentas = document.getElementById('chkExpVentas')?.checked; 
     const chkConf = document.getElementById('chkExpConf')?.checked;
-    const filtroLocal = document.getElementById('exportLocalFilter')?.value || 'todas';
+    const localFilter = document.getElementById('exportLocalFilter');
+    const filtroLocal = localFilter ? localFilter.value : 'todas';
     
     if (!chkInv && !chkVentas && !chkConf) { 
         if(window.mostrarAlerta) return window.mostrarAlerta('Error', 'Selecciona al menos una categoría.', 'amber'); else return; 
@@ -183,37 +351,55 @@ async function exportBackup() {
         const colecciones = []; 
         if(chkInv) colecciones.push('productos'); 
         if(chkVentas) colecciones.push('ventas', 'caja_diaria', 'gastos'); 
-        if(chkConf) colecciones.push('locales', 'usuarios', 'configuracion');
+        if(chkConf) colecciones.push('locales', 'usuarios', 'configuracion', 'directorio_login');
         
-        const backupData = {};
-        for (const col of colecciones) { 
-            const snap = await getDocs(collection(db, col)); 
+        const backupData = {
+            __meta: {
+                format: 'icepos-backup',
+                version: 2,
+                createdAt: new Date().toISOString(),
+                localFilter: filtroLocal
+            }
+        };
+        const snapshots = await Promise.all(
+            colecciones.map(async col => ({
+                col,
+                snap: await getDocs(collection(db, col))
+            }))
+        );
+
+        snapshots.forEach(({ col, snap }) => {
             backupData[col] = []; 
             snap.forEach(docSnap => {
                 const data = docSnap.data();
                 
-                // Filtro por local si no es 'todas'
-                if (filtroLocal !== 'todas') {
-                    if (col === 'ventas' || col === 'gastos' || col === 'caja_diaria' || col === 'usuarios') {
-                        if (data.localId !== filtroLocal && data.localId) return; // Salta este registro si no pertenece
-                    }
-                    if (col === 'productos') {
-                        // FIX: Siempre incluye los productos globales en todos los backups
-                        if (data.localId !== 'global' && data.localId !== filtroLocal && data.localId) return;
-                    }
+                const localId = data.localId || '';
+                const legacyMatch = !localId || localId === 'general';
+                if (filtroLocal !== 'todas' && ['ventas', 'gastos', 'caja_diaria', 'usuarios'].includes(col)) {
+                    const matches = filtroLocal === ''
+                        ? legacyMatch
+                        : localId === filtroLocal;
+                    if (!matches) return;
+                }
+                if (filtroLocal !== 'todas' && col === 'productos') {
+                    const matches = localId === 'global'
+                        || (filtroLocal === '' ? legacyMatch : localId === filtroLocal);
+                    if (!matches) return;
                 }
 
-                backupData[col].push({ id: docSnap.id, ...data }); 
+                backupData[col].push(serializeBackupValue({ ...data, id: docSnap.id })); 
             }); 
-        }
+        });
         
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData));
+        const blob = new Blob([JSON.stringify(backupData)], { type: 'application/json;charset=utf-8' });
+        const downloadUrl = URL.createObjectURL(blob);
         const downloadAnchorNode = document.createElement('a');
-        downloadAnchorNode.setAttribute("href", dataStr);
-        downloadAnchorNode.setAttribute("download", `Backup_${filtroLocal==='todas'?'General':filtroLocal}_${new Date().toISOString().split('T')[0]}.json`);
+        downloadAnchorNode.setAttribute("href", downloadUrl);
+        downloadAnchorNode.setAttribute("download", `Backup_${filtroLocal==='todas'?'General':(filtroLocal || 'SinAsignar')}_${getTodayDateStr()}.json`);
         document.body.appendChild(downloadAnchorNode);
         downloadAnchorNode.click();
         downloadAnchorNode.remove();
+        setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
         
         if(window.mostrarToast) window.mostrarToast('Éxito', 'Archivo JSON descargado', 'emerald');
     } catch (e) {
@@ -225,9 +411,11 @@ async function handleImportBackup(e) {
     const file = e.target.files[0];
     if (!file) return;
 
-    const chkInv = document.getElementById('chkImpInv')?.checked; 
-    const chkVentas = document.getElementById('chkImpVentas')?.checked; 
-    const chkConf = document.getElementById('chkImpConf')?.checked;
+    // La misma selección visible controla exportación y restauración. Antes se
+    // consultaban chkImp*, elementos que no existen en la interfaz.
+    const chkInv = document.getElementById('chkExpInv')?.checked; 
+    const chkVentas = document.getElementById('chkExpVentas')?.checked; 
+    const chkConf = document.getElementById('chkExpConf')?.checked;
     
     document.getElementById('importFileInput').value = '';
 
@@ -237,38 +425,59 @@ async function handleImportBackup(e) {
     }
     
     if(window.mostrarConfirmacion) {
-        window.mostrarConfirmacion('⚠️ Se sobrescribirán los datos de las categorías seleccionadas. ¿Continuar?', () => {
+        window.mostrarConfirmacion('Se reemplazarán los documentos incluidos en el archivo. Los registros adicionales actuales no se borrarán. ¿Continuar?', () => {
             const reader = new FileReader();
             reader.onload = async function(e) {
                 try {
-                    const data = JSON.parse(e.target.result); 
-                    window.mostrarAlerta('Restaurando', 'Aplicando respaldo...', 'sky');
+                    const data = JSON.parse(e.target.result);
+                    if (!data || Array.isArray(data) || typeof data !== 'object') {
+                        throw new Error('Formato de respaldo inválido');
+                    }
+
+                    if (window.mostrarAlerta) window.mostrarAlerta('Restaurando', 'Aplicando respaldo...', 'sky');
                     
-                    const batch = writeBatch(db); let operations = 0; const colPermitidas = [];
+                    const colPermitidas = [];
                     
                     if(chkInv) colPermitidas.push('productos'); 
                     if(chkVentas) colPermitidas.push('ventas', 'caja_diaria', 'gastos'); 
-                    if(chkConf) colPermitidas.push('locales', 'usuarios', 'configuracion');
-                    
+                    if(chkConf) colPermitidas.push('locales', 'usuarios', 'configuracion', 'directorio_login');
+
+                    const documentosParaRestaurar = [];
                     for (const [colName, docs] of Object.entries(data)) { 
                         if(colPermitidas.includes(colName) && Array.isArray(docs)) { 
-                            docs.forEach(d => { 
-                                const ref = doc(db, colName, d.id); 
-                                const docData = { ...d }; 
-                                delete docData.id; 
-                                batch.set(ref, docData); 
-                                operations++; 
+                            docs.forEach(d => {
+                                if (!d || typeof d !== 'object' || Array.isArray(d) || typeof d.id !== 'string' || !d.id) return;
+                                const docData = deserializeBackupValue({ ...d }); 
+                                delete docData.id;
+                                documentosParaRestaurar.push({
+                                    ref: doc(db, colName, d.id),
+                                    data: docData
+                                });
                             }); 
                         } 
                     }
-                    
-                    if(operations > 490) return window.mostrarAlerta('Error', 'El archivo de respaldo supera el límite por operación (500). Contacta a soporte técnico.', 'red');
-                    
-                    await batch.commit(); 
-                    window.mostrarAlerta('Éxito', 'Sistema restaurado. Reiniciando...', 'emerald'); 
+
+                    if (documentosParaRestaurar.length === 0) {
+                        if (window.mostrarAlerta) window.mostrarAlerta('Sin datos', 'El archivo no contiene registros de las áreas seleccionadas.', 'amber');
+                        return;
+                    }
+
+                    // Firestore admite hasta 500 escrituras por lote. Se usan
+                    // bloques de 450 para restaurar respaldos grandes sin alterar
+                    // el formato { coleccion: [{ id, ...campos }] } existente.
+                    for (let i = 0; i < documentosParaRestaurar.length; i += 450) {
+                        const batch = writeBatch(db);
+                        documentosParaRestaurar.slice(i, i + 450).forEach(item => {
+                            batch.set(item.ref, item.data);
+                        });
+                        await batch.commit();
+                    }
+
+                    if (window.mostrarAlerta) window.mostrarAlerta('Éxito', `${documentosParaRestaurar.length} registros restaurados. Reiniciando...`, 'emerald'); 
                     setTimeout(() => window.location.reload(), 2000);
                 } catch(err) { 
-                    window.mostrarAlerta('Error', 'El archivo está corrupto o no es válido.', 'red');
+                    console.error('Error restaurando respaldo:', err);
+                    if (window.mostrarAlerta) window.mostrarAlerta('Error', 'El archivo está corrupto, no es válido o no pudo restaurarse.', 'red');
                 }
             };
             reader.readAsText(file);
@@ -288,7 +497,7 @@ async function sincronizarPopularidad() {
         const originalText = btn.innerHTML;
         btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline mr-2"></i> Escaneando Base de Datos...';
         btn.disabled = true;
-        if(window.lucide) window.lucide.createIcons();
+        if(window.lucide) window.lucide.createIcons({ root: btn });
 
         try {
             // 1. Obtener TODO el historial de ventas de forma segura
@@ -298,13 +507,18 @@ async function sincronizarPopularidad() {
             // 2. Tally: Contar las cantidades vendidas de cada producto (ignorando los rechazados)
             ventasSnap.forEach(docSnap => {
                 const venta = docSnap.data();
-                if (venta.estado !== 'rechazado' && venta.items && Array.isArray(venta.items)) {
-                    venta.items.forEach(item => {
-                        if (item.productoId && item.productoId !== 'AJUSTE') {
-                            if (!contadorProductos[item.productoId]) {
-                                contadorProductos[item.productoId] = 0;
-                            }
-                            contadorProductos[item.productoId] += (item.cantidad || 1);
+                if (String(venta.estado || '').toLowerCase() !== 'rechazado') {
+                    const movements = Array.isArray(venta.inventarioMovimientos)
+                        && venta.inventarioMovimientos.length > 0
+                        ? venta.inventarioMovimientos
+                        : buildLegacyInventoryMovements(venta.items);
+
+                    movements.forEach(movement => {
+                        const productId = movement?.productoId || movement?.id;
+                        const quantity = Number(movement?.cantidad || 0);
+                        if (productId && Number.isFinite(quantity) && quantity > 0) {
+                            contadorProductos[productId] =
+                                (contadorProductos[productId] || 0) + quantity;
                         }
                     });
                 }
@@ -360,7 +574,7 @@ async function sincronizarPopularidad() {
         } finally {
             btn.innerHTML = originalText;
             btn.disabled = false;
-            if(window.lucide) window.lucide.createIcons();
+            if(window.lucide) window.lucide.createIcons({ root: btn });
         }
     });
 }
@@ -405,7 +619,7 @@ function iniciarBorradoSeguro() {
         </button>
     `;
     document.body.appendChild(overlay);
-    if(window.lucide) window.lucide.createIcons();
+    if(window.lucide) window.lucide.createIcons({ root: overlay });
 
     const timerEl = document.getElementById('countdown-timer');
     const cancelBtn = document.getElementById('btn-cancel-delete');
@@ -434,7 +648,7 @@ function iniciarBorradoSeguro() {
                 <h2 class="text-3xl font-bold animate-pulse">Eliminando registros de la Nube...</h2>
                 <p class="text-red-300 mt-4 text-sm">Por favor, no cierres la aplicación.</p>
             `;
-            if(window.lucide) window.lucide.createIcons();
+            if(window.lucide) window.lucide.createIcons({ root: overlay });
             
             await ejecutarBorradoBaseDatos(borrarVentas, borrarProductos);
             overlay.remove();

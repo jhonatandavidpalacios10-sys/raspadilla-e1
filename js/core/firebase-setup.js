@@ -1,6 +1,27 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-import { getFirestore, enableIndexedDbPersistence, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, increment, serverTimestamp, query, where, onSnapshot, orderBy, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence, inMemoryPersistence, createUserWithEmailAndPassword, updatePassword } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+import { initializeApp } from "firebase/app";
+import {
+    getFirestore,
+    initializeFirestore,
+    persistentLocalCache,
+    persistentMultipleTabManager,
+    collection,
+    doc,
+    setDoc,
+    getDoc,
+    getDocs,
+    addDoc,
+    updateDoc,
+    deleteDoc,
+    writeBatch,
+    increment,
+    serverTimestamp,
+    query,
+    where,
+    onSnapshot,
+    orderBy,
+    runTransaction
+} from "firebase/firestore";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence, inMemoryPersistence, createUserWithEmailAndPassword, updatePassword } from "firebase/auth";
 
 const firebaseConfig = { 
     apiKey: "AIzaSyBwpV1ilLgU2ULN7ZtGIcZdBe4ccktdBzk", 
@@ -13,10 +34,19 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig); 
-const db = getFirestore(app); 
+let db;
+try {
+    db = initializeFirestore(app, {
+        localCache: persistentLocalCache({
+            tabManager: persistentMultipleTabManager()
+        })
+    });
+} catch (error) {
+    console.warn('La caché persistente no está disponible; se usará memoria temporal.', error);
+    db = getFirestore(app);
+}
 const auth = getAuth(app);
 setPersistence(auth, browserLocalPersistence).catch(console.error); 
-enableIndexedDbPersistence(db).catch(console.warn);
 
 const secondaryApp = initializeApp(firebaseConfig, "SecondaryAppIcePOS");
 const secondaryAuth = getAuth(secondaryApp);

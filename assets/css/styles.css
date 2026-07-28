@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* ========================================================
    TEMA: ROJO SUAVE & AGUAMARINA
    Blindaje contra Modo Oscuro (Alto contraste asegurado)
@@ -261,25 +265,305 @@ body {
     }
 }
 
-/* Reserva exacta para el menú fijo y el área segura del iPhone. */
-@media (max-width: 639.98px) {
-    #app-container > nav {
-        height: calc(3.5rem + env(safe-area-inset-bottom));
-        padding-bottom: calc(0.25rem + env(safe-area-inset-bottom));
+/* --------------------------------------------------------
+   11. SHELL MÓVIL/TABLET: PANTALLA ÚTIL Y NAVEGACIÓN TÁCTIL
+   -------------------------------------------------------- */
+@media (max-width: 1023.98px) {
+    #app-navigation {
+        height: calc(3.75rem + env(safe-area-inset-bottom));
+        padding-bottom: env(safe-area-inset-bottom);
+        box-shadow: 0 -8px 24px rgba(30, 41, 59, 0.08) !important;
     }
 
     #app-container > main {
-        margin-bottom: calc(3.5rem + env(safe-area-inset-bottom));
+        margin-bottom: calc(3.75rem + env(safe-area-inset-bottom));
+        padding-top: env(safe-area-inset-top);
+    }
+
+    #toast-container {
+        top: calc(env(safe-area-inset-top) + 0.75rem);
+        right: 0.75rem;
+        left: 0.75rem;
+        align-items: flex-end;
+    }
+
+    #app-nav-items {
+        scroll-snap-type: x proximity;
+        overscroll-behavior-x: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .app-nav-button {
+        flex: 0 0 3.5rem;
+        min-width: 3.5rem;
+        min-height: 3.25rem;
+        scroll-snap-align: start;
+    }
+
+    .mobile-nav-actions {
+        width: 5.75rem;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        background: #fdfdfd !important;
+    }
+
+    .mobile-nav-action {
+        min-width: 2.75rem;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .view-toolbar {
+        min-height: 3.25rem;
+    }
+
+    .cash-card > p:last-child,
+    .cash-card > p:last-child span {
+        white-space: nowrap;
+    }
+
+    .users-grid {
+        align-content: start;
+    }
+
+    .analysis-workspace {
+        min-height: 0 !important;
+    }
+
+    .analysis-calendar-panel,
+    .analysis-detail-panel {
+        height: auto !important;
+    }
+
+    .analysis-calendar-panel #calendarGrid {
+        flex: none;
+        grid-auto-rows: minmax(5rem, auto);
+        overflow: visible;
+    }
+
+    /* En tablet vertical se mantienen las dos colas visibles, sin sidebar. */
+    @media (min-width: 640px) {
+        .orders-grid {
+            grid-template-columns: minmax(0, 1.2fr) minmax(18rem, 0.8fr);
+            overflow: hidden;
+        }
+
+        .orders-column,
+        .orders-list {
+            min-height: 0;
+        }
+
+        .cash-summary-grid {
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+        }
+
+        .cash-card > p:last-child {
+            font-size: clamp(1rem, 2.45vw, 1.35rem) !important;
+        }
     }
 }
 
-@media (min-width: 640px) and (max-width: 767.98px) {
-    #app-container > nav {
-        height: calc(4rem + env(safe-area-inset-bottom));
-        padding-bottom: calc(0.25rem + env(safe-area-inset-bottom));
+@media (max-width: 639.98px) {
+    .view-toolbar-subtitle {
+        display: none;
     }
 
-    #app-container > main {
-        margin-bottom: calc(4rem + env(safe-area-inset-bottom));
+    /* Pedidos: primero se recorre toda la preparación y luego los despachados. */
+    .orders-grid {
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+
+    .orders-column {
+        height: auto !important;
+        min-height: 0;
+        overflow: visible !important;
+        flex: 0 0 auto;
+    }
+
+    .orders-list {
+        overflow: visible !important;
+    }
+
+    .orders-column-heading {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        backdrop-filter: blur(8px);
+    }
+
+    #pedidos-pendientes-list [data-action],
+    #pedidos-listos-list [data-action] {
+        min-width: 2.75rem;
+        min-height: 2.75rem;
+    }
+
+    #pedidos-pendientes-list [data-action="despachar-pedido"] {
+        min-width: 0;
+    }
+
+    /* El catálogo se convierte en tarjetas; no requiere arrastre horizontal. */
+    .inventory-table-wrap {
+        overflow-y: auto;
+        overflow-x: hidden;
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
+    }
+
+    .inventory-table,
+    .inventory-table tbody {
+        display: block;
+        width: 100%;
+        min-width: 0 !important;
+    }
+
+    .inventory-table thead {
+        display: none;
+    }
+
+    .inventory-table tbody {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.625rem;
+    }
+
+    .inventory-table tr[data-product-id] {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.25rem 0.5rem;
+        padding: 0.75rem;
+        border: 1px solid #f2e8e8 !important;
+        border-radius: 0.875rem;
+        background: #ffffff;
+        box-shadow: 0 8px 18px rgba(224, 95, 95, 0.07);
+    }
+
+    .inventory-table tr[data-product-id] td {
+        display: flex;
+        min-width: 0;
+        padding: 0.25rem 0 !important;
+        align-items: center;
+        justify-content: center;
+        text-align: center !important;
+    }
+
+    .inventory-table tr[data-product-id] td::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: 0.15rem;
+        color: #64748b;
+        font-size: 0.55rem;
+        font-weight: 800;
+        line-height: 1;
+        text-transform: uppercase;
+    }
+
+    .inventory-table tr[data-product-id] td:not(:first-child) {
+        flex-direction: column;
+    }
+
+    .inventory-table tr[data-product-id] td:first-child {
+        grid-column: 1 / -1;
+        display: block;
+        padding-bottom: 0.625rem !important;
+        border-bottom: 1px solid #f2e8e8;
+        text-align: left !important;
+        overflow-wrap: anywhere;
+    }
+
+    .inventory-table tr[data-product-id] td:first-child::before,
+    .inventory-table tr[data-product-id] td:last-child::before {
+        display: none;
+    }
+
+    .inventory-table tr[data-product-id] td:last-child {
+        grid-column: 1 / -1;
+        padding-top: 0.5rem !important;
+        border-top: 1px solid #f7f0f0;
+    }
+
+    .inventory-table tr[data-product-id] td:last-child > div {
+        width: 100%;
+        justify-content: flex-end;
+        opacity: 1 !important;
+    }
+
+    .inventory-table tr[data-empty-state] {
+        display: block;
+        width: 100%;
+        border: 1px solid #f2e8e8;
+        border-radius: 0.875rem;
+        background: #ffffff;
+    }
+
+    .inventory-table tr[data-empty-state] td {
+        display: block;
+    }
+
+    /* Caja: la cifra operativa principal ocupa el ancho completo. */
+    .cash-card-net {
+        grid-column: 1 / -1;
+        grid-row: 1;
+    }
+
+    .cash-card-income {
+        grid-column: 1;
+        grid-row: 2;
+    }
+
+    .cash-card-expenses {
+        grid-column: 2;
+        grid-row: 2;
+    }
+
+    .cash-card-cash {
+        grid-column: 1;
+        grid-row: 3;
+    }
+
+    .cash-card-yape {
+        grid-column: 2;
+        grid-row: 3;
+    }
+
+    .cash-card p {
+        overflow-wrap: anywhere;
+    }
+
+    #caja-historial-list button {
+        min-width: 2.75rem;
+        min-height: 2.75rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    #caja-historial-list b,
+    #caja-historial-list p {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    /* Análisis conserva una altura legible para cada panel al desplazarse. */
+    .analysis-detail-panel {
+        min-height: 28rem;
+    }
+
+    .analysis-calendar-panel #calendarGrid {
+        grid-auto-rows: minmax(4.25rem, auto);
+    }
+}
+
+@media (hover: none), (pointer: coarse) {
+    #inventario-list tr td:last-child > div {
+        opacity: 1 !important;
+    }
+
+    button,
+    select,
+    input {
+        touch-action: manipulation;
     }
 }

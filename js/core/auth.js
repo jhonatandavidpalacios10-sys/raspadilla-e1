@@ -1,10 +1,14 @@
-import { auth, db, doc, setDoc, getDoc, signInWithEmailAndPassword, signOut, onAuthStateChanged, onSnapshot } from './firebase-setup.js';
+import { auth, db, doc, updateDoc, getDoc, signInWithEmailAndPassword, signOut, onAuthStateChanged, onSnapshot } from './firebase-setup.js';
 import { state } from './store.js';
 
 const MASTER_UID = "kRG6hOWsWHfoJwWLCXAkqRuVNLk2";
+const DEFAULT_LOGO_URL = '/assets/img/logo.png';
 let userUnsubscribe = null;
 let sysUnsubscribe = null;
 let isSystemLocked = false;
+let authGeneration = 0;
+let authTransitionTimer = null;
+let userRetryTimer = null;
 
 // Extraemos la lógica de configuración para llamarla de forma independiente
 function escucharConfiguracionGlobal() {
@@ -29,11 +33,78 @@ function escucharConfiguracionGlobal() {
     });
 }
 
+function escucharPerfilUsuario(user, generation) {
+    if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
+
+    userUnsubscribe = onSnapshot(doc(db, "usuarios", user.uid), userDoc => {
+        if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
+        let r = 'vendedor', l = 'Sin Local', lId = '';
+        let userData = null;
+        
+        if (userDoc.exists()) { 
+            userData = userDoc.data();
+            
+            if ((userData.activo === false || userData.estado === 'inactivo') && user.uid !== MASTER_UID) {
+                void logout();
+                return;
+            }
+
+            r = userData.rol || 'vendedor'; 
+            l = userData.localNombre || 'Sin Local'; 
+            lId = userData.localId || ''; 
+        } else if (user.uid !== MASTER_UID) {
+            void logout();
+            return;
+        }
+        
+        if (user.uid === MASTER_UID) { r = 'master'; l = 'Dueño Supremo'; }
+        
+        state.userRole = r; state.userLocal = l; state.userLocalId = lId;
+        
+        ['user-local-display', 'user-local-display-desktop', 'user-local-display-mobile'].forEach(id => { 
+            const el = document.getElementById(id); 
+            if(el) el.textContent = `${l} - ${user.email.split('@')[0]}`; 
+        });
+        
+        aplicarPermisosVisuales(userData);
+        verificarBloqueoSistema(user);
+        window.dispatchEvent(new CustomEvent('icepos:user-context-ready', {
+            detail: {
+                uid: user.uid,
+                role: r,
+                localId: lId,
+                localName: l
+            }
+        }));
+    }, error => {
+        if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
+        console.warn("Aviso: No se pudo leer perfil de usuario.", error);
+        userUnsubscribe?.();
+        userUnsubscribe = null;
+        window.mostrarToast?.(
+            'Reconectando sesión',
+            'No se pudo leer tu perfil. Se volverá a intentar.',
+            'amber'
+        );
+        clearTimeout(userRetryTimer);
+        userRetryTimer = setTimeout(() => escucharPerfilUsuario(user, generation), 3000);
+    });
+}
+
 export function initAuth() {
     // --- 1. DESCARGA INMEDIATA: Intentar traer el logo ANTES de que el usuario inicie sesión ---
     escucharConfiguracionGlobal();
 
-    onAuthStateChanged(auth, async (user) => {
+    onAuthStateChanged(auth, user => {
+        const generation = ++authGeneration;
+        if (authTransitionTimer) {
+            clearTimeout(authTransitionTimer);
+            authTransitionTimer = null;
+        }
+        if (userRetryTimer) {
+            clearTimeout(userRetryTimer);
+            userRetryTimer = null;
+        }
         const loginScreen = document.getElementById('login-screen'); 
         const appContainer = document.getElementById('app-container');
         
@@ -47,67 +118,40 @@ export function initAuth() {
                 escucharConfiguracionGlobal();
             }
 
-            // Escucha en TIEMPO REAL los permisos y rol
-            userUnsubscribe = onSnapshot(doc(db, "usuarios", user.uid), async (userDoc) => {
-                let r = 'vendedor', l = 'Sin Local', lId = '';
-                let userData = null;
-                
-                if (userDoc.exists()) { 
-                    userData = userDoc.data();
-                    
-                    // FIX: Expulsar inmediatamente si la cuenta fue desactivada mientras estaba en turno
-                    if ((userData.activo === false || userData.estado === 'inactivo') && user.uid !== MASTER_UID) {
-                        logout();
-                        return;
-                    }
-
-                    r = userData.rol || 'vendedor'; 
-                    l = userData.localNombre || 'Sin Local'; 
-                    lId = userData.localId || ''; 
-                } else if (user.uid !== MASTER_UID) {
-                    // FIX: Usuario eliminado de la BD en plena sesión. Expulsar inmediatamente.
-                    logout();
-                    return;
-                }
-                
-                if (user.uid === MASTER_UID) { r = 'master'; l = 'Dueño Supremo'; }
-                
-                state.userRole = r; state.userLocal = l; state.userLocalId = lId;
-                
-                ['user-local-display', 'user-local-display-desktop', 'user-local-display-mobile'].forEach(id => { 
-                    const el = document.getElementById(id); 
-                    if(el) el.textContent = `${l} - ${user.email.split('@')[0]}`; 
-                });
-                
-                aplicarPermisosVisuales(userData);
-                verificarBloqueoSistema(user);
-            }, (error) => {
-                console.warn("Aviso: No se pudo leer perfil de usuario.", error);
-            });
+            // Escucha en TIEMPO REAL los permisos y rol.
+            escucharPerfilUsuario(user, generation);
 
             // Actualizamos último acceso de forma segura (sin bloquear el login si falla)
-            try {
-                await setDoc(doc(db, "usuarios", user.uid), { email: user.email, ultimoAcceso: new Date().toISOString() }, { merge: true });
-            } catch (err) {
+            void updateDoc(
+                doc(db, "usuarios", user.uid),
+                { email: user.email, ultimoAcceso: new Date().toISOString() }
+            ).catch(err => {
                 console.warn("Registro de último acceso denegado (Seguridad Firebase activa).", err);
-            }
+            });
             
             if(loginScreen && appContainer) { 
                 loginScreen.classList.add('opacity-0'); 
-                setTimeout(() => { 
+                authTransitionTimer = setTimeout(() => {
+                    if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
                     loginScreen.classList.add('hidden'); 
                     verificarBloqueoSistema(user);
                 }, 300); 
             }
         } else {
             state.currentUser = null; state.userRole = null;
+            window.dispatchEvent(new CustomEvent('icepos:user-signed-out'));
             quitarError404();
             if(loginScreen && appContainer) { 
                 appContainer.classList.add('opacity-0'); 
-                setTimeout(() => { 
+                authTransitionTimer = setTimeout(() => {
+                    if (generation !== authGeneration || auth.currentUser) return;
                     appContainer.classList.add('hidden'); 
                     loginScreen.classList.remove('hidden'); 
-                    setTimeout(() => loginScreen.classList.remove('opacity-0'), 50); 
+                    setTimeout(() => {
+                        if (generation === authGeneration && !auth.currentUser) {
+                            loginScreen.classList.remove('opacity-0');
+                        }
+                    }, 50); 
                 }, 300); 
             }
         }
@@ -115,10 +159,29 @@ export function initAuth() {
 }
 
 function actualizarLogoGlobal(url) {
-    try { localStorage.setItem('app_custom_logo', url); } catch(e) {}
+    if (typeof url !== 'string' || url.startsWith('data:')) return;
+    let resolvedUrl = url;
+    try {
+        const parsedUrl = new URL(url, window.location.origin);
+        const isBundledLegacyLogo = (
+            parsedUrl.origin === window.location.origin
+            && /^\/assets\/img\/logo\.[^/]+$/i.test(parsedUrl.pathname)
+            && parsedUrl.pathname !== DEFAULT_LOGO_URL
+        );
+        if (isBundledLegacyLogo) resolvedUrl = DEFAULT_LOGO_URL;
+    } catch (_) {}
+
+    try { localStorage.setItem('app_custom_logo', resolvedUrl); } catch(e) {}
     const logosImg = document.querySelectorAll('img[alt="Raffaelito Logo"], img[alt="Raffaelito"], img[alt="IcePOS Logo"], img[alt="IcePOS"]');
     logosImg.forEach(img => {
-        img.src = url; img.style.objectFit = 'contain';
+        img.onerror = () => {
+            if (img.dataset.logoFallbackApplied === 'true') return;
+            img.dataset.logoFallbackApplied = 'true';
+            img.src = DEFAULT_LOGO_URL;
+            try { localStorage.removeItem('app_custom_logo'); } catch (_) {}
+        };
+        img.dataset.logoFallbackApplied = 'false';
+        img.src = resolvedUrl; img.style.objectFit = 'contain';
         img.classList.remove('drop-shadow-[0_0_15px_rgba(14,165,233,0.3)]');
         if(img.parentElement.classList.contains('bg-sky-500/20')) {
             img.parentElement.classList.replace('bg-sky-500/20', 'bg-transparent');
@@ -127,7 +190,7 @@ function actualizarLogoGlobal(url) {
     const sidebarIcon = document.querySelector('nav .bg-sky-600.rounded-xl i[data-lucide="snowflake"]');
     if (sidebarIcon) {
         const container = sidebarIcon.parentElement;
-        container.innerHTML = `<img src="${url}" class="w-full h-full object-contain p-1" alt="Logo">`;
+        container.innerHTML = `<img src="${resolvedUrl}" class="w-full h-full object-contain p-1" alt="Logo">`;
         container.classList.replace('bg-sky-600', 'bg-transparent');
         container.classList.remove('shadow-lg', 'shadow-sky-500/30');
     }
@@ -140,6 +203,7 @@ function actualizarNombreAppGlobal(nombre) {
 }
 
 async function verificarBloqueoSistema(user) {
+    if (!user || auth.currentUser?.uid !== user.uid) return;
     const appContainer = document.getElementById('app-container');
     const loginScreen = document.getElementById('login-screen');
     let isMaster = (user.uid === MASTER_UID) || (String(state.userRole).trim().toLowerCase() === 'master');
@@ -154,6 +218,8 @@ async function verificarBloqueoSistema(user) {
             }
         } catch (error) {}
     }
+
+    if (auth.currentUser?.uid !== user.uid) return;
     
     if (isSystemLocked && !isMaster) {
         mostrarError404();

@@ -1,0 +1,33 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "ventas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "localId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fechaStr",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "gastos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "localId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fechaStr",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

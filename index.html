@@ -2,29 +2,21 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <!-- NUEVO NOMBRE BASE -->
     <title class="app-name-display">Raffaelito - Sistema Franquicias</title>
     
-    <link rel="manifest" href="manifest.json">
+    <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#fdfdfd"> <!-- Color neutral acorde a tu CSS -->
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="icon" type="image/jpeg" href="assets/img/logo.jpg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/raffaelito-favicon-v2-32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/raffaelito-apple-touch-v2-180.png">
     
-    <link rel="stylesheet" href="assets/css/styles.css">
-    
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    
-    <script>
-        tailwind.config = {
-            theme: { extend: { colors: { yape: '#8b5cf6', bcp: '#f97316', tarjeta: '#3b82f6' } } }
-        }
-    </script>
+    <link rel="stylesheet" href="/assets/css/styles.css">
 </head>
-<body class="bg-slate-900 text-slate-100 h-screen overflow-hidden font-sans selection:bg-sky-500 selection:text-white flex flex-col md:flex-row">
+<body class="bg-slate-900 text-slate-100 h-screen overflow-hidden font-sans selection:bg-sky-500 selection:text-white flex flex-col lg:flex-row">
 
     <!-- CONTENEDOR DE NOTIFICACIONES -->
     <div id="toast-container" class="fixed top-4 right-4 md:top-6 md:right-6 z-[300] flex flex-col gap-2 pointer-events-none"></div>
@@ -33,7 +25,7 @@
     <div id="login-screen" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900 transition-opacity duration-300 px-4">
         <div class="bg-slate-800 p-8 rounded-2xl shadow-2xl w-full max-w-sm border border-slate-700 flex flex-col items-center">
             
-            <img src="assets/img/logo.jpg" alt="Raffaelito Logo" class="w-24 h-24 mb-4">
+            <img src="/assets/img/logo.png" alt="Raffaelito Logo" class="w-24 h-24 mb-4">
             
             <h1 class="text-2xl font-black text-white mb-2 tracking-tight app-name-display">Raffaelito</h1>
             <p class="text-sm text-slate-400 mb-6 text-center" id="login-subtitle">Punto de Venta Profesional</p>
@@ -82,81 +74,73 @@
     </div>
 
     <!-- CONTENEDOR PRINCIPAL DE LA APP -->
-    <div id="app-container" class="hidden w-full h-full flex flex-col md:flex-row opacity-0 transition-opacity duration-300">
+    <div id="app-container" class="hidden w-full h-full flex flex-col lg:flex-row opacity-0 transition-opacity duration-300">
         
         <!-- MENÚ LATERAL -->
-        <nav class="w-full md:w-20 bg-slate-950 flex flex-row md:flex-col items-center py-1 md:py-6 border-t md:border-t-0 md:border-r border-slate-800 z-50 fixed bottom-0 md:relative flex-shrink-0 h-14 sm:h-16 md:h-full justify-between md:justify-start pb-safe">
-            <div class="hidden md:flex w-12 h-12 rounded-xl items-center justify-center mb-6 flex-shrink-0">
-                <img src="assets/img/logo.jpg" alt="Raffaelito" class="w-full h-full object-contain p-1">
+        <nav id="app-navigation" aria-label="Navegación principal" class="w-full lg:w-20 bg-slate-950 flex flex-row lg:flex-col items-center py-1 lg:py-6 border-t lg:border-t-0 lg:border-r border-slate-800 z-50 fixed bottom-0 lg:relative flex-shrink-0 h-16 lg:h-full justify-between lg:justify-start">
+            <div class="hidden lg:flex w-12 h-12 rounded-xl items-center justify-center mb-6 flex-shrink-0">
+                <img src="/assets/img/logo.png" alt="Raffaelito" class="w-full h-full object-contain p-1">
             </div>
             
-            <div class="flex flex-row md:flex-col w-full h-full md:h-auto items-center justify-between md:justify-start px-1 md:px-2 md:gap-3 overflow-y-auto no-scrollbar">
+            <div id="app-nav-items" class="flex flex-row lg:flex-col flex-1 min-w-0 lg:flex-none lg:w-full h-full lg:h-auto items-center justify-start px-1 lg:px-2 lg:gap-3 overflow-x-auto lg:overflow-x-visible lg:overflow-y-auto no-scrollbar">
                 <!-- Vistas para todos -->
-                <button id="nav-ventas" class="nav-btn active flex flex-col items-center justify-center gap-1 p-1 md:py-2 text-sky-400 border-t-2 md:border-t-0 md:border-r-4 border-sky-500 flex-1 md:w-full transition-colors">
-                    <i data-lucide="shopping-cart" class="w-5 h-5 md:w-6 md:h-6"></i>
-                    <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Ventas</span>
+                <button id="nav-ventas" class="nav-btn app-nav-button active flex flex-col items-center justify-center gap-0.5 p-1 lg:py-2 text-sky-400 border-t-2 lg:border-t-0 lg:border-r-4 border-sky-500 lg:w-full transition-colors">
+                    <i data-lucide="shopping-cart" class="w-5 h-5 lg:w-6 lg:h-6"></i>
+                    <span class="text-[9px] lg:text-[10px] font-medium">Ventas</span>
                 </button>
-                <button id="nav-pedidos" class="nav-btn flex flex-col items-center justify-center gap-1 p-1 md:py-2 text-slate-500 hover:text-slate-300 border-t-2 md:border-t-0 md:border-r-4 border-transparent flex-1 md:w-full transition-colors relative">
-                    <i data-lucide="clipboard-list" class="w-5 h-5 md:w-6 md:h-6"></i>
-                    <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Pedidos</span>
-                    <span id="badge-pedidos" class="absolute top-0 md:top-1 right-2 md:right-4 w-2.5 h-2.5 bg-red-500 rounded-full hidden"></span>
+                <button id="nav-pedidos" class="nav-btn app-nav-button flex flex-col items-center justify-center gap-0.5 p-1 lg:py-2 text-slate-500 hover:text-slate-300 border-t-2 lg:border-t-0 lg:border-r-4 border-transparent lg:w-full transition-colors relative">
+                    <i data-lucide="clipboard-list" class="w-5 h-5 lg:w-6 lg:h-6"></i>
+                    <span class="text-[9px] lg:text-[10px] font-medium">Pedidos</span>
+                    <span id="badge-pedidos" class="absolute top-0 lg:top-1 right-2 lg:right-4 w-2.5 h-2.5 bg-red-500 rounded-full hidden"></span>
                 </button>
-                <button id="nav-inventario" class="nav-btn flex flex-col items-center justify-center gap-1 p-1 md:py-2 text-slate-500 hover:text-slate-300 border-t-2 md:border-t-0 md:border-r-4 border-transparent flex-1 md:w-full transition-colors">
-                    <i data-lucide="package" class="w-5 h-5 md:w-6 md:h-6"></i>
-                    <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Catálogo</span>
+                <button id="nav-inventario" class="nav-btn app-nav-button flex flex-col items-center justify-center gap-0.5 p-1 lg:py-2 text-slate-500 hover:text-slate-300 border-t-2 lg:border-t-0 lg:border-r-4 border-transparent lg:w-full transition-colors">
+                    <i data-lucide="package" class="w-5 h-5 lg:w-6 lg:h-6"></i>
+                    <span class="text-[9px] lg:text-[10px] font-medium">Catálogo</span>
                 </button>
 
                 <!-- Vistas ocultas por defecto (Solo Admin/Master) -->
-                <button id="nav-caja" class="hidden nav-btn flex flex-col items-center justify-center gap-1 p-1 md:py-2 text-slate-500 hover:text-slate-300 border-t-2 md:border-t-0 md:border-r-4 border-transparent flex-1 md:w-full transition-colors">
-                    <i data-lucide="inbox" class="w-5 h-5 md:w-6 md:h-6"></i>
-                    <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Caja</span>
+                <button id="nav-caja" class="hidden nav-btn app-nav-button flex flex-col items-center justify-center gap-0.5 p-1 lg:py-2 text-slate-500 hover:text-slate-300 border-t-2 lg:border-t-0 lg:border-r-4 border-transparent lg:w-full transition-colors">
+                    <i data-lucide="inbox" class="w-5 h-5 lg:w-6 lg:h-6"></i>
+                    <span class="text-[9px] lg:text-[10px] font-medium">Caja</span>
                 </button>
-                <button id="nav-analisis" class="hidden nav-btn flex flex-col items-center justify-center gap-1 p-1 md:py-2 text-slate-500 hover:text-slate-300 border-t-2 md:border-t-0 md:border-r-4 border-transparent flex-1 md:w-full transition-colors">
-                    <i data-lucide="bar-chart-2" class="w-5 h-5 md:w-6 md:h-6"></i>
-                    <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Análisis</span>
+                <button id="nav-analisis" class="hidden nav-btn app-nav-button flex flex-col items-center justify-center gap-0.5 p-1 lg:py-2 text-slate-500 hover:text-slate-300 border-t-2 lg:border-t-0 lg:border-r-4 border-transparent lg:w-full transition-colors">
+                    <i data-lucide="bar-chart-2" class="w-5 h-5 lg:w-6 lg:h-6"></i>
+                    <span class="text-[9px] lg:text-[10px] font-medium">Análisis</span>
                 </button>
-                <button id="nav-usuarios" class="hidden nav-btn solo-admin flex flex-col items-center justify-center gap-1 p-1 md:py-2 text-slate-500 hover:text-slate-300 border-t-2 md:border-t-0 md:border-r-4 border-transparent flex-1 md:w-full transition-colors">
-                    <i data-lucide="users" class="w-5 h-5 md:w-6 md:h-6"></i>
-                    <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Usuarios</span>
+                <button id="nav-usuarios" class="hidden nav-btn app-nav-button solo-admin flex flex-col items-center justify-center gap-0.5 p-1 lg:py-2 text-slate-500 hover:text-slate-300 border-t-2 lg:border-t-0 lg:border-r-4 border-transparent lg:w-full transition-colors">
+                    <i data-lucide="users" class="w-5 h-5 lg:w-6 lg:h-6"></i>
+                    <span class="text-[9px] lg:text-[10px] font-medium">Usuarios</span>
                 </button>
-                <button id="nav-respaldo" class="hidden nav-btn solo-master flex flex-col items-center justify-center gap-1 p-1 md:py-2 text-slate-500 hover:text-slate-300 border-t-2 md:border-t-0 md:border-r-4 border-transparent flex-1 md:w-full transition-colors">
-                    <i data-lucide="database" class="w-5 h-5 md:w-6 md:h-6"></i>
-                    <span class="text-[9px] md:text-[10px] font-medium hidden sm:block md:block">Respaldo</span>
+                <button id="nav-respaldo" class="hidden nav-btn app-nav-button solo-master flex flex-col items-center justify-center gap-0.5 p-1 lg:py-2 text-slate-500 hover:text-slate-300 border-t-2 lg:border-t-0 lg:border-r-4 border-transparent lg:w-full transition-colors">
+                    <i data-lucide="database" class="w-5 h-5 lg:w-6 lg:h-6"></i>
+                    <span class="text-[9px] lg:text-[10px] font-medium">Respaldo</span>
+                </button>
+            </div>
+
+            <!-- Acciones de sesión siempre accesibles a la derecha en móvil/tablet. -->
+            <div class="mobile-nav-actions flex lg:hidden h-full flex-shrink-0 items-center border-l border-slate-800 px-1">
+                <span id="user-local-display-mobile" class="sr-only">Local...</span>
+                <button type="button" onclick="window.forzarActualizacionApp()" class="mobile-nav-action flex h-11 w-10 items-center justify-center rounded-lg text-slate-500 hover:text-emerald-400 transition-colors" title="Actualizar aplicación" aria-label="Actualizar aplicación">
+                    <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+                </button>
+                <button type="button" id="btn-logout-mobile" class="mobile-nav-action flex h-11 w-10 items-center justify-center rounded-lg text-slate-500 hover:text-red-400 transition-colors" title="Cerrar sesión" aria-label="Cerrar sesión">
+                    <i data-lucide="log-out" class="w-5 h-5"></i>
                 </button>
             </div>
             
             <!-- NUEVO: BOTÓN DE ACTUALIZACIÓN FORZADA LATERAL -->
-            <div class="mt-auto flex flex-col w-full">
-                <button onclick="window.forzarActualizacionApp()" class="hidden md:flex flex-col items-center justify-center gap-1 p-2 text-slate-500 hover:text-emerald-400 w-full transition-colors mb-2" title="Sincronizar App">
+            <div class="mt-auto hidden lg:flex flex-col w-full">
+                <button onclick="window.forzarActualizacionApp()" class="hidden lg:flex flex-col items-center justify-center gap-1 p-2 text-slate-500 hover:text-emerald-400 w-full transition-colors mb-2" title="Sincronizar App">
                     <i data-lucide="refresh-cw" class="w-5 h-5"></i>
                 </button>
-                <button id="btn-logout-desktop" class="hidden md:flex flex-col items-center justify-center gap-1 p-2 text-slate-500 hover:text-red-400 w-full transition-colors" title="Cerrar Sesión">
+                <button id="btn-logout-desktop" class="hidden lg:flex flex-col items-center justify-center gap-1 p-2 text-slate-500 hover:text-red-400 w-full transition-colors" title="Cerrar Sesión">
                     <i data-lucide="log-out" class="w-6 h-6"></i>
                 </button>
             </div>
         </nav>
 
         <!-- ÁREA PRINCIPAL -->
-        <main class="flex-1 flex flex-col overflow-hidden relative mb-14 md:mb-0">
-            
-            <!-- HEADER SUPERIOR MÓVIL -->
-            <header class="md:hidden bg-slate-900 border-b border-slate-800 p-3 flex justify-between items-center z-40">
-                <div class="flex items-center gap-2">
-                    <img src="assets/img/logo.jpg" alt="Raffaelito" class="w-8 h-8">
-                    <div>
-                        <h2 class="font-bold text-sm text-white leading-tight app-name-display">Raffaelito</h2>
-                        <p class="text-[10px] text-slate-400" id="user-local-display-mobile">Local...</p>
-                    </div>
-                </div>
-                <div class="flex gap-2">
-                    <button onclick="window.forzarActualizacionApp()" class="p-2 text-slate-400 hover:text-emerald-400 transition-colors">
-                        <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-                    </button>
-                    <button id="btn-logout-mobile" class="p-2 text-slate-400 hover:text-red-400 transition-colors">
-                        <i data-lucide="log-out" class="w-5 h-5"></i>
-                    </button>
-                </div>
-            </header>
+        <main class="flex-1 flex flex-col overflow-hidden relative mb-16 lg:mb-0">
 
             <!-- ==============================================
                  VISTA 1: VENTAS (POS)
@@ -276,24 +260,24 @@
                  VISTA 2: INVENTARIO Y STOCK
                  ============================================== -->
             <div id="view-inventario" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
-                <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
-                    <div>
-                        <h1 class="text-xl md:text-2xl font-bold text-white">Catálogo / Inventario</h1>
-                        <p class="text-xs text-slate-400">Gestiona tus productos y compras.</p>
+                <header class="view-toolbar p-3 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center gap-2 flex-shrink-0">
+                    <div class="min-w-0">
+                        <h1 class="text-lg md:text-2xl font-bold text-white truncate"><span class="sm:hidden">Catálogo</span><span class="hidden sm:inline">Catálogo / Inventario</span></h1>
+                        <p class="view-toolbar-subtitle text-[11px] text-slate-400">Productos, precios y existencias.</p>
                     </div>
-                    <div class="flex gap-2">
+                    <div class="flex gap-2 flex-shrink-0">
                         <button id="btn-ingreso-stock" class="hidden sm:flex px-4 py-2 bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white rounded-lg text-sm font-bold items-center gap-2 transition-colors">
                             <i data-lucide="truck" class="w-4 h-4"></i> Ingreso Mercadería
                         </button>
-                        <button id="btn-nuevo-producto" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-lg">
-                            <i data-lucide="plus" class="w-4 h-4"></i> Añadir Ítem
+                        <button id="btn-nuevo-producto" class="min-h-11 px-3 sm:px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 sm:gap-2 transition-colors shadow-lg" aria-label="Añadir producto">
+                            <i data-lucide="plus" class="w-4 h-4"></i> <span class="hidden min-[360px]:inline">Añadir</span><span class="hidden sm:inline"> ítem</span>
                         </button>
                     </div>
                 </header>
 
-                <div class="p-3 md:p-6 flex flex-col flex-1 overflow-hidden">
-                    <div id="tabs-insumos" class="flex justify-between md:justify-start gap-4 border-b border-slate-800 mb-4 flex-shrink-0 overflow-x-auto no-scrollbar">
-                        <div class="flex gap-4">
+                <div class="p-2.5 sm:p-3 md:p-6 flex flex-col flex-1 overflow-hidden">
+                    <div id="tabs-insumos" class="inventory-tabs grid grid-cols-[minmax(0,1fr)_auto] md:flex md:justify-start gap-2 md:gap-4 border-b border-slate-800 mb-2.5 md:mb-4 flex-shrink-0">
+                        <div class="flex gap-4 min-w-0 overflow-x-auto no-scrollbar">
                             <button class="pb-2 text-sm font-bold text-sky-400 border-b-2 border-sky-400 transition-colors whitespace-nowrap">Vasos</button>
                             <button class="pb-2 text-sm font-bold text-slate-500 hover:text-slate-300 transition-colors whitespace-nowrap">Sabores</button>
                             <button class="pb-2 text-sm font-bold text-slate-500 hover:text-slate-300 transition-colors whitespace-nowrap">Extras</button>
@@ -305,8 +289,8 @@
                         </button>
                     </div>
 
-                    <div class="flex-1 overflow-y-auto no-scrollbar bg-slate-800 rounded-xl border border-slate-700 shadow-lg">
-                        <table class="w-full text-left border-collapse min-w-[500px]">
+                    <div class="inventory-table-wrap flex-1 overflow-auto no-scrollbar bg-slate-800 rounded-xl border border-slate-700 shadow-lg">
+                        <table class="inventory-table w-full text-left border-collapse sm:min-w-[500px]">
                             <thead>
                                 <tr class="bg-slate-900/50 text-slate-400 text-xs uppercase tracking-wider border-b border-slate-700">
                                     <th class="p-3 font-medium">Nombre</th>
@@ -326,31 +310,31 @@
                  VISTA 3: PEDIDOS (COLA)
                  ============================================== -->
             <div id="view-pedidos" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
-                <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
-                    <div>
-                        <h1 class="text-xl md:text-2xl font-bold text-white">Cola de Preparación</h1>
-                        <p class="text-xs text-slate-400">Tickets pagados listos para armar.</p>
+                <header class="view-toolbar p-2.5 sm:p-3 md:p-6 bg-slate-900 border-b border-slate-800 flex flex-wrap justify-between items-center gap-2 flex-shrink-0">
+                    <div class="min-w-0">
+                        <h1 class="text-lg md:text-2xl font-bold text-white"><span class="sm:hidden">Pedidos</span><span class="hidden sm:inline">Cola de Preparación</span></h1>
+                        <p class="view-toolbar-subtitle text-[11px] text-slate-400">Pedidos pagados por preparar.</p>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <select id="filtro-local-pedidos" class="solo-admin hidden bg-slate-800 text-sm text-white border border-slate-700 rounded-lg px-3 py-2 focus:outline-none focus:border-sky-500"></select>
+                    <div class="flex items-center gap-2 min-w-0 flex-shrink">
+                        <select id="filtro-local-pedidos" aria-label="Filtrar pedidos por sede" class="solo-admin hidden max-w-[48vw] sm:max-w-[16rem] bg-slate-800 text-xs sm:text-sm text-white border border-slate-700 rounded-lg px-2.5 py-2 focus:outline-none focus:border-sky-500"></select>
                     </div>
                 </header>
 
-                <div class="flex-1 overflow-y-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 no-scrollbar">
-                    <div class="bg-slate-800/50 rounded-xl border border-slate-700 flex flex-col h-full overflow-hidden shadow-lg">
-                        <div class="p-3 bg-red-500/10 border-b border-red-500/20 text-red-400 font-bold flex justify-between items-center">
+                <div class="orders-grid flex-1 overflow-y-auto p-2.5 sm:p-3 md:p-5 lg:p-6 grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-4 lg:gap-6 no-scrollbar">
+                    <div class="orders-column orders-pending bg-slate-800/50 rounded-xl border border-slate-700 flex flex-col h-full overflow-hidden shadow-lg">
+                        <div class="orders-column-heading p-2.5 sm:p-3 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm font-bold flex justify-between items-center">
                             <span><i data-lucide="clock" class="w-4 h-4 inline mr-1"></i> Por Preparar</span>
                             <span id="contador-pendientes" class="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full">0</span>
                         </div>
-                        <div id="pedidos-pendientes-list" class="flex-1 overflow-y-auto p-3 no-scrollbar space-y-3"></div>
+                        <div id="pedidos-pendientes-list" class="orders-list flex-1 overflow-y-auto p-2.5 sm:p-3 no-scrollbar space-y-2.5 sm:space-y-3"></div>
                     </div>
 
-                    <div class="bg-slate-800/50 rounded-xl border border-slate-700 flex flex-col h-full overflow-hidden shadow-lg">
-                        <div class="p-3 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-400 font-bold flex justify-between items-center">
+                    <div class="orders-column orders-ready bg-slate-800/50 rounded-xl border border-slate-700 flex flex-col h-full overflow-hidden shadow-lg">
+                        <div class="orders-column-heading p-2.5 sm:p-3 bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-400 text-sm font-bold flex justify-between items-center">
                             <span><i data-lucide="check-circle" class="w-4 h-4 inline mr-1"></i> Despachados Hoy</span>
                             <span id="contador-listos" class="bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-full">0</span>
                         </div>
-                        <div id="pedidos-listos-list" class="flex-1 overflow-y-auto p-3 no-scrollbar space-y-3 opacity-70"></div>
+                        <div id="pedidos-listos-list" class="orders-list flex-1 overflow-y-auto p-2.5 sm:p-3 no-scrollbar space-y-2.5 sm:space-y-3 opacity-70"></div>
                     </div>
                 </div>
             </div>
@@ -359,54 +343,54 @@
                  VISTA 4: CAJA (ARQUEO Y GASTOS)
                  ============================================== -->
             <div id="view-caja" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
-                <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
-                    <div>
-                        <h1 class="text-xl md:text-2xl font-bold text-white">Caja del Día</h1>
-                        <p class="text-xs text-slate-400">Resumen y registro de operaciones.</p>
+                <header class="view-toolbar p-2.5 sm:p-3 md:p-6 bg-slate-900 border-b border-slate-800 flex flex-wrap justify-between items-center gap-2 flex-shrink-0">
+                    <div class="min-w-0">
+                        <h1 class="text-lg md:text-2xl font-bold text-white">Caja del Día</h1>
+                        <p class="view-toolbar-subtitle text-[11px] text-slate-400">Ingresos, medios de pago y gastos.</p>
                     </div>
-                    <div class="flex items-center gap-2">
-                        <select id="filtro-local-caja" class="solo-admin hidden bg-slate-800 text-sm text-white border border-slate-700 rounded-lg px-3 py-2 focus:outline-none focus:border-sky-500"></select>
-                        <button id="btn-registrar-gasto" class="px-3 py-2 bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white border border-red-500/50 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors">
+                    <div class="flex items-center justify-end gap-2 min-w-0">
+                        <select id="filtro-local-caja" aria-label="Filtrar caja por sede" class="solo-admin hidden max-w-[45vw] sm:max-w-[15rem] bg-slate-800 text-xs sm:text-sm text-white border border-slate-700 rounded-lg px-2.5 py-2 focus:outline-none focus:border-sky-500"></select>
+                        <button id="btn-registrar-gasto" class="min-h-11 min-w-11 px-3 py-2 bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white border border-red-500/50 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors" aria-label="Registrar gasto">
                             <i data-lucide="trending-down" class="w-4 h-4"></i> <span class="hidden sm:block">Gasto Manual</span>
                         </button>
                     </div>
                 </header>
 
-                <div class="flex-1 overflow-y-auto p-4 md:p-6 no-scrollbar">
-                    <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4 mb-6">
-                        <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 flex flex-col justify-center shadow-md">
+                <div class="flex-1 overflow-y-auto p-2.5 sm:p-3 md:p-6 no-scrollbar">
+                    <div class="cash-summary-grid grid grid-cols-2 lg:grid-cols-5 gap-2.5 md:gap-4 mb-4 md:mb-6">
+                        <div class="cash-card cash-card-income bg-slate-800 p-3 md:p-4 rounded-xl border border-slate-700 flex flex-col justify-center shadow-md min-w-0">
                             <div class="flex justify-between items-center mb-1">
                                 <p class="text-slate-400 text-[10px] font-bold uppercase">POS Bruto (Ingresos)</p>
                                 <i data-lucide="pie-chart" class="w-3.5 h-3.5 text-sky-500 opacity-50"></i>
                             </div>
                             <p class="text-lg md:text-xl font-bold text-sky-400" id="caja-total">S/ 0.00</p>
                         </div>
-                        <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 flex flex-col justify-center shadow-md">
+                        <div class="cash-card cash-card-expenses bg-slate-800 p-3 md:p-4 rounded-xl border border-slate-700 flex flex-col justify-center shadow-md min-w-0">
                             <div class="flex justify-between items-center mb-1">
                                 <p class="text-slate-400 text-[10px] font-bold uppercase">Gastos Generales</p>
                                 <i data-lucide="trending-down" class="w-3.5 h-3.5 text-red-500 opacity-50"></i>
                             </div>
                             <p class="text-lg md:text-xl font-bold text-red-400" id="caja-gastos">S/ 0.00</p>
                         </div>
-                        <div class="bg-slate-800 p-4 rounded-xl flex flex-col justify-center border border-emerald-500/30 shadow-lg">
+                        <div class="cash-card cash-card-net bg-slate-800 p-3 md:p-4 rounded-xl flex flex-col justify-center border border-emerald-500/30 shadow-lg min-w-0">
                             <div class="flex justify-between items-center mb-1">
                                 <p class="text-emerald-500/80 text-[10px] font-bold uppercase">CAJA NETA</p>
                                 <i data-lucide="wallet" class="w-4 h-4 text-emerald-400"></i>
                             </div>
                             <p class="text-xl md:text-2xl font-black text-emerald-400" id="caja-neta">S/ 0.00</p>
                         </div>
-                        <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 flex flex-col justify-center shadow-md">
+                        <div class="cash-card cash-card-cash bg-slate-800 p-3 md:p-4 rounded-xl border border-slate-700 flex flex-col justify-center shadow-md min-w-0">
                             <p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Efectivo Físico</p>
                             <p class="text-lg md:text-xl font-bold text-white flex items-center gap-2"><i data-lucide="banknote" class="w-4 h-4 text-emerald-500"></i> <span id="caja-efectivo">S/ 0.00</span></p>
                         </div>
-                        <div class="bg-slate-800 p-4 rounded-xl border border-slate-700 flex flex-col justify-center shadow-md">
+                        <div class="cash-card cash-card-yape bg-slate-800 p-3 md:p-4 rounded-xl border border-slate-700 flex flex-col justify-center shadow-md min-w-0">
                             <p class="text-slate-400 text-[10px] font-bold uppercase mb-0.5">Yape / Plin</p>
                             <p class="text-lg md:text-xl font-bold text-white flex items-center gap-2"><i data-lucide="smartphone" class="w-4 h-4 text-purple-500"></i> <span id="caja-yape">S/ 0.00</span></p>
                         </div>
                     </div>
 
                     <h3 class="font-bold text-white mb-3 flex items-center gap-2"><i data-lucide="list-checks" class="w-5 h-5 text-sky-500"></i> Operaciones de Hoy</h3>
-                    <div id="caja-historial-list" class="space-y-2 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2"></div>
+                    <div id="caja-historial-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2"></div>
                 </div>
             </div>
 
@@ -414,30 +398,30 @@
                  VISTA 5: USUARIOS (ADMIN)
                  ============================================== -->
             <div id="view-usuarios" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-hidden">
-                <header class="p-4 md:p-6 bg-slate-900 border-b border-slate-800 flex justify-between items-center flex-shrink-0">
-                    <div>
-                        <h1 class="text-xl md:text-2xl font-bold text-white">Gestión de Personal</h1>
-                        <p class="text-xs text-slate-400">Usuarios agrupados por Sedes.</p>
+                <header class="view-toolbar p-2.5 sm:p-3 md:p-6 bg-slate-900 border-b border-slate-800 flex flex-wrap justify-between items-center gap-2 flex-shrink-0">
+                    <div class="min-w-0">
+                        <h1 class="text-lg md:text-2xl font-bold text-white"><span class="sm:hidden">Usuarios</span><span class="hidden sm:inline">Gestión de Personal</span></h1>
+                        <p class="view-toolbar-subtitle text-[11px] text-slate-400">Equipo y sedes.</p>
                     </div>
-                    <div class="flex gap-2">
-                        <button id="btn-sincronizar-usuarios" class="solo-master hidden px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-lg">
-                            <i data-lucide="refresh-cw" class="w-4 h-4"></i> Sincronizar
+                    <div class="flex gap-2 flex-shrink-0">
+                        <button id="btn-sincronizar-usuarios" class="solo-master hidden min-h-11 min-w-11 px-3 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors shadow-lg" aria-label="Sincronizar usuarios">
+                            <i data-lucide="refresh-cw" class="w-4 h-4"></i> <span class="hidden sm:inline">Sincronizar</span>
                         </button>
-                        <button id="btn-nuevo-usuario" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-colors shadow-lg">
-                            <i data-lucide="user-plus" class="w-4 h-4"></i> Nuevo
+                        <button id="btn-nuevo-usuario" class="min-h-11 min-w-11 px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors shadow-lg" aria-label="Nuevo usuario">
+                            <i data-lucide="user-plus" class="w-4 h-4"></i> <span class="hidden min-[360px]:inline">Nuevo</span>
                         </button>
                     </div>
                 </header>
                 
-                <div class="flex-1 overflow-y-auto p-4 md:p-6 no-scrollbar grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="users-grid flex-1 overflow-y-auto p-2.5 sm:p-3 md:p-6 no-scrollbar grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-6">
                     <div class="bg-slate-800 rounded-xl border border-slate-700 flex flex-col h-fit shadow-lg">
-                        <div class="p-4 border-b border-slate-700 font-bold text-white flex items-center gap-2"><i data-lucide="users" class="w-5 h-5 text-indigo-400"></i> Personal Registrado</div>
+                        <div class="p-3 sm:p-4 border-b border-slate-700 font-bold text-white flex items-center gap-2"><i data-lucide="users" class="w-5 h-5 text-indigo-400"></i> Personal Registrado</div>
                         <div class="p-2 space-y-2" id="usuarios-list"></div>
                     </div>
 
                     <div class="bg-slate-800 rounded-xl border border-slate-700 flex flex-col h-fit shadow-lg">
-                        <div class="p-4 border-b border-slate-700 font-bold text-white flex items-center gap-2"><i data-lucide="store" class="w-5 h-5 text-emerald-400"></i> Sedes / Franquicias</div>
-                        <div class="p-4 border-b border-slate-700">
+                        <div class="p-3 sm:p-4 border-b border-slate-700 font-bold text-white flex items-center gap-2"><i data-lucide="store" class="w-5 h-5 text-emerald-400"></i> Sedes / Franquicias</div>
+                        <div class="p-3 sm:p-4 border-b border-slate-700">
                             <form id="form-local" class="flex gap-2">
                                 <input type="text" id="nuevo-local-nombre" required placeholder="Nombre de nueva sede..." class="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white outline-none">
                                 <button type="submit" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold">Añadir</button>
@@ -451,8 +435,8 @@
             <!-- ==============================================
                  VISTA 6: ANÁLISIS
                  ============================================== -->
-            <div id="view-analisis" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-y-auto md:overflow-hidden">
-                <div class="flex-1 flex flex-col gap-3 p-3 md:p-4 overflow-visible md:overflow-hidden">
+            <div id="view-analisis" class="view-section flex-1 flex flex-col h-full hidden bg-slate-900 relative overflow-y-auto lg:overflow-hidden">
+                <div class="flex-1 flex flex-col gap-2.5 sm:gap-3 p-2.5 sm:p-3 md:p-4 overflow-visible lg:overflow-hidden">
                     <div class="w-full bg-slate-800 rounded-xl border border-slate-700 p-3 shadow-lg flex-shrink-0">
                         <div class="flex flex-wrap items-center justify-between gap-3">
                             <div class="flex flex-wrap items-center gap-3">
@@ -471,8 +455,8 @@
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-2 pt-3 mt-2 border-t border-slate-700" id="analysisRangeSummary"></div>
                     </div>
 
-                    <div class="flex flex-col lg:flex-row gap-3 md:gap-4 flex-1 pb-2 min-h-[800px] md:min-h-0">
-                        <div class="w-full lg:w-[55%] bg-slate-800 rounded-xl border border-slate-700 p-3 md:p-4 flex flex-col shadow-lg h-full overflow-hidden flex-shrink-0">
+                    <div class="analysis-workspace flex flex-col lg:flex-row gap-3 md:gap-4 flex-1 pb-2 min-h-[800px] lg:min-h-0">
+                        <div class="analysis-calendar-panel w-full lg:w-[55%] bg-slate-800 rounded-xl border border-slate-700 p-3 md:p-4 flex flex-col shadow-lg h-full overflow-hidden flex-shrink-0">
                             <div class="flex justify-between items-center mb-3">
                                 <h2 class="text-base font-bold text-white" id="calendarMonthLabel">Mes Año</h2>
                                 <div class="flex gap-2">
@@ -484,7 +468,7 @@
                             <div id="calendarGrid" class="grid grid-cols-7 gap-[2px] md:gap-1 flex-1 overflow-y-auto no-scrollbar"></div>
                         </div>
 
-                        <div class="w-full lg:w-[45%] bg-slate-800 rounded-xl border border-slate-700 flex flex-col shadow-lg h-full overflow-hidden flex-shrink-0">
+                        <div class="analysis-detail-panel w-full lg:w-[45%] bg-slate-800 rounded-xl border border-slate-700 flex flex-col shadow-lg h-full overflow-hidden flex-shrink-0">
                             <div class="p-3 border-b border-slate-700 bg-slate-800 flex-shrink-0">
                                 <div class="flex justify-between items-end mb-2">
                                     <h3 class="text-sm font-bold text-white flex items-center gap-2"><i data-lucide="file-text" class="w-4 h-4 text-sky-500"></i> Detalle del Día</h3>
@@ -492,7 +476,7 @@
                                 </div>
                                 <div class="grid grid-cols-2 gap-2">
                                     <div id="card-bruto-dia" class="bg-slate-900 rounded-lg p-2 border border-slate-700 text-center cursor-pointer hover:border-sky-500 transition-colors"><p class="text-[10px] text-slate-400 uppercase mb-0.5">Ventas Brutas</p><p class="text-sm md:text-base font-bold text-sky-400" id="selectedDayIngresos">S/ 0.00</p></div>
-                                    <div id="card-ganancia-dia" class="bg-slate-900 rounded-lg p-2 border border-slate-700 text-center cursor-pointer hover:border-emerald-500 transition-colors"><p class="text-[10px] text-slate-400 uppercase mb-0.5">Ganancia Neta</p><p class="text-sm md:text-base font-bold text-emerald-400" id="selectedDayGanancias">S/ 0.00</p></div>
+                                    <div id="card-ganancia-dia" class="bg-slate-900 rounded-lg p-2 border border-slate-700 text-center cursor-pointer hover:border-emerald-500 transition-colors"><p class="text-[10px] text-slate-400 uppercase mb-0.5">Caja Neta</p><p class="text-sm md:text-base font-bold text-emerald-400" id="selectedDayGanancias">S/ 0.00</p></div>
                                 </div>
                             </div>
                             <div class="flex-1 overflow-y-auto p-2 space-y-1.5 no-scrollbar" id="selectedDayTransactions"></div>
@@ -529,16 +513,16 @@
                     <div class="w-full lg:w-[48%] max-w-sm bg-slate-800 rounded-xl p-5 border border-slate-700 shadow-lg shrink-0">
                         <div class="w-12 h-12 bg-sky-500/20 text-sky-400 rounded-xl flex items-center justify-center mb-4"><i data-lucide="layout-dashboard" class="w-6 h-6"></i></div>
                         <h2 class="text-lg font-bold text-white mb-2">Identidad Corporativa</h2>
-                        <p class="text-xs text-slate-400 mb-4">Al guardar, forzarás la actualización en los celulares de tus vendedores.</p>
+                        <p class="text-xs text-slate-400 mb-4">El nombre y el logo se actualizarán en todos los dispositivos.</p>
                         
                         <div class="flex gap-2 mb-4">
                             <input type="text" id="input-nombre-app" placeholder="Nuevo nombre App..." class="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500">
                             <button id="btn-cambiar-nombre" class="px-3 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-sm font-bold shadow-lg transition-colors" onclick="window.cambiarNombreApp()">Guardar</button>
                         </div>
 
-                        <input type="file" id="input-logo-app" accept="image/*" class="hidden">
-                        <button id="btn-cambiar-logo" class="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex justify-center items-center gap-2 mb-2 transition-colors" onclick="document.getElementById('input-logo-app').click()">
-                            <i data-lucide="upload" class="w-5 h-5"></i> Subir Logo PNG/JPG
+                        <input type="url" id="input-logo-app" inputmode="url" autocomplete="url" placeholder="https://sitio.com/logo.png" class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-sky-500 mb-2">
+                        <button id="btn-cambiar-logo" type="button" class="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-xl font-bold flex justify-center items-center gap-2 mb-2 transition-colors">
+                            <i data-lucide="link" class="w-5 h-5"></i> Guardar URL del Logo
                         </button>
                         <button id="btn-reset-logo" class="w-full py-2 text-[10px] text-slate-500 hover:text-red-400 font-bold uppercase transition-colors" onclick="window.resetLogoApp()">Reset Valores de Fábrica</button>
                     </div>
@@ -859,7 +843,7 @@
             </header>
             
             <div class="p-4 overflow-y-auto no-scrollbar flex-1 bg-slate-900/30">
-                <div class="space-y-2 mb-4">
+                <div id="brkPaymentSummary" class="space-y-2 mb-4">
                     <div class="flex justify-between items-center bg-slate-900 p-3 rounded-xl border border-slate-700 shadow-sm">
                         <span class="text-sm font-bold text-white flex items-center"><i data-lucide="banknote" class="w-4 h-4 inline mr-2 text-emerald-400"></i> Efectivo</span>
                         <span class="font-black text-white text-base" id="brkEfectivo"></span>
@@ -908,44 +892,45 @@
         // --- CARGA RÁPIDA DE LOGO DESDE LOCALSTORAGE (EJECUCIÓN INMEDIATA) ---
         try {
             const localLogo = localStorage.getItem('app_custom_logo');
-            if (localLogo) {
+            if (localLogo && !localLogo.startsWith('data:')) {
+                let resolvedLocalLogo = localLogo;
+                try {
+                    const parsedLogo = new URL(localLogo, window.location.origin);
+                    if (
+                        parsedLogo.origin === window.location.origin
+                        && /^\/assets\/img\/logo\.[^/]+$/i.test(parsedLogo.pathname)
+                        && parsedLogo.pathname !== '/assets/img/logo.png'
+                    ) {
+                        resolvedLocalLogo = '/assets/img/logo.png';
+                        localStorage.setItem('app_custom_logo', resolvedLocalLogo);
+                    }
+                } catch(e) {}
+
                 const logos = document.querySelectorAll('img[alt="Raffaelito Logo"], img[alt="Raffaelito"]');
                 logos.forEach(img => {
-                    img.src = localLogo;
+                    img.onerror = () => {
+                        if (img.dataset.logoFallbackApplied === 'true') return;
+                        img.dataset.logoFallbackApplied = 'true';
+                        img.src = '/assets/img/logo.png';
+                        try { localStorage.removeItem('app_custom_logo'); } catch(e) {}
+                    };
+                    img.dataset.logoFallbackApplied = 'false';
+                    img.src = resolvedLocalLogo;
                     img.style.objectFit = 'contain';
                     if (img.parentElement && img.parentElement.classList.contains('bg-sky-500/20')) {
                         img.parentElement.classList.replace('bg-sky-500/20', 'bg-transparent');
                     }
                 });
+            } else if (localLogo?.startsWith('data:')) {
+                localStorage.removeItem('app_custom_logo');
             }
         } catch(e) {}
     </script>
 
-    <script type="module" src="js/app.js"></script>
+    <script type="module" src="/js/core/icons.js"></script>
+    <script type="module" src="/js/app.js"></script>
 
     <script>
-        // --- NUEVO: FUNCIÓN DE ACTUALIZACIÓN FORZADA MANUAL ---
-        window.forzarActualizacionApp = () => {
-            if('serviceWorker' in navigator) {
-                navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                    for(let registration of registrations) {
-                        registration.unregister(); // Aniquila el SW viejo
-                    }
-                    // Limpia la caché dura
-                    caches.keys().then((keyList) => {
-                        return Promise.all(keyList.map((key) => {
-                            return caches.delete(key);
-                        }));
-                    }).then(() => {
-                        window.mostrarToast('Sincronizando', 'Recargando aplicación con la última versión...', 'emerald');
-                        setTimeout(() => window.location.reload(true), 800);
-                    });
-                });
-            } else {
-                window.location.reload(true);
-            }
-        };
-
         // --- NUEVO: LÓGICA DEL ACORDEÓN DE ARMADO ---
         window.toggleAcordeon = (seccion) => {
             const secciones = ['tamanos', 'sabores', 'toppings'];
@@ -971,7 +956,7 @@
             icon.className = `w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-${colorClass}-500/30 bg-${colorClass}-500/10 text-${colorClass}-400`;
             icon.innerHTML = `<i data-lucide="${colorClass === 'emerald' ? 'check-circle' : (colorClass === 'red' ? 'x-circle' : (colorClass === 'amber' ? 'alert-triangle' : 'info'))}" class="w-8 h-8"></i>`;
             modal.classList.remove('hidden');
-            if (window.lucide) window.lucide.createIcons();
+            if (window.lucide) window.lucide.createIcons({ root: icon });
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
                 modal.children[0].classList.remove('scale-95');
@@ -1031,8 +1016,8 @@
         window.switchView = (viewName) => {
             document.querySelectorAll('.view-section').forEach(v => v.classList.add('hidden'));
             document.querySelectorAll('.nav-btn').forEach(btn => { 
-                btn.classList.remove('text-sky-400', 'border-sky-500', 'border-t-2', 'md:border-t-0', 'md:border-r-4', 'active'); 
-                btn.classList.add('text-slate-500', 'border-transparent', 'border-t-2', 'md:border-t-0', 'md:border-r-4'); 
+                btn.classList.remove('text-sky-400', 'border-sky-500', 'border-t-2', 'lg:border-t-0', 'lg:border-r-4', 'active'); 
+                btn.classList.add('text-slate-500', 'border-transparent', 'border-t-2', 'lg:border-t-0', 'lg:border-r-4'); 
             });
             const targetView = document.getElementById(`view-${viewName}`); 
             if(targetView) targetView.classList.remove('hidden');
@@ -1041,6 +1026,13 @@
             if(activeBtn) { 
                 activeBtn.classList.remove('text-slate-500', 'border-transparent'); 
                 activeBtn.classList.add('text-sky-400', 'border-sky-500', 'active'); 
+                if (window.innerWidth < 1024) {
+                    requestAnimationFrame(() => activeBtn.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'nearest',
+                        inline: 'center'
+                    }));
+                }
             }
         };
 
