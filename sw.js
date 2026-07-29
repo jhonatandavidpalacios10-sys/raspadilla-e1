@@ -1,4 +1,4 @@
-const CACHE_NAME = 'raffaelito-v13'; // Reparación y publicación completa del catálogo
+const CACHE_NAME = 'raffaelito-v14'; // QR del catálogo y rutas directas por sede
 
 const LOCAL_ASSETS_TO_CACHE = [
   '/',

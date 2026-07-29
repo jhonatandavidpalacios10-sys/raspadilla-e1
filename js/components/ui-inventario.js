@@ -43,8 +43,35 @@ let catalogImageRemoved = false;
 let catalogEditorToken = 0;
 let catalogSitesLoadToken = 0;
 let virtualCatalogOpenToken = 0;
+let catalogQrRenderToken = 0;
+let catalogQrCurrentUrl = 'https://raffaelito-catalogo.vercel.app/';
+let catalogQrReadyUrl = '';
+let catalogQrModulePromise = null;
 const virtualCatalogImageStates = new Map();
 const virtualCatalogSaveTokens = new Map();
+
+const PUBLIC_CATALOG_BASE_URL = 'https://raffaelito-catalogo.vercel.app/';
+const CATALOG_SITE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
+const CATALOG_QR_OPTIONS = Object.freeze({
+    errorCorrectionLevel: 'H',
+    margin: 4,
+    color: {
+        dark: '#0f172a',
+        light: '#ffffff'
+    }
+});
+
+function loadCatalogQrModule() {
+    if (!catalogQrModulePromise) {
+        catalogQrModulePromise = import('qrcode')
+            .then(module => module.default || module)
+            .catch(error => {
+                catalogQrModulePromise = null;
+                throw error;
+            });
+    }
+    return catalogQrModulePromise;
+}
 
 // Estado temporal para construir los tamaños en el modal
 let tamanosActuales = [];
@@ -238,6 +265,310 @@ function escapeCatalogHtml(value = '') {
 
 function normalizeVirtualCatalogValue(value = '') {
     return String(value).trim().toLocaleLowerCase('es');
+}
+
+function getCatalogQrUrl(siteId = 'general') {
+    const normalizedSiteId = String(siteId || 'general').trim();
+    if (!normalizedSiteId || normalizedSiteId === 'general') {
+        return PUBLIC_CATALOG_BASE_URL;
+    }
+    const url = new URL(PUBLIC_CATALOG_BASE_URL);
+    url.searchParams.set('sede', normalizedSiteId);
+    return url.toString();
+}
+
+function setCatalogQrStatus(message, tone = 'slate') {
+    const status = document.getElementById('catalog-qr-status');
+    if (!status) return;
+    status.textContent = message;
+    const tones = {
+        slate: 'text-slate-400',
+        emerald: 'text-emerald-600',
+        amber: 'text-amber-600',
+        red: 'text-red-500'
+    };
+    status.className = `mt-2 min-h-4 text-[10px] ${tones[tone] || tones.slate}`;
+}
+
+function setCatalogQrActionsReady(ready) {
+    [
+        'btn-catalog-qr-ampliar',
+        'btn-catalog-qr-preview',
+        'btn-catalog-qr-descargar',
+        'btn-catalog-qr-descargar-zoom'
+    ].forEach(id => {
+        const button = document.getElementById(id);
+        if (!button) return;
+        button.disabled = !ready;
+        if (ready) button.removeAttribute('aria-busy');
+        else button.setAttribute('aria-busy', 'true');
+        button.classList.toggle('opacity-50', !ready);
+        button.classList.toggle('cursor-wait', !ready);
+    });
+}
+
+function getCatalogQrSiteName(siteId = 'general') {
+    if (String(siteId) === 'general') return 'General';
+    return String(
+        state.locales?.find(local => String(local.id) === String(siteId))?.nombre
+        || 'Sede'
+    );
+}
+
+function renderCatalogQrSiteOptions(activeIds = getActiveCatalogSiteIds()) {
+    const select = document.getElementById('catalog-qr-site-select');
+    if (!select) return;
+    const previousValue = String(select.value || 'general');
+    const knownSiteIds = new Set(
+        (state.locales || []).map(local => String(local?.id || '')).filter(Boolean)
+    );
+    const normalizedIds = Array.from(new Set([
+        'general',
+        ...Array.from(activeIds || [])
+            .map(siteId => String(siteId || '').trim())
+            .filter(siteId => (
+                siteId !== 'general'
+                && CATALOG_SITE_ID_PATTERN.test(siteId)
+                && (knownSiteIds.size === 0 || knownSiteIds.has(siteId))
+            ))
+    ]));
+    const fragment = document.createDocumentFragment();
+    normalizedIds.forEach(siteId => {
+        const option = document.createElement('option');
+        option.value = siteId;
+        option.textContent = siteId === 'general'
+            ? 'General · todos los productos'
+            : getCatalogQrSiteName(siteId);
+        fragment.appendChild(option);
+    });
+    select.replaceChildren(fragment);
+    select.value = normalizedIds.includes(previousValue)
+        ? previousValue
+        : 'general';
+    void renderSelectedCatalogQr();
+}
+
+async function renderSelectedCatalogQr() {
+    const select = document.getElementById('catalog-qr-site-select');
+    const canvas = document.getElementById('catalog-qr-canvas');
+    const zoomCanvas = document.getElementById('catalog-qr-zoom-canvas');
+    const urlLabel = document.getElementById('catalog-qr-url');
+    const zoomSiteLabel = document.getElementById('catalog-qr-zoom-site');
+    if (!canvas || !zoomCanvas) return;
+
+    const selectedSiteId = String(select?.value || 'general');
+    const selectedSiteName = select?.selectedOptions?.[0]?.textContent
+        || getCatalogQrSiteName(selectedSiteId);
+    const url = getCatalogQrUrl(selectedSiteId);
+    if (
+        catalogQrReadyUrl === url
+        && canvas.width > 0
+        && zoomCanvas.width > 0
+    ) {
+        catalogQrCurrentUrl = url;
+        if (urlLabel) {
+            urlLabel.textContent = url;
+            urlLabel.title = url;
+        }
+        if (zoomSiteLabel) zoomSiteLabel.textContent = selectedSiteName;
+        setCatalogQrActionsReady(true);
+        setCatalogQrStatus('QR listo para compartir, copiar o descargar.', 'emerald');
+        return;
+    }
+    const token = ++catalogQrRenderToken;
+    catalogQrCurrentUrl = url;
+    catalogQrReadyUrl = '';
+    setCatalogQrActionsReady(false);
+    [canvas, zoomCanvas].forEach(target => {
+        target.getContext('2d')?.clearRect(0, 0, target.width, target.height);
+    });
+    if (urlLabel) {
+        urlLabel.textContent = url;
+        urlLabel.title = url;
+    }
+    if (zoomSiteLabel) zoomSiteLabel.textContent = selectedSiteName;
+    setCatalogQrStatus('Generando QR en este dispositivo…');
+
+    try {
+        const QRCode = await loadCatalogQrModule();
+        if (token !== catalogQrRenderToken) return;
+        const previewBuffer = document.createElement('canvas');
+        const zoomBuffer = document.createElement('canvas');
+        await Promise.all([
+            QRCode.toCanvas(previewBuffer, url, {
+                ...CATALOG_QR_OPTIONS,
+                width: 384
+            }),
+            QRCode.toCanvas(zoomBuffer, url, {
+                ...CATALOG_QR_OPTIONS,
+                width: 1024
+            })
+        ]);
+        if (token !== catalogQrRenderToken) return;
+        [
+            [canvas, previewBuffer],
+            [zoomCanvas, zoomBuffer]
+        ].forEach(([target, source]) => {
+            target.width = source.width;
+            target.height = source.height;
+            const context = target.getContext('2d');
+            context?.clearRect(0, 0, target.width, target.height);
+            context?.drawImage(source, 0, 0);
+        });
+        catalogQrReadyUrl = url;
+        setCatalogQrActionsReady(true);
+        canvas.setAttribute(
+            'aria-label',
+            `Código QR del catálogo ${selectedSiteName}`
+        );
+        zoomCanvas.setAttribute(
+            'aria-label',
+            `Código QR ampliado del catálogo ${selectedSiteName}`
+        );
+        setCatalogQrStatus('QR listo para compartir, copiar o descargar.', 'emerald');
+    } catch (error) {
+        console.error('No se pudo generar el QR del catálogo:', error);
+        if (token === catalogQrRenderToken) {
+            catalogQrReadyUrl = '';
+            setCatalogQrActionsReady(false);
+            setCatalogQrStatus('No se pudo generar el QR. Inténtalo nuevamente.', 'red');
+        }
+    }
+}
+
+function openCatalogQrZoom() {
+    if (catalogQrReadyUrl !== catalogQrCurrentUrl) {
+        setCatalogQrStatus('Espera a que termine de generarse el QR.', 'amber');
+        return;
+    }
+    const zoom = document.getElementById('catalog-qr-zoom');
+    if (!zoom) return;
+    zoom.classList.remove('hidden');
+    document.getElementById('btn-catalog-qr-cerrar-zoom')?.focus();
+}
+
+function closeCatalogQrZoom() {
+    const zoom = document.getElementById('catalog-qr-zoom');
+    if (!zoom || zoom.classList.contains('hidden')) return;
+    zoom.classList.add('hidden');
+    document.getElementById('btn-catalog-qr-ampliar')?.focus();
+}
+
+function openSelectedCatalogLink() {
+    const opened = window.open(
+        catalogQrCurrentUrl,
+        '_blank',
+        'noopener,noreferrer'
+    );
+    if (opened) {
+        opened.opener = null;
+        return;
+    }
+    setCatalogQrStatus('El navegador bloqueó la nueva pestaña. Usa Copiar.', 'amber');
+}
+
+async function copySelectedCatalogLink() {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(catalogQrCurrentUrl);
+        } else {
+            const input = document.createElement('textarea');
+            input.value = catalogQrCurrentUrl;
+            input.setAttribute('readonly', '');
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+            input.select();
+            const copied = document.execCommand('copy');
+            input.remove();
+            if (!copied) throw new Error('El navegador no permitió copiar.');
+        }
+        setCatalogQrStatus('Enlace copiado.', 'emerald');
+        window.mostrarToast?.(
+            'Enlace copiado',
+            'Ya puedes compartir el catálogo.',
+            'emerald'
+        );
+    } catch (error) {
+        console.warn('No se pudo copiar el enlace del catálogo:', error);
+        setCatalogQrStatus('Mantén presionado el enlace para copiarlo.', 'amber');
+        window.mostrarToast?.(
+            'No se pudo copiar',
+            'Mantén presionado el enlace mostrado y cópialo manualmente.',
+            'amber'
+        );
+    }
+}
+
+async function downloadSelectedCatalogQr() {
+    const canvas = document.getElementById('catalog-qr-zoom-canvas');
+    const select = document.getElementById('catalog-qr-site-select');
+    if (
+        catalogQrReadyUrl !== catalogQrCurrentUrl
+        || !canvas
+        || !canvas.width
+        || !canvas.height
+    ) {
+        setCatalogQrStatus('Espera a que termine de generarse el QR.', 'amber');
+        return;
+    }
+    try {
+        const siteId = String(select?.value || 'general')
+            .replace(/[^a-zA-Z0-9_-]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            || 'general';
+        const fileName = `catalogo-raffaelito-${siteId}.png`;
+        const isAppleTouchDevice = (
+            /iPad|iPhone|iPod/i.test(navigator.userAgent)
+            || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+        );
+        if (
+            isAppleTouchDevice
+            && typeof File === 'function'
+            && typeof navigator.share === 'function'
+            && typeof navigator.canShare === 'function'
+        ) {
+            const blob = await new Promise(resolve => {
+                canvas.toBlob(resolve, 'image/png');
+            });
+            const file = blob
+                ? new File([blob], fileName, { type: 'image/png' })
+                : null;
+            if (file && navigator.canShare({ files: [file] })) {
+                try {
+                    await navigator.share({
+                        files: [file],
+                        title: 'QR del catálogo Raffaelito'
+                    });
+                    setCatalogQrStatus('QR listo para guardar o compartir.', 'emerald');
+                    return;
+                } catch (shareError) {
+                    if (shareError?.name === 'AbortError') {
+                        setCatalogQrStatus('No se compartió el QR.', 'slate');
+                        return;
+                    }
+                    console.warn('No se pudo abrir el menú para compartir:', shareError);
+                }
+            }
+        }
+        const link = document.createElement('a');
+        link.download = fileName;
+        link.href = canvas.toDataURL('image/png');
+        link.rel = 'noopener';
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setCatalogQrStatus(
+            isAppleTouchDevice
+                ? 'Si se abrió la imagen, mantenla presionada para guardarla.'
+                : 'QR descargado en formato PNG.',
+            'emerald'
+        );
+    } catch (error) {
+        console.error('No se pudo descargar el QR:', error);
+        setCatalogQrStatus('El navegador no permitió descargar el QR.', 'red');
+    }
 }
 
 function releaseVirtualCatalogImageStates() {
@@ -806,6 +1137,10 @@ function renderCatalogSites(activeIds = [], { loading = false } = {}) {
 function closeVirtualCatalogModal() {
     catalogSitesLoadToken++;
     virtualCatalogOpenToken++;
+    catalogQrRenderToken++;
+    catalogQrReadyUrl = '';
+    setCatalogQrActionsReady(false);
+    closeCatalogQrZoom();
     releaseVirtualCatalogImageStates();
     closeModal('modal-config-catalogo-publico', 150);
 }
@@ -823,18 +1158,25 @@ function openVirtualCatalogModal() {
         saveButton.setAttribute('aria-busy', 'true');
         saveButton.classList.add('opacity-60', 'cursor-wait');
     }
-    renderCatalogSites(getActiveCatalogSiteIds(), { loading: true });
+    const cachedActiveSiteIds = getActiveCatalogSiteIds();
+    const qrSiteSelect = document.getElementById('catalog-qr-site-select');
+    if (qrSiteSelect) qrSiteSelect.value = 'general';
+    renderCatalogSites(cachedActiveSiteIds, { loading: true });
+    renderCatalogQrSiteOptions(cachedActiveSiteIds);
     modal.classList.remove('hidden', 'pointer-events-none');
     requestAnimationFrame(() => modal.classList.remove('opacity-0'));
     void loadCatalogSiteSettings(state.locales || [], { force: true })
         .then(activeIds => {
             if (loadToken !== catalogSitesLoadToken) return;
             renderCatalogSites(activeIds);
+            renderCatalogQrSiteOptions(activeIds);
         })
         .catch(error => {
             console.warn('No se pudieron actualizar las sedes:', error);
             if (loadToken === catalogSitesLoadToken) {
-                renderCatalogSites(getActiveCatalogSiteIds());
+                const fallbackIds = getActiveCatalogSiteIds();
+                renderCatalogSites(fallbackIds);
+                renderCatalogQrSiteOptions(fallbackIds);
             }
         })
         .finally(() => {
@@ -875,9 +1217,15 @@ function saveCatalogSitesFromModal() {
             activeIds,
             products: state.productos
         })
-            .then(savedIds => renderCatalogSites(savedIds))
+            .then(savedIds => {
+                renderCatalogSites(savedIds);
+                renderCatalogQrSiteOptions(savedIds);
+            })
             .catch(error => {
                 console.error('No se pudieron sincronizar las sedes públicas:', error);
+                const confirmedIds = getActiveCatalogSiteIds();
+                renderCatalogSites(confirmedIds);
+                renderCatalogQrSiteOptions(confirmedIds);
                 window.mostrarAlerta?.(
                     'Sincronización pendiente',
                     'No se pudo publicar toda la configuración. Vuelve a intentarlo cuando tengas conexión.',
@@ -1041,6 +1389,29 @@ export async function initInventario() {
         ?.addEventListener('click', () => switchVirtualCatalogPanel('sedes'));
     document.getElementById('btn-guardar-config-catalogo')
         ?.addEventListener('click', saveCatalogSitesFromModal);
+    document.getElementById('catalog-qr-site-select')
+        ?.addEventListener('change', () => void renderSelectedCatalogQr());
+    document.getElementById('btn-catalog-qr-ampliar')
+        ?.addEventListener('click', openCatalogQrZoom);
+    document.getElementById('btn-catalog-qr-preview')
+        ?.addEventListener('click', openCatalogQrZoom);
+    document.getElementById('btn-catalog-qr-abrir')
+        ?.addEventListener('click', openSelectedCatalogLink);
+    document.getElementById('btn-catalog-qr-copiar')
+        ?.addEventListener('click', () => void copySelectedCatalogLink());
+    document.getElementById('btn-catalog-qr-descargar')
+        ?.addEventListener('click', downloadSelectedCatalogQr);
+    document.getElementById('btn-catalog-qr-descargar-zoom')
+        ?.addEventListener('click', downloadSelectedCatalogQr);
+    document.getElementById('btn-catalog-qr-cerrar-zoom')
+        ?.addEventListener('click', closeCatalogQrZoom);
+    document.getElementById('catalog-qr-zoom')
+        ?.addEventListener('click', event => {
+            if (event.target === event.currentTarget) closeCatalogQrZoom();
+        });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') closeCatalogQrZoom();
+    });
     const virtualProductsList = document.getElementById('catalog-virtual-products-list');
     virtualProductsList?.addEventListener('click', event => {
         const actionButton = event.target.closest('[data-virtual-action]');
