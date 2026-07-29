@@ -19,7 +19,8 @@ import {
     where,
     onSnapshot,
     orderBy,
-    runTransaction
+    runTransaction,
+    Bytes
 } from "firebase/firestore";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence, inMemoryPersistence, createUserWithEmailAndPassword, updatePassword } from "firebase/auth";
 
@@ -56,5 +57,5 @@ export {
     db, auth, secondaryAuth, createUserWithEmailAndPassword, updatePassword, signInWithEmailAndPassword,
     collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, 
     writeBatch, increment, serverTimestamp, query, where, onSnapshot, 
-    orderBy, runTransaction, signOut, onAuthStateChanged 
+    orderBy, runTransaction, Bytes, signOut, onAuthStateChanged 
 };

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'raffaelito-v9'; // Cola local-first y sincronización en segundo plano
+const CACHE_NAME = 'raffaelito-v11'; // Publicación automática del catálogo
 
 const LOCAL_ASSETS_TO_CACHE = [
   '/',
@@ -16,6 +16,7 @@ const LOCAL_ASSETS_TO_CACHE = [
   '/js/core/sales-service.js',
   '/js/core/sync-queue.js',
   '/js/core/inventory-service.js',
+  '/js/core/public-catalog-service.js',
   '/js/core/dialogs.js',
   '/js/core/icons.js',
   '/js/components/ui-ventas.js',

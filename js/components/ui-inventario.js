@@ -1,4 +1,4 @@
-import { db, collection, setDoc, updateDoc, deleteDoc, doc, serverTimestamp, increment, onSnapshot, query, where, writeBatch } from '../core/firebase-setup.js';
+import { db, collection, doc, serverTimestamp, increment, onSnapshot, query, where, writeBatch } from '../core/firebase-setup.js';
 import { state } from '../core/store.js'; 
 import { formatMoney, getTodayDateStr, getTrustedNowMs } from '../utils/helpers.js';
 import {
@@ -7,6 +7,21 @@ import {
 } from './ui-ventas.js';
 import { persistProductsCache } from '../core/local-cache.js';
 import { applyPendingDocumentMutations } from '../core/sync-queue.js';
+import {
+    canManagePublicCatalog,
+    deletePublicCatalogProduct,
+    deleteProductAndPublicCatalog,
+    ensurePublicCatalogPublished,
+    getActiveCatalogSiteIds,
+    getCatalogImagePreviewUrl,
+    getCatalogSettings,
+    loadCatalogSiteSettings,
+    prepareCatalogImage,
+    resolvePublicAvailability,
+    saveCatalogSiteSettings,
+    saveProductAndPublicCatalog,
+    syncPublicAvailability,
+} from '../core/public-catalog-service.js';
 
 let listaInventarioEl; 
 let categoriaActual = 'vaso';
@@ -21,9 +36,295 @@ let inventoryRenderPending = true;
 let inventoryViewObserver = null;
 let confirmedCatalogRows = [];
 let inventorySyncQueueListenerInstalled = false;
+let preparedCatalogImage = null;
+let catalogImagePreparation = null;
+let catalogImagePreviewUrl = '';
+let catalogImageRemoved = false;
+let catalogEditorToken = 0;
+let catalogSitesLoadToken = 0;
 
 // Estado temporal para construir los tamaños en el modal
 let tamanosActuales = [];
+
+function closeModal(modalId, delay = 200) {
+    const modal = document.getElementById(modalId);
+    if (!modal) return;
+    modal.classList.add('opacity-0', 'pointer-events-none');
+    setTimeout(() => modal.classList.add('hidden'), delay);
+}
+
+function releaseCatalogImagePreview() {
+    if (catalogImagePreviewUrl) {
+        URL.revokeObjectURL(catalogImagePreviewUrl);
+        catalogImagePreviewUrl = '';
+    }
+}
+
+function renderCatalogImagePreview(url = '') {
+    const preview = document.getElementById('catalog-image-preview');
+    const placeholder = document.getElementById('catalog-image-placeholder');
+    const removeButton = document.getElementById('btn-catalog-image-remove');
+    if (!preview || !placeholder || !removeButton) return;
+
+    if (url) {
+        preview.src = url;
+        preview.classList.remove('hidden');
+        placeholder.classList.add('hidden');
+        removeButton.classList.remove('hidden');
+    } else {
+        preview.removeAttribute('src');
+        preview.classList.add('hidden');
+        placeholder.classList.remove('hidden');
+        removeButton.classList.add('hidden');
+    }
+}
+
+function setCatalogImageStatus(message, tone = 'slate') {
+    const status = document.getElementById('catalog-image-status');
+    if (!status) return;
+    status.textContent = message;
+    status.className = `mt-1 text-[10px] leading-tight text-${tone}-500`;
+}
+
+function updateCatalogDescriptionCount() {
+    const input = document.getElementById('catalog-description');
+    const counter = document.getElementById('catalog-description-count');
+    if (input && counter) counter.textContent = String(input.value.length);
+}
+
+function resetCatalogEditor(product = null) {
+    const section = document.getElementById('div-catalogo-publico');
+    const manager = canManagePublicCatalog();
+    section?.classList.toggle('hidden', !manager);
+    catalogEditorToken++;
+    const token = catalogEditorToken;
+    catalogImagePreparation = null;
+    preparedCatalogImage = null;
+    catalogImageRemoved = false;
+    releaseCatalogImagePreview();
+    renderCatalogImagePreview('');
+
+    if (!manager) return;
+    const settings = getCatalogSettings(product || { categoria: categoriaActual });
+    document.getElementById('catalog-visible').checked = settings.visible;
+    document.getElementById('catalog-name').value = settings.nombrePublico;
+    document.getElementById('catalog-description').value = settings.descripcion;
+    document.getElementById('catalog-availability').value = settings.disponibilidad;
+    document.getElementById('catalog-order').value = String(settings.orden);
+    document.getElementById('catalog-show-price').checked = settings.mostrarPrecio;
+    document.getElementById('catalog-featured').checked = settings.destacado;
+    const fileInput = document.getElementById('catalog-image-file');
+    if (fileInput) fileInput.value = '';
+    updateCatalogDescriptionCount();
+
+    if (!settings.imagenId) {
+        setCatalogImageStatus('Se optimiza automáticamente para cargar rápido.');
+        return;
+    }
+
+    setCatalogImageStatus('Cargando imagen guardada…');
+    void getCatalogImagePreviewUrl(settings.imagenId)
+        .then(url => {
+            if (token !== catalogEditorToken) {
+                if (url) URL.revokeObjectURL(url);
+                return;
+            }
+            if (!url) {
+                setCatalogImageStatus('La imagen no está disponible todavía.', 'amber');
+                return;
+            }
+            releaseCatalogImagePreview();
+            catalogImagePreviewUrl = url;
+            renderCatalogImagePreview(url);
+            setCatalogImageStatus('Imagen guardada en el catálogo.', 'emerald');
+        })
+        .catch(error => {
+            console.warn('No se pudo cargar la imagen del catálogo:', error);
+            if (token === catalogEditorToken) {
+                setCatalogImageStatus('No se pudo cargar la imagen guardada.', 'amber');
+            }
+        });
+}
+
+function readCatalogEditorSettings(productId, baseProduct = null) {
+    const existing = getCatalogSettings(baseProduct || {});
+    if (!canManagePublicCatalog()) return baseProduct?.catalogo || undefined;
+
+    const version = preparedCatalogImage || catalogImageRemoved
+        ? Date.now()
+        : existing.imagenVersion;
+    return {
+        visible: document.getElementById('catalog-visible').checked,
+        nombrePublico: document.getElementById('catalog-name').value.trim(),
+        descripcion: document.getElementById('catalog-description').value.trim(),
+        mostrarPrecio: document.getElementById('catalog-show-price').checked,
+        disponibilidad: document.getElementById('catalog-availability').value,
+        destacado: document.getElementById('catalog-featured').checked,
+        orden: Math.max(
+            0,
+            Math.min(9999, Number(document.getElementById('catalog-order').value) || 0)
+        ),
+        imagenId: preparedCatalogImage
+            ? String(productId)
+            : (catalogImageRemoved ? '' : existing.imagenId),
+        imagenVersion: version
+    };
+}
+
+function handleCatalogImageSelection(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const token = ++catalogEditorToken;
+    catalogImageRemoved = false;
+    preparedCatalogImage = null;
+    setCatalogImageStatus('Optimizando imagen…', 'emerald');
+
+    const preparation = prepareCatalogImage(file)
+        .then(prepared => {
+            if (token !== catalogEditorToken) {
+                URL.revokeObjectURL(prepared.previewUrl);
+                return null;
+            }
+            releaseCatalogImagePreview();
+            preparedCatalogImage = prepared;
+            catalogImagePreviewUrl = prepared.previewUrl;
+            renderCatalogImagePreview(prepared.previewUrl);
+            setCatalogImageStatus(
+                `Lista para guardar · ${Math.max(1, Math.round(prepared.size / 1024))} KB`,
+                'emerald'
+            );
+            return prepared;
+        })
+        .catch(error => {
+            console.error('No se pudo preparar la imagen:', error);
+            if (token === catalogEditorToken) {
+                preparedCatalogImage = null;
+                renderCatalogImagePreview('');
+                setCatalogImageStatus(error?.message || 'Imagen no válida.', 'red');
+            }
+            return null;
+        })
+        .finally(() => {
+            if (catalogImagePreparation === preparation) {
+                catalogImagePreparation = null;
+            }
+        });
+    catalogImagePreparation = preparation;
+}
+
+function removeCatalogEditorImage() {
+    catalogEditorToken++;
+    catalogImagePreparation = null;
+    preparedCatalogImage = null;
+    catalogImageRemoved = true;
+    releaseCatalogImagePreview();
+    renderCatalogImagePreview('');
+    const fileInput = document.getElementById('catalog-image-file');
+    if (fileInput) fileInput.value = '';
+    setCatalogImageStatus('La imagen se quitará al guardar.', 'amber');
+}
+
+function renderCatalogSites(activeIds = [], { loading = false } = {}) {
+    const container = document.getElementById('catalog-sites-list');
+    if (!container) return;
+    container.replaceChildren();
+    const active = new Set(activeIds.map(String));
+    const sites = [
+        { id: 'general', nombre: 'General', fixed: true },
+        ...(state.locales || []).map(local => ({
+            id: String(local.id),
+            nombre: String(local.nombre || 'Sede'),
+            fixed: false
+        }))
+    ];
+
+    sites.forEach(site => {
+        const label = document.createElement('label');
+        label.className = 'flex min-h-14 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2';
+        const text = document.createElement('span');
+        text.className = 'min-w-0';
+        const title = document.createElement('span');
+        title.className = 'block truncate text-sm font-bold text-slate-700';
+        title.textContent = site.nombre;
+        const caption = document.createElement('span');
+        caption.className = 'block text-[10px] text-slate-400';
+        caption.textContent = site.fixed
+            ? 'Siempre disponible; muestra todos los productos públicos.'
+            : 'Genera una cartilla propia para esta sede.';
+        text.append(title, caption);
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.dataset.catalogSiteId = site.id;
+        checkbox.checked = site.fixed || active.has(site.id);
+        checkbox.disabled = site.fixed || loading;
+        checkbox.className = 'h-5 w-5 shrink-0 accent-emerald-600';
+        label.append(text, checkbox);
+        container.appendChild(label);
+    });
+}
+
+function openCatalogSitesModal() {
+    if (!canManagePublicCatalog()) return;
+    const modal = document.getElementById('modal-config-catalogo-publico');
+    if (!modal) return;
+    const loadToken = ++catalogSitesLoadToken;
+    const saveButton = document.getElementById('btn-guardar-config-catalogo');
+    if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.setAttribute('aria-busy', 'true');
+        saveButton.classList.add('opacity-60', 'cursor-wait');
+    }
+    renderCatalogSites(getActiveCatalogSiteIds(), { loading: true });
+    modal.classList.remove('hidden', 'pointer-events-none');
+    requestAnimationFrame(() => modal.classList.remove('opacity-0'));
+    void loadCatalogSiteSettings(state.locales || [], { force: true })
+        .then(activeIds => {
+            if (loadToken !== catalogSitesLoadToken) return;
+            renderCatalogSites(activeIds);
+        })
+        .catch(error => {
+            console.warn('No se pudieron actualizar las sedes:', error);
+            if (loadToken === catalogSitesLoadToken) {
+                renderCatalogSites(getActiveCatalogSiteIds());
+            }
+        })
+        .finally(() => {
+            if (loadToken !== catalogSitesLoadToken || !saveButton) return;
+            saveButton.disabled = false;
+            saveButton.removeAttribute('aria-busy');
+            saveButton.classList.remove('opacity-60', 'cursor-wait');
+        });
+}
+
+function saveCatalogSitesFromModal() {
+    if (!canManagePublicCatalog()) return;
+    const saveButton = document.getElementById('btn-guardar-config-catalogo');
+    if (saveButton?.disabled) return;
+    catalogSitesLoadToken++;
+    const activeIds = Array.from(
+        document.querySelectorAll('[data-catalog-site-id]:checked')
+    ).map(input => input.dataset.catalogSiteId);
+    closeModal('modal-config-catalogo-publico');
+    window.mostrarToast?.(
+        'Sedes actualizadas',
+        'La configuración quedó aplicada y se sincroniza en segundo plano.',
+        'emerald'
+    );
+    runAfterImmediateUiPaint(() => {
+        void saveCatalogSiteSettings({
+            activeIds,
+            products: state.productos
+        }).catch(error => {
+            console.error('No se pudieron sincronizar las sedes públicas:', error);
+            window.mostrarAlerta?.(
+                'Sincronización pendiente',
+                'No se pudo publicar toda la configuración. Vuelve a intentarlo cuando tengas conexión.',
+                'amber'
+            );
+        });
+    });
+}
 
 function isViewVisible(viewName) {
     const view = document.getElementById(`view-${viewName}`);
@@ -133,6 +434,14 @@ function runAfterImmediateUiPaint(callback) {
 
 export async function initInventario() {
     installInventorySyncQueueListener();
+    if (canManagePublicCatalog()) {
+        // Actualiza la caché de sedes sin retrasar la apertura del inventario.
+        // Así el primer producto editado en un dispositivo nuevo se publica
+        // en todas las sedes que ya estaban activas.
+        void loadCatalogSiteSettings().catch(error => {
+            console.warn('No se pudo precargar la configuración pública:', error);
+        });
+    }
     if (confirmedCatalogRows.length === 0 && state.productos.length > 0) {
         confirmedCatalogRows = state.productos.map(product => ({ ...product }));
     }
@@ -152,8 +461,24 @@ export async function initInventario() {
     document.getElementById('form-insumo')?.addEventListener('submit', guardarProducto);
     document.getElementById('btn-nuevo-producto')?.addEventListener('click', abrirModalProducto);
     document.getElementById('btn-cerrar-modal-producto')?.addEventListener('click', () => {
-        const m = document.getElementById('modal-producto'); m.classList.add('opacity-0', 'pointer-events-none'); setTimeout(() => m.classList.add('hidden'), 300);
+        catalogEditorToken++;
+        releaseCatalogImagePreview();
+        closeModal('modal-producto', 300);
     });
+    document.getElementById('btn-config-catalogo-publico')
+        ?.addEventListener('click', openCatalogSitesModal);
+    document.getElementById('btn-cerrar-config-catalogo')
+        ?.addEventListener('click', () => closeModal('modal-config-catalogo-publico'));
+    document.getElementById('btn-guardar-config-catalogo')
+        ?.addEventListener('click', saveCatalogSitesFromModal);
+    document.getElementById('catalog-description')
+        ?.addEventListener('input', updateCatalogDescriptionCount);
+    document.getElementById('btn-catalog-image-select')
+        ?.addEventListener('click', () => document.getElementById('catalog-image-file')?.click());
+    document.getElementById('catalog-image-file')
+        ?.addEventListener('change', handleCatalogImageSelection);
+    document.getElementById('btn-catalog-image-remove')
+        ?.addEventListener('click', removeCatalogEditorImage);
     
     // Eventos Nuevos: Gestión dinámica de tamaños
     document.getElementById('btn-add-tamano')?.addEventListener('click', () => {
@@ -238,6 +563,26 @@ export async function initInventario() {
                 );
                 let settled = false;
                 let initialCatalogPublished = false;
+
+                const scheduleAutomaticPublicCatalog = () => {
+                    if (
+                        !canManagePublicCatalog()
+                        || !initialCatalogPublished
+                        || freshSources.size !== expectedInitialSources
+                    ) return;
+                    const products = Array.from(mergedProducts.values());
+                    runAfterImmediateUiPaint(() => {
+                        void ensurePublicCatalogPublished({
+                            products,
+                            locales: state.locales || []
+                        }).catch(error => {
+                            console.warn(
+                                'La publicación automática del catálogo quedó pendiente:',
+                                error
+                            );
+                        });
+                    });
+                };
 
                 const publishFullCatalog = () => {
                     if (loadToken !== inventoryLoadToken) return;
@@ -327,11 +672,13 @@ export async function initInventario() {
                         if (loadToken !== inventoryLoadToken) return;
                         const sourceProducts = buckets.get(sourceKey);
                         const changedIds = new Set();
+                        const removedIds = [];
                         snapshot.docChanges().forEach(change => {
                             const id = change.doc.id;
                             changedIds.add(id);
                             if (change.type === 'removed') {
                                 sourceProducts.delete(id);
+                                removedIds.push(id);
                             } else {
                                 sourceProducts.set(id, {
                                     id,
@@ -347,7 +694,19 @@ export async function initInventario() {
                         );
                         if (catalogWasPublished) {
                             publishCatalogChanges(changedIds);
+                            if (canManagePublicCatalog()) {
+                                removedIds.forEach(productId => {
+                                    void deletePublicCatalogProduct(productId)
+                                        .catch(error => {
+                                            console.warn(
+                                                'No se retiró una proyección pública eliminada:',
+                                                error
+                                            );
+                                    });
+                                });
+                            }
                         }
+                        scheduleAutomaticPublicCatalog();
                     }, error => {
                         if (loadToken !== inventoryLoadToken) return;
                         console.error("Error escuchando inventario:", error);
@@ -583,9 +942,15 @@ function procesarIngresoStock(e) {
         const baseCatalog = confirmedCatalogRows.length > 0
             ? confirmedCatalogRows
             : state.productos;
+        let nextProduct = null;
         confirmedCatalogRows = baseCatalog.map(product => (
             product.id === prodId
-                ? { ...product, stock: Number(product.stock || 0) + cant }
+                ? (
+                    nextProduct = {
+                        ...product,
+                        stock: Number(product.stock || 0) + cant
+                    }
+                )
                 : product
         ));
         state.productos = applyPendingDocumentMutations(
@@ -604,14 +969,26 @@ function procesarIngresoStock(e) {
             'emerald'
         );
         runAfterImmediateUiPaint(() => {
-            void batch.commit().catch(err => {
-                console.error('No se pudo sincronizar el ingreso de stock:', err);
-                window.mostrarAlerta?.(
-                    'Ingreso pendiente',
-                    'Firebase rechazó el cambio. El inventario se actualizará con el valor confirmado.',
-                    'red'
-                );
-            });
+            void batch.commit()
+                .then(() => {
+                    if (!nextProduct) return;
+                    return syncPublicAvailability([{
+                        id: nextProduct.id,
+                        localId: nextProduct.localId,
+                        stock: nextProduct.stock,
+                        disponible: resolvePublicAvailability(nextProduct)
+                    }], {
+                        localId: nextProduct.localId || state.userLocalId || ''
+                    });
+                })
+                .catch(err => {
+                    console.error('No se pudo sincronizar el ingreso de stock:', err);
+                    window.mostrarAlerta?.(
+                        'Ingreso pendiente',
+                        'Firebase rechazó el cambio. El inventario se actualizará con el valor confirmado.',
+                        'red'
+                    );
+                });
         });
         
     } catch(err) {
@@ -631,6 +1008,7 @@ function procesarIngresoStock(e) {
 function abrirModalProducto() {
     document.getElementById('form-insumo').reset(); 
     document.getElementById('prod-id').value = '';
+    resetCatalogEditor();
     
     // Configuración base de Tamaños (1 por defecto)
     tamanosActuales = [{ nombre: 'Único / Estándar', precio: 0 }];
@@ -674,6 +1052,7 @@ function abrirModalProducto() {
 function editarProductoFn(id) {
     const p = state.productos.find(x => x.id === id); if(!p) return;
     abrirModalProducto();
+    resetCatalogEditor(p);
     
     document.getElementById('prod-id').value = p.id;
     document.getElementById('prod-nombre').value = p.nombre;
@@ -825,6 +1204,14 @@ function guardarProducto(e) {
         if(window.mostrarToast) window.mostrarToast('Error', 'Debes añadir al menos un tamaño y precio.', 'amber');
         return;
     }
+    if (catalogImagePreparation && !preparedCatalogImage) {
+        window.mostrarToast?.(
+            'Imagen en preparación',
+            'Espera un instante a que termine de optimizarse.',
+            'amber'
+        );
+        return;
+    }
 
     const id = document.getElementById('prod-id').value;
     let selectedLocal = document.getElementById('prod-local').value;
@@ -867,7 +1254,18 @@ function guardarProducto(e) {
             ? doc(db, 'productos', id)
             : doc(collection(db, 'productos'));
         const productId = productRef.id;
-        const optimisticProduct = { id: productId, ...prodData };
+        const imageToSave = preparedCatalogImage;
+        const shouldRemoveImage = catalogImageRemoved;
+        const catalogo = readCatalogEditorSettings(
+            productId,
+            productoBase || prodExistente
+        );
+        if (catalogo !== undefined) prodData.catalogo = catalogo;
+        const optimisticProduct = {
+            ...(productoBase || prodExistente || {}),
+            id: productId,
+            ...prodData
+        };
 
         const baseCatalog = confirmedCatalogRows.length > 0
             ? confirmedCatalogRows
@@ -885,7 +1283,9 @@ function guardarProducto(e) {
         );
         persistProductsCache(confirmedCatalogRows);
         queueCatalogUiUpdate({ changedIds: [productId] });
-        document.getElementById('modal-producto').classList.add('hidden');
+        catalogEditorToken++;
+        releaseCatalogImagePreview();
+        closeModal('modal-producto', 0);
         window.mostrarToast?.(
             'Catálogo actualizado',
             'El cambio quedó guardado localmente y está sincronizándose.',
@@ -893,17 +1293,34 @@ function guardarProducto(e) {
         );
 
         runAfterImmediateUiPaint(() => {
-            const cloudWrite = id
-                ? updateDoc(productRef, prodData)
-                : setDoc(productRef, prodData);
-            void cloudWrite.catch(error => {
-                console.error('No se pudo sincronizar el producto:', error);
-                window.mostrarAlerta?.(
-                    'Cambio no sincronizado',
-                    'Firebase rechazó el producto. La lista volverá al último valor confirmado.',
-                    'red'
-                );
+            const cloudWrite = saveProductAndPublicCatalog({
+                productId,
+                privateData: prodData,
+                optimisticProduct,
+                isNew: !id,
+                image: imageToSave,
+                removeImage: shouldRemoveImage
             });
+            void cloudWrite
+                .then(() => {
+                    if (canManagePublicCatalog()) return;
+                    return syncPublicAvailability([{
+                        id: optimisticProduct.id,
+                        localId: optimisticProduct.localId,
+                        stock: optimisticProduct.stock,
+                        disponible: resolvePublicAvailability(optimisticProduct)
+                    }], {
+                        localId: optimisticProduct.localId || state.userLocalId || ''
+                    });
+                })
+                .catch(error => {
+                    console.error('No se pudo sincronizar el producto:', error);
+                    window.mostrarAlerta?.(
+                        'Cambio no sincronizado',
+                        'Firebase rechazó el producto. La lista volverá al último valor confirmado.',
+                        'red'
+                    );
+                });
         });
     } catch(e) {
         console.error(e);
@@ -920,6 +1337,7 @@ function eliminarProductoFn(id) {
         window.mostrarConfirmacion("¿Eliminar definitivamente este ítem del catálogo?", () => {
             // LÓGICA OPTIMISTA
             try {
+                const deletedProduct = state.productos.find(p => p.id === id);
                 const baseCatalog = confirmedCatalogRows.length > 0
                     ? confirmedCatalogRows
                     : state.productos;
@@ -937,11 +1355,26 @@ function eliminarProductoFn(id) {
                 );
 
                 runAfterImmediateUiPaint(() => {
-                    void deleteDoc(doc(db, "productos", id)).catch(e => {
-                        console.error("Error al borrar en background:", e);
-                        window.cargarInventarioDesdeFirebase();
-                        if(window.mostrarToast) window.mostrarToast('Error', 'No se pudo eliminar en la nube.', 'red');
-                    });
+                    const manager = canManagePublicCatalog();
+                    void deleteProductAndPublicCatalog(id)
+                        .then(() => {
+                            if (manager || !deletedProduct) return;
+                            // El vendedor conserva su libertad operativa, pero no
+                            // deja el ítem apareciendo como disponible al público.
+                            return syncPublicAvailability([{
+                                id,
+                                localId: deletedProduct.localId,
+                                stock: 0,
+                                disponible: false
+                            }], {
+                                localId: deletedProduct.localId || state.userLocalId || ''
+                            });
+                        })
+                        .catch(e => {
+                            console.error("Error al borrar en background:", e);
+                            window.cargarInventarioDesdeFirebase();
+                            if(window.mostrarToast) window.mostrarToast('Error', 'No se pudo eliminar en la nube.', 'red');
+                        });
                 });
             } catch(e) {
                 console.error(e);

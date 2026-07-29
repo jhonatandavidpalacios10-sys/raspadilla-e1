@@ -58,6 +58,8 @@ function escucharPerfilUsuario(user, generation) {
         }
         
         if (user.uid === MASTER_UID) { r = 'master'; l = 'Dueño Supremo'; }
+        r = String(r || 'vendedor').trim().toLowerCase();
+        if (r === 'administrador') r = 'admin';
         
         state.userRole = r; state.userLocal = l; state.userLocalId = lId;
         
@@ -254,7 +256,7 @@ function mostrarError404() {
 function quitarError404() { document.getElementById('error-404-screen')?.classList.add('hidden'); }
 
 function aplicarPermisosVisuales(userDocData) {
-    const r = state.userRole;
+    const r = String(state.userRole || '').trim().toLowerCase();
     const permisosVendedor = userDocData?.permisos || []; 
     const views = { 
         'nav-ventas': document.getElementById('nav-ventas'), 
@@ -274,7 +276,7 @@ function aplicarPermisosVisuales(userDocData) {
         Object.values(views).forEach(v => v && v.classList.remove('hidden'));
         adminElements.forEach(el => el.classList.remove('hidden'));
         masterElements.forEach(el => el.classList.remove('hidden'));
-    } else if (r === 'admin' || r === 'Administrador') {
+    } else if (r === 'admin' || r === 'administrador') {
         Object.values(views).forEach(v => v && v.classList.remove('hidden'));
         if (views['nav-respaldo']) views['nav-respaldo'].classList.add('hidden');
         

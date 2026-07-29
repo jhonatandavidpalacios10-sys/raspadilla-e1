@@ -13,6 +13,10 @@ import {
     replaceQueuedSyncOperation,
     registerSyncHandler
 } from './sync-queue.js';
+import {
+    resolvePublicAvailability,
+    syncPublicAvailability
+} from './public-catalog-service.js';
 
 const MAX_DISTINCT_PRODUCTS_PER_OPERATION = 450;
 const MONEY_EPSILON = 0.009;
@@ -494,6 +498,7 @@ function resolveMovementStockFlags(movements, productReads) {
 
 function queueProductDeltas(transaction, productReads, { requireAll = true } = {}) {
     const missingProducts = [];
+    const availabilityRows = [];
 
     productReads.forEach(({ delta, ref, snapshot }) => {
         if (!snapshot.exists()) {
@@ -535,6 +540,22 @@ function queueProductDeltas(transaction, productReads, { requireAll = true } = {
         }
 
         transaction.update(ref, nextData);
+        const nextProduct = {
+            ...product,
+            ...nextData,
+            id: delta.productoId
+        };
+        availabilityRows.push({
+            id: delta.productoId,
+            localId: String(product.localId || 'global'),
+            stock:
+                nextProduct.stock === null
+                || nextProduct.stock === undefined
+                || nextProduct.stock === ''
+                    ? null
+                    : Number(nextProduct.stock),
+            disponible: resolvePublicAvailability(nextProduct)
+        });
     });
 
     if (requireAll && missingProducts.length > 0) {
@@ -545,7 +566,34 @@ function queueProductDeltas(transaction, productReads, { requireAll = true } = {
         );
     }
 
-    return missingProducts;
+    return { missingProducts, availabilityRows };
+}
+
+function syncCommittedPublicAvailability(result) {
+    const rows = Array.isArray(result?.publicAvailabilityRows)
+        ? result.publicAvailabilityRows
+        : [];
+    const localId = String(result?.publicAvailabilityLocalId || '');
+    if (rows.length > 0) {
+        // La venta ya fue confirmada por su transacción. La proyección pública
+        // se encola aparte para que nunca retrase la cola ni la interfaz.
+        setTimeout(() => {
+            void syncPublicAvailability(rows, { localId }).catch(error => {
+                console.warn(
+                    'No se pudo actualizar la disponibilidad del catálogo público:',
+                    error
+                );
+            });
+        }, 0);
+    }
+
+    if (!result || typeof result !== 'object') return result;
+    const {
+        publicAvailabilityRows: _publicAvailabilityRows,
+        publicAvailabilityLocalId: _publicAvailabilityLocalId,
+        ...publicResult
+    } = result;
+    return publicResult;
 }
 
 function assertSaleAmounts(sale) {
@@ -1083,7 +1131,11 @@ async function commitSaleTransaction({
             const read = readsById.get(delta.productoId);
             return { delta, ref: read.ref, snapshot: read.snapshot };
         });
-        queueProductDeltas(transaction, productReads, { requireAll: true });
+        const { availabilityRows } = queueProductDeltas(
+            transaction,
+            productReads,
+            { requireAll: true }
+        );
 
         let finalSale = {
             ...saleForCommit,
@@ -1148,7 +1200,13 @@ async function commitSaleTransaction({
         }
 
         transaction.set(saleRef, finalSale);
-        return { saleId, alreadyApplied: false, edited: isEdit };
+        return {
+            saleId,
+            alreadyApplied: false,
+            edited: isEdit,
+            publicAvailabilityRows: availabilityRows,
+            publicAvailabilityLocalId: targetLocalId
+        };
     });
 }
 
@@ -1387,6 +1445,7 @@ async function commitSaleStateTransition({
 
         const shouldRestoreInventory = normalizedNextState === 'rechazado';
         let missingProducts = [];
+        let publicAvailabilityRows = [];
 
         if (shouldRestoreInventory) {
             const storedMovements = normalizeStoredMovements(
@@ -1428,11 +1487,13 @@ async function commitSaleStateTransition({
                 const read = readsById.get(delta.productoId);
                 return { delta, ref: read.ref, snapshot: read.snapshot };
             });
-            missingProducts = queueProductDeltas(
+            const productDeltaResult = queueProductDeltas(
                 transaction,
                 productReads,
                 { requireAll: false }
             );
+            missingProducts = productDeltaResult.missingProducts;
+            publicAvailabilityRows = productDeltaResult.availabilityRows;
             queueCashDelta(
                 transaction,
                 sale,
@@ -1469,7 +1530,9 @@ async function commitSaleStateTransition({
             saleId,
             alreadyApplied: false,
             previousState: currentState,
-            missingProducts
+            missingProducts,
+            publicAvailabilityRows,
+            publicAvailabilityLocalId: sale.localId || 'general'
         };
     });
 }
@@ -2286,11 +2349,15 @@ export function deleteExpenseTransaction({ expenseId, operationId }) {
 
 registerSyncHandler('sale.save', async (payload, operation) => {
     assertOperationOwner(operation);
-    return commitSaleTransaction(payload);
+    return syncCommittedPublicAvailability(
+        await commitSaleTransaction(payload)
+    );
 });
 registerSyncHandler('sale.transition', async (payload, operation) => {
     assertOperationOwner(operation);
-    return commitSaleStateTransition(payload);
+    return syncCommittedPublicAvailability(
+        await commitSaleStateTransition(payload)
+    );
 });
 registerSyncHandler('sale.release-edit', async (payload, operation) => {
     assertOperationOwner(operation);
