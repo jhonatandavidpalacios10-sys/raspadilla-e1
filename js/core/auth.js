@@ -1,4 +1,4 @@
-import { auth, db, doc, updateDoc, getDoc, signInWithEmailAndPassword, signOut, onAuthStateChanged, onSnapshot } from './firebase-setup.js';
+import { auth, authPersistenceReady, db, doc, updateDoc, getDoc, signInWithEmailAndPassword, signOut, onAuthStateChanged, onSnapshot } from './firebase-setup.js';
 import { state } from './store.js';
 
 const MASTER_UID = "kRG6hOWsWHfoJwWLCXAkqRuVNLk2";
@@ -9,6 +9,7 @@ let isSystemLocked = false;
 let authGeneration = 0;
 let authTransitionTimer = null;
 let userRetryTimer = null;
+let userTokenRefreshAttempted = false;
 
 // Extraemos la lógica de configuración para llamarla de forma independiente
 function escucharConfiguracionGlobal() {
@@ -36,69 +37,98 @@ function escucharConfiguracionGlobal() {
 function escucharPerfilUsuario(user, generation) {
     if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
 
-    userUnsubscribe = onSnapshot(doc(db, "usuarios", user.uid), userDoc => {
-        if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
-        let r = 'vendedor', l = 'Sin Local', lId = '';
-        let userData = null;
-        
-        if (userDoc.exists()) { 
-            userData = userDoc.data();
-            
-            if ((userData.activo === false || userData.estado === 'inactivo') && user.uid !== MASTER_UID) {
-                void logout();
+    userUnsubscribe = onSnapshot(
+        doc(db, "usuarios", user.uid),
+        { includeMetadataChanges: true },
+        userDoc => {
+            if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
+            let r = 'vendedor', l = 'Sin Local', lId = '';
+            let userData = null;
+
+            // En una instalación nueva la caché puede responder primero que el
+            // servidor. Un documento ausente solo en caché no significa que la
+            // cuenta fue eliminada: mantenemos el listener hasta recibir la
+            // confirmación autoritativa de Firestore.
+            if (
+                !userDoc.exists()
+                && userDoc.metadata.fromCache
+                && user.uid !== MASTER_UID
+            ) {
                 return;
             }
 
-            r = userData.rol || 'vendedor'; 
-            l = userData.localNombre || 'Sin Local'; 
-            lId = userData.localId || ''; 
-        } else if (user.uid !== MASTER_UID) {
-            void logout();
-            return;
-        }
-        
-        if (user.uid === MASTER_UID) { r = 'master'; l = 'Dueño Supremo'; }
-        r = String(r || 'vendedor').trim().toLowerCase();
-        if (r === 'administrador') r = 'admin';
-        
-        state.userRole = r; state.userLocal = l; state.userLocalId = lId;
-        
-        ['user-local-display', 'user-local-display-desktop', 'user-local-display-mobile'].forEach(id => { 
-            const el = document.getElementById(id); 
-            if(el) el.textContent = `${l} - ${user.email.split('@')[0]}`; 
-        });
-        
-        aplicarPermisosVisuales(userData);
-        verificarBloqueoSistema(user);
-        window.dispatchEvent(new CustomEvent('icepos:user-context-ready', {
-            detail: {
-                uid: user.uid,
-                role: r,
-                localId: lId,
-                localName: l
+            if (!userDoc.metadata.fromCache) userTokenRefreshAttempted = false;
+            
+            if (userDoc.exists()) { 
+                userData = userDoc.data();
+                
+                if ((userData.activo === false || userData.estado === 'inactivo') && user.uid !== MASTER_UID) {
+                    void logout();
+                    return;
+                }
+
+                r = userData.rol || 'vendedor'; 
+                l = userData.localNombre || 'Sin Local'; 
+                lId = userData.localId || ''; 
+            } else if (user.uid !== MASTER_UID) {
+                void logout();
+                return;
             }
-        }));
-    }, error => {
-        if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
-        console.warn("Aviso: No se pudo leer perfil de usuario.", error);
-        userUnsubscribe?.();
-        userUnsubscribe = null;
-        window.mostrarToast?.(
-            'Reconectando sesión',
-            'No se pudo leer tu perfil. Se volverá a intentar.',
-            'amber'
-        );
-        clearTimeout(userRetryTimer);
-        userRetryTimer = setTimeout(() => escucharPerfilUsuario(user, generation), 3000);
-    });
+            
+            if (user.uid === MASTER_UID) { r = 'master'; l = 'Dueño Supremo'; }
+            r = String(r || 'vendedor').trim().toLowerCase();
+            if (r === 'administrador') r = 'admin';
+            
+            state.userRole = r; state.userLocal = l; state.userLocalId = lId;
+            
+            ['user-local-display', 'user-local-display-desktop', 'user-local-display-mobile'].forEach(id => { 
+                const el = document.getElementById(id); 
+                if(el) el.textContent = `${l} - ${user.email.split('@')[0]}`; 
+            });
+            
+            aplicarPermisosVisuales(userData);
+            verificarBloqueoSistema(user);
+            window.dispatchEvent(new CustomEvent('icepos:user-context-ready', {
+                detail: {
+                    uid: user.uid,
+                    role: r,
+                    localId: lId,
+                    localName: l
+                }
+            }));
+        },
+        error => {
+            if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
+            console.warn("Aviso: No se pudo leer perfil de usuario.", error);
+            userUnsubscribe?.();
+            userUnsubscribe = null;
+
+            const errorCode = String(error?.code || '').toLowerCase();
+            if (
+                !userTokenRefreshAttempted
+                && (errorCode === 'unauthenticated' || errorCode === 'permission-denied')
+            ) {
+                userTokenRefreshAttempted = true;
+                void user.getIdToken(true).catch(tokenError => {
+                    console.warn('La credencial de sesión se renovará al recuperar conexión.', tokenError);
+                });
+            }
+
+            window.mostrarToast?.(
+                'Reconectando sesión',
+                'No se pudo leer tu perfil. Se volverá a intentar.',
+                'amber'
+            );
+            clearTimeout(userRetryTimer);
+            userRetryTimer = setTimeout(() => escucharPerfilUsuario(user, generation), 3000);
+        }
+    );
 }
 
 export function initAuth() {
-    // --- 1. DESCARGA INMEDIATA: Intentar traer el logo ANTES de que el usuario inicie sesión ---
-    escucharConfiguracionGlobal();
-
-    onAuthStateChanged(auth, user => {
+    void authPersistenceReady.then(() => onAuthStateChanged(auth, async user => {
         const generation = ++authGeneration;
+        userTokenRefreshAttempted = false;
         if (authTransitionTimer) {
             clearTimeout(authTransitionTimer);
             authTransitionTimer = null;
@@ -114,8 +144,18 @@ export function initAuth() {
 
         if (user) {
             state.currentUser = user;
+
+            // En un origen nuevo esperamos a que Auth tenga disponible su
+            // credencial antes de abrir listeners protegidos de Firestore.
+            try {
+                await user.getIdToken();
+            } catch (error) {
+                console.warn('La sesión continuará validándose al recuperar conexión.', error);
+            }
+            if (generation !== authGeneration || auth.currentUser?.uid !== user.uid) return;
             
-            // --- 2. REINTENTO SEGURO: Si el logo falló antes porque requería permisos, lo intentamos ahora que ya inició sesión ---
+            // La configuración no es pública con las reglas actuales: se
+            // escucha recién después de autenticar.
             if (!sysUnsubscribe) {
                 escucharConfiguracionGlobal();
             }
@@ -157,7 +197,7 @@ export function initAuth() {
                 }, 300); 
             }
         }
-    });
+    }));
 }
 
 function actualizarLogoGlobal(url) {
@@ -304,13 +344,25 @@ function aplicarPermisosVisuales(userDocData) {
 }
 
 export async function login(e, p) { 
+    await authPersistenceReady;
     const cred = await signInWithEmailAndPassword(auth, e, p); 
     
     // FIX: Aduana de validación extendida (Eliminado o Desactivado).
     if (cred.user.uid !== MASTER_UID) {
-        const userSnap = await getDoc(doc(db, "usuarios", cred.user.uid));
+        let userSnap;
+        try {
+            userSnap = await getDoc(doc(db, "usuarios", cred.user.uid));
+        } catch (error) {
+            // Auth ya fue aceptado. Una falla transitoria de red al consultar
+            // el perfil no debe dejar un falso error de credenciales ni exigir
+            // cerrar y volver a entrar; el listener superior seguirá intentando.
+            console.warn('La validación del perfil continuará en segundo plano.', error);
+            void cred.user.getIdToken(true).catch(() => {});
+            return cred;
+        }
         
         if (!userSnap.exists()) {
+            if (userSnap.metadata.fromCache) return cred;
             await signOut(auth); // Desloguear a la fuerza
             throw new Error("CUENTA_ELIMINADA");
         }

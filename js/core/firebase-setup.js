@@ -34,7 +34,13 @@ const firebaseConfig = {
     measurementId: "G-DFHHEC5SBM" 
 };
 
-const app = initializeApp(firebaseConfig); 
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const authPersistenceReady = setPersistence(auth, browserLocalPersistence)
+    .catch(error => {
+        console.warn('No se pudo activar la persistencia local de la sesión.', error);
+    });
+
 let db;
 try {
     db = initializeFirestore(app, {
@@ -46,15 +52,13 @@ try {
     console.warn('La caché persistente no está disponible; se usará memoria temporal.', error);
     db = getFirestore(app);
 }
-const auth = getAuth(app);
-setPersistence(auth, browserLocalPersistence).catch(console.error); 
 
 const secondaryApp = initializeApp(firebaseConfig, "SecondaryAppIcePOS");
 const secondaryAuth = getAuth(secondaryApp);
 setPersistence(secondaryAuth, inMemoryPersistence).catch(console.warn);
 
 export { 
-    db, auth, secondaryAuth, createUserWithEmailAndPassword, updatePassword, signInWithEmailAndPassword,
+    db, auth, authPersistenceReady, secondaryAuth, createUserWithEmailAndPassword, updatePassword, signInWithEmailAndPassword,
     collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, 
     writeBatch, increment, serverTimestamp, query, where, onSnapshot, 
     orderBy, runTransaction, Bytes, signOut, onAuthStateChanged 
