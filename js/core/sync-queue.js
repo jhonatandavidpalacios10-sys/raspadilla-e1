@@ -1887,13 +1887,22 @@ export function applyPendingDocumentMutations(collectionName, rows = []) {
                     return;
                 }
                 if (mutation.kind === 'increment') {
-                    const current = documents.get(id);
+                    const canCreateProjection =
+                        collectionName === 'control_vasos_diario';
+                    const current = documents.get(id)
+                        || (canCreateProjection ? { id } : null);
                     if (!current) return;
                     const next = { ...current };
                     Object.entries(mutation.data || {}).forEach(([field, delta]) => {
                         const amount = Number(delta);
                         const rawCurrent = next[field];
-                        const canDefaultToZero = field === 'ventasTotales';
+                        const canDefaultToZero = (
+                            field === 'ventasTotales'
+                            || (
+                                collectionName === 'control_vasos_diario'
+                                && ['consumidos', 'entradas'].includes(field)
+                            )
+                        );
                         const currentValue = (
                             rawCurrent === null
                             || rawCurrent === undefined

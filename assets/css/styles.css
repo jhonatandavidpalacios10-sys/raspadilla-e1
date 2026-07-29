@@ -154,6 +154,60 @@ input:focus, select:focus { border-color: #e05f5f !important; }
     box-shadow: 0 10px 15px -3px rgba(224, 95, 95, 0.08), 0 4px 6px -4px rgba(224, 95, 95, 0.04) !important; 
 }
 
+.cash-operation-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+}
+
+.cash-operation-main {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 0.75rem;
+}
+
+.cash-operation-title,
+.cash-operation-badges {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.cash-operation-title > span:first-child,
+.cash-operation-meta > span,
+.cash-operation-meta b {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.cash-operation-meta {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 0.25rem;
+    margin-top: 0.25rem;
+}
+
+.cash-operation-meta svg {
+    margin-top: 0.08rem;
+}
+
+.cash-operation-total {
+    min-width: max-content;
+}
+
+.cup-assignment-row {
+    display: grid;
+    min-width: 0;
+    gap: 0.25rem;
+    color: #64748b;
+    font-size: 0.625rem;
+    font-weight: 800;
+}
+
 /* --------------------------------------------------------
    9. HOVERS Y ELEMENTOS ACTIVOS (Interactividad)
    -------------------------------------------------------- */
@@ -353,7 +407,7 @@ body {
         }
 
         .cash-summary-grid {
-            grid-template-columns: repeat(5, minmax(0, 1fr));
+            grid-template-columns: repeat(3, minmax(0, 1fr));
         }
 
         .cash-card > p:last-child {
@@ -365,6 +419,35 @@ body {
 @media (max-width: 639.98px) {
     .view-toolbar-subtitle {
         display: none;
+    }
+
+    /* Catálogo: el título conserva su propia fila y las acciones siguen siendo
+       cómodas de tocar, incluso cuando aparece el botón administrativo. */
+    #view-inventario > .view-toolbar {
+        flex-wrap: wrap;
+        align-items: stretch;
+    }
+
+    #view-inventario > .view-toolbar > div:first-child {
+        flex: 1 0 100%;
+    }
+
+    #view-inventario > .view-toolbar > div:last-child {
+        width: 100%;
+    }
+
+    .inventory-tabs > div:first-child {
+        gap: 0.375rem;
+    }
+
+    .inventory-tabs > div:first-child > button {
+        font-size: 0.75rem;
+    }
+
+    #btn-config-catalogo-publico,
+    #btn-nuevo-producto {
+        flex: 1 1 0;
+        justify-content: center;
     }
 
     /* Pedidos: primero se recorre toda la preparación y luego los despachados. */
@@ -546,6 +629,15 @@ body {
         overflow-wrap: anywhere;
     }
 
+    .cash-operation-card {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .cash-operation-total {
+        width: 100%;
+        min-width: 0;
+    }
+
     /* Análisis conserva una altura legible para cada panel al desplazarse. */
     .analysis-detail-panel {
         min-height: 28rem;
@@ -553,6 +645,18 @@ body {
 
     .analysis-calendar-panel #calendarGrid {
         grid-auto-rows: minmax(4.25rem, auto);
+    }
+}
+
+@media (min-width: 1024px) {
+    .analysis-calendar-panel {
+        width: auto !important;
+        flex: 11 1 0%;
+    }
+
+    .analysis-detail-panel {
+        width: auto !important;
+        flex: 9 1 0%;
     }
 }
 

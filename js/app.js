@@ -89,6 +89,9 @@ let pendingServiceWorker = null;
 let reloadWhenSafeAfterControllerChange = false;
 let safeWorkerReloadInProgress = false;
 let lastWorkerCheck = 0;
+let pageHadServiceWorkerController = Boolean(
+    navigator.serviceWorker?.controller
+);
 const updateSafetyChannel = typeof BroadcastChannel === 'function'
     ? new BroadcastChannel('raffaelito:update-safety:v1')
     : null;
@@ -193,7 +196,11 @@ async function applyPendingUpdate() {
     if (!await canApplyPendingUpdate()) return;
 
     if (!pendingServiceWorker) {
-        window.location.reload();
+        window.mostrarToast?.(
+            'Aplicación actualizada',
+            'Ya tienes la versión más reciente disponible.',
+            'emerald'
+        );
         return;
     }
 
@@ -225,6 +232,35 @@ function registerPendingWorker(worker) {
     }
 }
 
+async function waitForInstalledWorker(registration) {
+    if (registration.waiting) return registration.waiting;
+    const worker = registration.installing;
+    if (!worker) return null;
+    if (worker.state === 'installed') {
+        return registration.waiting || worker;
+    }
+
+    await new Promise(resolve => {
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timeout);
+            worker.removeEventListener('statechange', handleState);
+            resolve();
+        };
+        const handleState = () => {
+            if (['installed', 'activated', 'redundant'].includes(worker.state)) {
+                finish();
+            }
+        };
+        const timeout = setTimeout(finish, 15000);
+        worker.addEventListener('statechange', handleState);
+    });
+    return registration.waiting
+        || (worker.state === 'installed' ? worker : null);
+}
+
 window.forzarActualizacionApp = async () => {
     if (!('serviceWorker' in navigator)) {
         window.location.reload();
@@ -237,7 +273,9 @@ window.forzarActualizacionApp = async () => {
             serviceWorkerRegistration = await navigator.serviceWorker.register('/sw.js');
         }
         await serviceWorkerRegistration.update();
-        registerPendingWorker(serviceWorkerRegistration.waiting);
+        registerPendingWorker(
+            await waitForInstalledWorker(serviceWorkerRegistration)
+        );
         void applyPendingUpdate();
     } catch (error) {
         console.error('No se pudo comprobar la actualización:', error);
@@ -268,6 +306,17 @@ if ('serviceWorker' in navigator) {
     });
 
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+        const replacedExistingController = pageHadServiceWorkerController;
+        pageHadServiceWorkerController = true;
+        // En una instalación nueva, clientsClaim entrega por primera vez el
+        // control al worker. No es una actualización y no debe cortar Auth ni
+        // recargar mientras Firebase está preparando la sesión.
+        if (!replacedExistingController) {
+            pendingServiceWorker = null;
+            reloadWhenSafeAfterControllerChange = false;
+            return;
+        }
+
         const tabWasBusy = isCurrentTabBusy();
         reloadWhenSafeAfterControllerChange = true;
         if (!tabWasBusy) {

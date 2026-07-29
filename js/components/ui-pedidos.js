@@ -575,7 +575,8 @@ function ejecutarCambioEstado(idVenta, nuevoEstado) {
             allowedStates: ['pendiente'],
             actor: autorCambio,
             reason: nuevoEstado === 'rechazado' ? 'rechazado_en_preparacion' : 'despachado',
-            legacyInventoryMovements
+            legacyInventoryMovements,
+            cupControlDate: getTodayDateStr()
         });
 
         if (nuevoEstado === 'listo') {

@@ -279,7 +279,7 @@
                             <span>QR</span>
                         </button>
                         <button id="btn-nuevo-producto" class="min-h-11 px-3 sm:px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-sm font-bold flex items-center gap-1.5 sm:gap-2 transition-colors shadow-lg" aria-label="Añadir producto">
-                            <i data-lucide="plus" class="w-4 h-4"></i> <span class="hidden min-[360px]:inline">Añadir</span><span class="hidden sm:inline"> ítem</span>
+                            <i data-lucide="plus" class="w-4 h-4"></i> <span id="btn-nuevo-producto-texto" class="hidden min-[360px]:inline">Añadir ítem</span>
                         </button>
                     </div>
                 </header>
@@ -291,21 +291,47 @@
                             <button class="pb-2 text-sm font-bold text-slate-500 hover:text-slate-300 transition-colors whitespace-nowrap">Sabores</button>
                             <button class="pb-2 text-sm font-bold text-slate-500 hover:text-slate-300 transition-colors whitespace-nowrap">Extras</button>
                             <button class="pb-2 text-sm font-bold text-slate-500 hover:text-slate-300 transition-colors whitespace-nowrap">Toppings</button>
-                            <button class="solo-admin hidden pb-2 text-sm font-bold text-amber-500 hover:text-amber-400 transition-colors whitespace-nowrap"><i data-lucide="box" class="w-4 h-4 inline"></i> Insumos</button>
+                            <button class="solo-admin hidden pb-2 text-sm font-bold text-amber-500 hover:text-amber-400 transition-colors whitespace-nowrap">Insumos</button>
                         </div>
                         <button id="btn-ingreso-stock-mobile" class="sm:hidden pb-2 text-sm font-bold text-emerald-400 border-b-2 border-transparent transition-colors flex items-center gap-1 shrink-0" onclick="document.getElementById('btn-ingreso-stock').click()">
                             <i data-lucide="truck" class="w-4 h-4"></i> Compras
                         </button>
                     </div>
 
+                    <section id="cup-control-panel" class="hidden mb-2.5 md:mb-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3 md:p-4 flex-shrink-0">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div class="min-w-0">
+                                <h2 class="text-sm md:text-base font-black text-slate-800 flex items-center gap-2">
+                                    <i data-lucide="cup-soda" class="w-5 h-5 text-amber-500"></i>
+                                    Control diario de vasos
+                                </h2>
+                                <p class="mt-1 text-[11px] text-slate-500">El inicio se calcula con stock actual + usados − ingresos. Solo se descuenta al confirmar una venta.</p>
+                            </div>
+                            <div class="grid grid-cols-3 gap-2 shrink-0">
+                                <div class="rounded-lg bg-white border border-amber-100 px-3 py-2 text-center">
+                                    <p class="text-[9px] uppercase font-bold text-slate-500">Inicio</p>
+                                    <p id="cup-total-start" class="text-base font-black text-slate-800">0</p>
+                                </div>
+                                <div class="rounded-lg bg-white border border-amber-100 px-3 py-2 text-center">
+                                    <p class="text-[9px] uppercase font-bold text-slate-500">Usados</p>
+                                    <p id="cup-total-used" class="text-base font-black text-amber-500">0</p>
+                                </div>
+                                <div class="rounded-lg bg-white border border-amber-100 px-3 py-2 text-center">
+                                    <p class="text-[9px] uppercase font-bold text-slate-500">Actual</p>
+                                    <p id="cup-total-current" class="text-base font-black text-emerald-500">0</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
                     <div class="inventory-table-wrap flex-1 overflow-auto no-scrollbar bg-slate-800 rounded-xl border border-slate-700 shadow-lg">
                         <table class="inventory-table w-full text-left border-collapse sm:min-w-[500px]">
                             <thead>
                                 <tr class="bg-slate-900/50 text-slate-400 text-xs uppercase tracking-wider border-b border-slate-700">
                                     <th class="p-3 font-medium">Nombre</th>
-                                    <th class="p-3 font-medium text-center">Ventas Hist.</th>
-                                    <th class="p-3 font-medium text-right">Precio(s)</th>
-                                    <th class="p-3 font-medium text-center">Stock</th>
+                                    <th id="inventory-heading-history" class="p-3 font-medium text-center">Ventas Hist.</th>
+                                    <th id="inventory-heading-price" class="p-3 font-medium text-right">Precio(s)</th>
+                                    <th id="inventory-heading-stock" class="p-3 font-medium text-center">Stock</th>
                                     <th class="p-3 font-medium text-center">Acciones</th>
                                 </tr>
                             </thead>
@@ -399,7 +425,7 @@
                     </div>
 
                     <h3 class="font-bold text-white mb-3 flex items-center gap-2"><i data-lucide="list-checks" class="w-5 h-5 text-sky-500"></i> Operaciones de Hoy</h3>
-                    <div id="caja-historial-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2"></div>
+                    <div id="caja-historial-list" class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-2"></div>
                 </div>
             </div>
 
@@ -422,7 +448,7 @@
                     </div>
                 </header>
                 
-                <div class="users-grid flex-1 overflow-y-auto p-2.5 sm:p-3 md:p-6 no-scrollbar grid grid-cols-1 lg:grid-cols-2 gap-3 md:gap-6">
+                <div class="users-grid flex-1 overflow-y-auto p-2.5 sm:p-3 md:p-6 no-scrollbar grid grid-cols-1 xl:grid-cols-2 gap-3 md:gap-6">
                     <div class="bg-slate-800 rounded-xl border border-slate-700 flex flex-col h-fit shadow-lg">
                         <div class="p-3 sm:p-4 border-b border-slate-700 font-bold text-white flex items-center gap-2"><i data-lucide="users" class="w-5 h-5 text-indigo-400"></i> Personal Registrado</div>
                         <div class="p-2 space-y-2" id="usuarios-list"></div>
@@ -751,9 +777,9 @@
 
     <!-- NUEVO: MODAL PRODUCTO ADAPTADO PARA MÚLTIPLES TAMAÑOS -->
     <div id="modal-producto" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex flex-col justify-end md:justify-center items-center transition-opacity duration-300 opacity-0 px-4">
-        <div class="bg-slate-800 w-full md:w-[450px] md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none max-h-[90vh]">
+        <div class="bg-slate-800 w-full md:w-[560px] md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none max-h-[90vh]">
             <header class="p-4 border-b border-slate-700 flex justify-between items-center shrink-0">
-                <h3 class="text-lg font-bold text-white flex items-center gap-2"><i data-lucide="package" class="w-5 h-5 text-emerald-400"></i> Ítem del Catálogo</h3>
+                <h3 id="modal-producto-titulo" class="text-lg font-bold text-white flex items-center gap-2"><i data-lucide="package" class="w-5 h-5 text-emerald-400"></i> Ítem del Catálogo</h3>
                 <button id="btn-cerrar-modal-producto" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="flex-1 overflow-y-auto p-4 no-scrollbar">
@@ -773,9 +799,9 @@
                     </div>
 
                     <!-- NUEVO: GESTIÓN DE TAMAÑOS Y PRECIOS -->
-                    <div class="bg-slate-900/50 p-3 rounded-lg border border-slate-700">
+                    <div id="div-tamanos-producto" class="bg-slate-900/50 p-3 rounded-lg border border-slate-700">
                         <div class="flex justify-between items-center mb-2">
-                            <label class="text-xs font-bold text-sky-400 uppercase">Tamaños y Precios</label>
+                            <label class="text-xs font-bold text-sky-400 uppercase">Tamaños, precios y vaso utilizado</label>
                             <button type="button" id="btn-add-tamano" class="text-[10px] bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded transition-colors">+ Añadir Tamaño</button>
                         </div>
                         <div id="lista-tamanos" class="space-y-2">
@@ -796,10 +822,17 @@
                             <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Max Sabores (Por defecto)</label>
                             <input type="number" id="prod-limite" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none">
                         </div>
-                        <div>
-                            <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Stock Inicial</label>
-                            <input type="number" id="prod-stock" placeholder="Infinito" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none">
+                        <div id="div-stock-producto">
+                            <label id="prod-stock-label" class="block text-xs font-bold text-slate-400 uppercase mb-1">Stock Inicial</label>
+                            <input type="number" id="prod-stock" min="0" placeholder="Infinito" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white outline-none">
                         </div>
+                    </div>
+
+                    <div id="div-insumo-vaso-info" class="hidden rounded-lg border border-amber-300 bg-amber-50 p-3">
+                        <p class="text-xs font-bold text-amber-700 flex items-start gap-2">
+                            <i data-lucide="info" class="w-4 h-4 shrink-0 mt-0.5"></i>
+                            Este vaso es un insumo interno: no se vende ni aparece en el catálogo QR. Usa “+ Stock” para registrar compras posteriores.
+                        </p>
                     </div>
 
                     <section id="div-catalogo-publico" class="solo-admin hidden rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 space-y-3">

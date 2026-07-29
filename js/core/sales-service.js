@@ -18,7 +18,7 @@ import {
     syncPublicAvailability
 } from './public-catalog-service.js';
 
-const MAX_DISTINCT_PRODUCTS_PER_OPERATION = 450;
+const MAX_DISTINCT_PRODUCTS_PER_OPERATION = 180;
 const MONEY_EPSILON = 0.009;
 export const SALE_EDIT_LOCK_TTL_MS = 15 * 60 * 1000;
 
@@ -165,6 +165,16 @@ function normalizeName(value) {
     return String(value || '').trim().toLocaleLowerCase('es');
 }
 
+function isCupInventoryProduct(product = {}) {
+    return (
+        normalizeName(product.categoria) === 'insumo'
+        && (
+            normalizeName(product.tipoInsumo) === 'vaso'
+            || product.esVasoInventario === true
+        )
+    );
+}
+
 function productBelongsToLocation(product = {}, localId = '') {
     const productLocalId = String(product.localId || '').trim();
     return (
@@ -239,6 +249,38 @@ export function buildInventoryMovements(items, catalog = [], localId = '') {
 
         if (item.productoId && item.productoId !== 'AJUSTE') {
             addMovement(movements, item.productoId, itemQuantity, 'principal');
+        }
+
+        // Cada tamaño vendible puede enlazarse con un vaso físico distinto.
+        // Se usa únicamente la instantánea guardada en la línea: una venta
+        // antigua nunca debe heredar retroactivamente la configuración actual.
+        const frozenCup = (
+            item.consumoVaso
+            && typeof item.consumoVaso === 'object'
+        )
+            ? item.consumoVaso
+            : null;
+        const cupProductId = String(
+            frozenCup?.insumoId
+            || item.vasoInsumoId
+            || ''
+        );
+        if (
+            cupProductId
+            && cupProductId !== String(item.productoId || '')
+        ) {
+            const cupsPerItem = toPositiveInteger(
+                frozenCup?.unidades
+                ?? item.vasosPorUnidad
+                ?? 1,
+                'cantidad de vasos por producto'
+            );
+            addMovement(
+                movements,
+                cupProductId,
+                itemQuantity * cupsPerItem,
+                'vaso_insumo'
+            );
         }
 
         (Array.isArray(item.toppings) ? item.toppings : []).forEach(topping => {
@@ -357,7 +399,11 @@ function buildProductDelta(oldMovements, newMovements) {
         delta.set(movement.productoId, {
             productoId: movement.productoId,
             stockDelta: movement.stockAfectado === true ? movement.cantidad : 0,
-            salesDelta: -movement.cantidad
+            salesDelta: -movement.cantidad,
+            cupConsumptionDelta: Array.isArray(movement.fuentes)
+                && movement.fuentes.includes('vaso_insumo')
+                    ? -movement.cantidad
+                    : 0
         });
     });
 
@@ -365,17 +411,28 @@ function buildProductDelta(oldMovements, newMovements) {
         const current = delta.get(movement.productoId) || {
             productoId: movement.productoId,
             stockDelta: 0,
-            salesDelta: 0
+            salesDelta: 0,
+            cupConsumptionDelta: 0
         };
         if (movement.stockAfectado === true) {
             current.stockDelta -= movement.cantidad;
         }
         current.salesDelta += movement.cantidad;
+        if (
+            Array.isArray(movement.fuentes)
+            && movement.fuentes.includes('vaso_insumo')
+        ) {
+            current.cupConsumptionDelta += movement.cantidad;
+        }
         delta.set(movement.productoId, current);
     });
 
     return [...delta.values()].filter(
-        item => item.stockDelta !== 0 || item.salesDelta !== 0
+        item => (
+            item.stockDelta !== 0
+            || item.salesDelta !== 0
+            || item.cupConsumptionDelta !== 0
+        )
     );
 }
 
@@ -496,7 +553,54 @@ function resolveMovementStockFlags(movements, productReads) {
     });
 }
 
-function queueProductDeltas(transaction, productReads, { requireAll = true } = {}) {
+function getCupControlDocumentId(date, productId) {
+    const safeDate = String(date || '').replaceAll('/', '-');
+    const safeProductId = String(productId || '').replaceAll('/', '_');
+    return `${safeDate}_${safeProductId}`;
+}
+
+function queueDailyCupControl(
+    transaction,
+    product,
+    delta,
+    nextStock,
+    context = {}
+) {
+    const date = String(context.fechaStr || '').trim();
+    const consumption = Number(delta.cupConsumptionDelta || 0);
+    if (
+        !date
+        || !Number.isFinite(consumption)
+        || consumption === 0
+        || !Number.isFinite(nextStock)
+    ) return;
+
+    const productId = String(delta.productoId || '');
+    const controlRef = doc(
+        db,
+        'control_vasos_diario',
+        getCupControlDocumentId(date, productId)
+    );
+    transaction.set(controlRef, {
+        fechaStr: date,
+        productoId: productId,
+        productoNombre: String(product.nombre || 'Vaso'),
+        localId: String(product.localId || context.localId || 'global'),
+        localNombre: String(context.localNombre || ''),
+        consumidos: increment(consumption),
+        stockFinal: nextStock,
+        actualizadoEn: serverTimestamp()
+    }, { merge: true });
+}
+
+function queueProductDeltas(
+    transaction,
+    productReads,
+    {
+        requireAll = true,
+        cupControlContext = null
+    } = {}
+) {
     const missingProducts = [];
     const availabilityRows = [];
 
@@ -512,10 +616,33 @@ function queueProductDeltas(transaction, productReads, { requireAll = true } = {
                 ? null
                 : Number(product.stock);
         const currentSales = toFiniteNumber(product.ventasTotales);
+        const isCupMovement = Number(delta.cupConsumptionDelta || 0) !== 0;
+        if (
+            isCupMovement
+            && (
+                !isCupInventoryProduct(product)
+                || currentStock === null
+            )
+        ) {
+            throw new SalesIntegrityError(
+                'invalid-cup-inventory',
+                `El control de "${product.nombre || 'un vaso'}" no está configurado correctamente.`
+            );
+        }
+        if (
+            Number(delta.cupConsumptionDelta || 0) > 0
+            && product.activo === false
+        ) {
+            throw new SalesIntegrityError(
+                'inactive-cup-inventory',
+                `El vaso "${product.nombre || ''}" está archivado. Asigna otro antes de vender.`
+            );
+        }
         const nextData = {
             ventasTotales: Math.max(0, currentSales + delta.salesDelta)
         };
 
+        let nextStock = null;
         if (currentStock !== null) {
             if (!Number.isFinite(currentStock)) {
                 throw new SalesIntegrityError(
@@ -523,7 +650,7 @@ function queueProductDeltas(transaction, productReads, { requireAll = true } = {
                     `El producto ${product.nombre || delta.productoId} tiene stock inválido.`
                 );
             }
-            const nextStock = currentStock + delta.stockDelta;
+            nextStock = currentStock + delta.stockDelta;
             if (nextStock < 0) {
                 throw new SalesIntegrityError(
                     'insufficient-stock',
@@ -540,6 +667,13 @@ function queueProductDeltas(transaction, productReads, { requireAll = true } = {
         }
 
         transaction.update(ref, nextData);
+        queueDailyCupControl(
+            transaction,
+            product,
+            delta,
+            nextStock,
+            cupControlContext || {}
+        );
         const nextProduct = {
             ...product,
             ...nextData,
@@ -759,7 +893,14 @@ function getComparableLineKey(item = {}) {
         tamano: normalizeName(item.tamano),
         precio: Number.isFinite(price) ? roundMoney(price) : 'invalid',
         sabores: flavors,
-        toppings
+        toppings,
+        consumoVaso: item.consumoVaso?.insumoId
+            ? {
+                insumoId: String(item.consumoVaso.insumoId),
+                unidades: Number(item.consumoVaso.unidades || 1),
+                localId: String(item.consumoVaso.localId || '')
+            }
+            : null
     });
 }
 
@@ -883,12 +1024,122 @@ function getCurrentProductPrice(item, productReadsById) {
     return { expectedPrice, currentCost };
 }
 
+function assertRequestedCupMovements(items, requestedMovements) {
+    const expectedCupIds = new Set(
+        (Array.isArray(items) ? items : [])
+            .map(item => String(item?.consumoVaso?.insumoId || ''))
+            .filter(Boolean)
+    );
+    const actualCupMovements = normalizeStoredMovements(
+        requestedMovements,
+        null
+    ).filter(movement => (
+        Array.isArray(movement.fuentes)
+        && movement.fuentes.includes('vaso_insumo')
+    ));
+    if (expectedCupIds.size === 0 && actualCupMovements.length === 0) return;
+
+    const canonicalById = new Map(
+        buildInventoryMovements(items, [])
+            .map(movement => [String(movement.productoId), movement])
+    );
+    const actualById = new Map(
+        actualCupMovements.map(movement => [
+            String(movement.productoId),
+            movement
+        ])
+    );
+    const matches = (
+        actualCupMovements.length === expectedCupIds.size
+        && [...expectedCupIds].every(productId => {
+            const expected = canonicalById.get(productId);
+            const actual = actualById.get(productId);
+            return (
+                expected
+                && actual
+                && Number(expected.cantidad) === Number(actual.cantidad)
+            );
+        })
+    );
+    if (!matches) {
+        throw new SalesIntegrityError(
+            'cup-inventory-mismatch',
+            'El control de vasos del pedido no coincide. Actualiza la aplicación y vuelve a intentarlo.'
+        );
+    }
+}
+
+function assertItemCupMatchesCatalog(item, productReadsById, localId) {
+    const productRead = productReadsById.get(item.productoId);
+    const product = productRead?.snapshot?.exists()
+        ? productRead.snapshot.data()
+        : null;
+    if (!product || normalizeName(product.categoria) !== 'vaso') return;
+
+    const sizes = Array.isArray(product.tamanos) ? product.tamanos : [];
+    const requestedSize = normalizeName(item.tamano);
+    const selectedSize = sizes.find(size => (
+        normalizeName(size?.nombre) === requestedSize
+    )) || (
+        ['', 'estándar', 'único / estándar'].includes(requestedSize)
+            ? sizes[0]
+            : null
+    );
+    const config = (
+        selectedSize?.consumoVaso
+        && typeof selectedSize.consumoVaso === 'object'
+    )
+        ? selectedSize.consumoVaso
+        : (
+            product.consumoVaso
+            && typeof product.consumoVaso === 'object'
+                ? product.consumoVaso
+                : null
+        );
+    const assignments = Array.isArray(config?.asignaciones)
+        ? config.asignaciones
+        : [];
+    if (assignments.length === 0) return;
+
+    const targetLocalId = String(localId || '');
+    const assignment = assignments.find(candidate => (
+        String(candidate?.localId || '') === targetLocalId
+    )) || assignments.find(candidate => (
+        ['global', 'general', ''].includes(
+            String(candidate?.localId || '')
+        )
+    ));
+    if (!assignment?.insumoId) {
+        throw new SalesIntegrityError(
+            'cup-not-configured-for-location',
+            `El tamaño de "${item.nombre || 'un producto'}" no tiene vaso asignado para esta sede.`
+        );
+    }
+
+    const units = toPositiveInteger(
+        assignment.unidades ?? config.unidades ?? 1,
+        'cantidad de vasos por producto'
+    );
+    const frozenCup = item.consumoVaso;
+    if (
+        !frozenCup
+        || String(frozenCup.insumoId || '') !== String(assignment.insumoId)
+        || Number(frozenCup.unidades || 0) !== units
+    ) {
+        throw new SalesIntegrityError(
+            'client-update-required',
+            `La configuración de vaso de "${item.nombre || 'un producto'}" cambió. Actualiza la aplicación, retíralo y vuelve a agregarlo.`
+        );
+    }
+}
+
 function reconcileSaleItemsWithCatalog({
     items,
     previousItems,
     productReads,
     isEdit,
-    saleId
+    saleId,
+    localId
 }) {
     const productReadsById = new Map(
         productReads.map(read => [read.delta.productoId, read])
@@ -925,6 +1176,11 @@ function reconcileSaleItemsWithCatalog({
             item,
             productReadsById
         );
+        assertItemCupMatchesCatalog(
+            item,
+            productReadsById,
+            localId
+        );
         if (Math.abs(Number(item.precio) - expectedPrice) > MONEY_EPSILON) {
             throw new SalesIntegrityError(
                 'catalog-changed',
@@ -940,7 +1196,8 @@ async function commitSaleTransaction({
     operationId,
     sale,
     inventoryMovements,
-    editContext = null
+    editContext = null,
+    cupControlDate = ''
 }) {
     if (!saleId || !operationId) {
         throw new SalesIntegrityError(
@@ -951,6 +1208,7 @@ async function commitSaleTransaction({
 
     assertSaleAmounts(sale);
     const requestedMovements = normalizeStoredMovements(inventoryMovements, null);
+    assertRequestedCupMovements(sale.items, requestedMovements);
     const saleRef = doc(db, 'ventas', saleId);
 
     return runTransaction(db, async transaction => {
@@ -1108,7 +1366,8 @@ async function commitSaleTransaction({
             previousItems: previousSale?.items || [],
             productReads: allProductReads,
             isEdit,
-            saleId
+            saleId,
+            localId: targetLocalId
         });
         const reconciledCosts = reconciledItems.reduce(
             (sum, item) => roundMoney(
@@ -1134,7 +1393,14 @@ async function commitSaleTransaction({
         const { availabilityRows } = queueProductDeltas(
             transaction,
             productReads,
-            { requireAll: true }
+            {
+                requireAll: true,
+                cupControlContext: {
+                    fechaStr: cupControlDate || saleForCommit.fechaStr,
+                    localId: targetLocalId,
+                    localNombre: saleForCommit.localNombre || ''
+                }
+            }
         );
 
         let finalSale = {
@@ -1384,7 +1650,8 @@ async function commitSaleStateTransition({
     allowedStates,
     actor,
     reason = '',
-    legacyInventoryMovements = []
+    legacyInventoryMovements = [],
+    cupControlDate = ''
 }) {
     const saleRef = doc(db, 'ventas', saleId);
     const normalizedNextState = String(nextState || '').toLowerCase();
@@ -1490,7 +1757,14 @@ async function commitSaleStateTransition({
             const productDeltaResult = queueProductDeltas(
                 transaction,
                 productReads,
-                { requireAll: false }
+                {
+                    requireAll: false,
+                    cupControlContext: {
+                        fechaStr: cupControlDate || sale.fechaStr,
+                        localId: sale.localId || 'general',
+                        localNombre: sale.localNombre || ''
+                    }
+                }
             );
             missingProducts = productDeltaResult.missingProducts;
             publicAvailabilityRows = productDeltaResult.availabilityRows;
@@ -1865,12 +2139,50 @@ function buildOptimisticInventoryMutations(
         }));
 }
 
+function buildOptimisticCupControlMutations(
+    nextMovements = [],
+    previousMovements = [],
+    date = ''
+) {
+    const normalizedDate = String(date || '').trim();
+    if (!normalizedDate) return [];
+
+    return buildProductDelta(previousMovements, nextMovements)
+        .filter(delta => Number(delta.cupConsumptionDelta || 0) !== 0)
+        .flatMap(delta => {
+            const documentId = getCupControlDocumentId(
+                normalizedDate,
+                delta.productoId
+            );
+            return [
+                {
+                    collection: 'control_vasos_diario',
+                    documentId,
+                    kind: 'merge',
+                    data: {
+                        fechaStr: normalizedDate,
+                        productoId: String(delta.productoId)
+                    }
+                },
+                {
+                    collection: 'control_vasos_diario',
+                    documentId,
+                    kind: 'increment',
+                    data: {
+                        consumidos: Number(delta.cupConsumptionDelta)
+                    }
+                }
+            ];
+        });
+}
+
 export function saveSaleTransaction({
     saleId,
     operationId,
     sale,
     inventoryMovements,
     editContext = null,
+    cupControlDate = '',
     persistAfter = null,
     supersedesQueueIds = []
 }) {
@@ -1966,6 +2278,17 @@ export function saveSaleTransaction({
                     || []
                 )
                 : []
+        ),
+        ...buildOptimisticCupControlMutations(
+            inventoryMovements,
+            optimisticIsEdit
+                ? (
+                    editContext?.originalInventoryMovements
+                    || editContext?.legacyInventoryMovements
+                    || []
+                )
+                : [],
+            cupControlDate || queuedSale.fechaStr
         )
     ];
 
@@ -1982,7 +2305,8 @@ export function saveSaleTransaction({
                 operationId: queuedOperationId,
                 sale: queuedSale,
                 inventoryMovements,
-                editContext: null
+                editContext: null,
+                cupControlDate
             },
             optimisticMutations
         });
@@ -2013,7 +2337,8 @@ export function saveSaleTransaction({
             operationId: queuedOperationId,
             sale: queuedSale,
             inventoryMovements,
-            editContext: queuedEditContext
+            editContext: queuedEditContext,
+            cupControlDate
         },
         optimisticMutations
     });
@@ -2036,7 +2361,8 @@ export function transitionSaleTransaction({
     allowedStates,
     actor,
     reason = '',
-    legacyInventoryMovements = []
+    legacyInventoryMovements = [],
+    cupControlDate = ''
 }) {
     const normalizedNextState = String(nextState || '').toLowerCase();
     if (!saleId || !operationId || !normalizedNextState) {
@@ -2059,7 +2385,8 @@ export function transitionSaleTransaction({
             allowedStates,
             actor,
             reason,
-            legacyInventoryMovements
+            legacyInventoryMovements,
+            cupControlDate
         },
         optimisticMutations: [
             {
@@ -2081,6 +2408,13 @@ export function transitionSaleTransaction({
                 ? buildOptimisticInventoryMutations(
                     [],
                     legacyInventoryMovements
+                )
+                : []),
+            ...(normalizedNextState === 'rechazado'
+                ? buildOptimisticCupControlMutations(
+                    [],
+                    legacyInventoryMovements,
+                    cupControlDate
                 )
                 : [])
         ]

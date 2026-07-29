@@ -1,4 +1,5 @@
 import {
+    auth,
     db,
     doc,
     runTransaction,
@@ -11,11 +12,31 @@ import {
     enqueueSyncOperation,
     registerSyncHandler
 } from './sync-queue.js';
+import {
+    resolvePublicAvailability,
+    syncPublicAvailability
+} from './public-catalog-service.js';
 
 function roundMoney(value) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) throw new Error('Monto no válido.');
     return Math.round((parsed + Number.EPSILON) * 100) / 100;
+}
+
+function isCupInventoryProduct(product = {}) {
+    return (
+        String(product.categoria || '').trim().toLowerCase() === 'insumo'
+        && (
+            String(product.tipoInsumo || '').trim().toLowerCase() === 'vaso'
+            || product.esVasoInventario === true
+        )
+    );
+}
+
+function getCupControlDocumentId(date, productId) {
+    return `${String(date || '').replaceAll('/', '-')}_${
+        String(productId || '').replaceAll('/', '_')
+    }`;
 }
 
 async function commitProductUpsert(payload) {
@@ -33,6 +54,11 @@ async function commitProductDelete(payload) {
 
 async function commitStockEntry(payload) {
     const productRef = doc(db, 'productos', payload.productId);
+    const operationRef = doc(
+        db,
+        'operaciones_inventario',
+        String(payload.operationId).replaceAll('/', '_')
+    );
     const expenseRefs = (payload.expenses || []).map(expense => ({
         expense,
         ref: doc(db, 'gastos', expense.id),
@@ -40,18 +66,45 @@ async function commitStockEntry(payload) {
     }));
 
     return runTransaction(db, async transaction => {
-        const [productSnapshot, ...expenseSnapshots] = await Promise.all([
+        const [
+            productSnapshot,
+            operationSnapshot,
+            ...expenseSnapshots
+        ] = await Promise.all([
             transaction.get(productRef),
+            transaction.get(operationRef),
             ...expenseRefs.map(item => transaction.get(item.ref))
         ]);
         if (!productSnapshot.exists()) throw new Error('El producto ya no existe.');
 
         const product = productSnapshot.data();
+        if (operationSnapshot.exists()) {
+            return {
+                alreadyApplied: true,
+                product: {
+                    id: payload.productId,
+                    ...product
+                }
+            };
+        }
+
         const appliedIds = Array.isArray(product.stockOperationIds)
             ? product.stockOperationIds.map(String)
             : [];
         if (appliedIds.includes(payload.operationId)) {
-            return { alreadyApplied: true };
+            transaction.set(operationRef, {
+                operationId: String(payload.operationId),
+                productoId: String(payload.productId),
+                recuperadoDesdeHistorial: true,
+                aplicadoEn: serverTimestamp()
+            });
+            return {
+                alreadyApplied: true,
+                product: {
+                    id: payload.productId,
+                    ...product
+                }
+            };
         }
 
         const currentStock = Number(product.stock);
@@ -67,6 +120,30 @@ async function commitStockEntry(payload) {
             lastInventoryOperationId: payload.operationId,
             fechaModificacion: serverTimestamp()
         });
+        transaction.set(operationRef, {
+            operationId: String(payload.operationId),
+            productoId: String(payload.productId),
+            cantidad: Number(payload.quantity || 0),
+            aplicadoEn: serverTimestamp()
+        });
+
+        const isCupInventory = isCupInventoryProduct(product);
+        if (isCupInventory && payload.cupControlDate) {
+            const controlId = getCupControlDocumentId(
+                payload.cupControlDate,
+                payload.productId
+            );
+            transaction.set(doc(db, 'control_vasos_diario', controlId), {
+                fechaStr: String(payload.cupControlDate),
+                productoId: String(payload.productId),
+                productoNombre: String(product.nombre || 'Vaso'),
+                localId: String(product.localId || 'global'),
+                localNombre: String(payload.localNombre || ''),
+                entradas: increment(Number(payload.quantity || 0)),
+                stockFinal: nextStock,
+                actualizadoEn: serverTimestamp()
+            }, { merge: true });
+        }
 
         expenseRefs.forEach((item, index) => {
             if (expenseSnapshots[index]?.exists()) return;
@@ -87,32 +164,82 @@ async function commitStockEntry(payload) {
             }, { merge: true });
         });
 
-        return { alreadyApplied: false };
+        return {
+            alreadyApplied: false,
+            product: {
+                id: payload.productId,
+                ...product,
+                stock: nextStock
+            }
+        };
     });
 }
 
-registerSyncHandler('catalog.upsert', commitProductUpsert);
-registerSyncHandler('catalog.delete', commitProductDelete);
-registerSyncHandler('stock.receive', commitStockEntry);
+function getQueueOwnerId() {
+    const ownerId = String(auth.currentUser?.uid || '');
+    if (!ownerId) throw new Error('La sesión todavía no está lista.');
+    return ownerId;
+}
+
+function assertOperationOwner(operation) {
+    if (
+        !auth.currentUser?.uid
+        || String(auth.currentUser.uid) !== String(operation?.ownerId || '')
+    ) {
+        throw new Error('La sincronización esperará a la sesión que creó la operación.');
+    }
+}
+
+registerSyncHandler('catalog.upsert', async (payload, operation) => {
+    assertOperationOwner(operation);
+    return commitProductUpsert(payload);
+});
+registerSyncHandler('catalog.delete', async (payload, operation) => {
+    assertOperationOwner(operation);
+    return commitProductDelete(payload);
+});
+registerSyncHandler('stock.receive', async (payload, operation) => {
+    assertOperationOwner(operation);
+    const result = await commitStockEntry(payload);
+    const product = result?.product;
+    if (product && !isCupInventoryProduct(product)) {
+        setTimeout(() => {
+            void syncPublicAvailability([{
+                id: product.id,
+                localId: product.localId,
+                stock: product.stock,
+                disponible: resolvePublicAvailability(product)
+            }], {
+                localId: product.localId || operation.localId || ''
+            }).catch(error => {
+                console.warn('No se actualizó la disponibilidad pública:', error);
+            });
+        }, 0);
+    }
+    return {
+        alreadyApplied: result?.alreadyApplied === true
+    };
+});
 
 export function queueProductUpsert({ operationId, productId, data, mode = 'update', dependsOnOperationId = '' }) {
     return enqueueSyncOperation({
         id: operationId,
         type: 'catalog.upsert',
+        ownerId: getQueueOwnerId(),
+        localId: data?.localId || '',
         payload: { operationId, productId, data, mode },
-        optimisticChanges: [{
+        entityKey: `productos/${productId}`,
+        optimisticMutations: [{
             collection: 'productos',
-            id: productId,
-            action: 'upsert',
+            documentId: productId,
+            kind: 'merge',
             data: {
                 ...data,
                 id: productId,
                 lastOperationId: operationId
-            },
-            confirmField: 'lastOperationId'
+            }
         }],
-        metadata: { label: mode === 'create' ? 'Crear producto' : 'Editar producto' },
-        dependsOnOperationIds: [dependsOnOperationId]
+        dependsOn: dependsOnOperationId ? [dependsOnOperationId] : []
     });
 }
 
@@ -120,15 +247,15 @@ export function queueProductDelete({ operationId, productId, dependsOnOperationI
     return enqueueSyncOperation({
         id: operationId,
         type: 'catalog.delete',
+        ownerId: getQueueOwnerId(),
         payload: { operationId, productId },
-        optimisticChanges: [{
+        entityKey: `productos/${productId}`,
+        optimisticMutations: [{
             collection: 'productos',
-            id: productId,
-            action: 'delete',
-            confirmField: ''
+            documentId: productId,
+            kind: 'delete'
         }],
-        metadata: { label: 'Eliminar producto' },
-        dependsOnOperationIds: [dependsOnOperationId]
+        dependsOn: dependsOnOperationId ? [dependsOnOperationId] : []
     });
 }
 
@@ -137,36 +264,71 @@ export function queueStockEntry({
     productId,
     quantity,
     expenses = [],
+    cupControlDate = '',
+    localNombre = '',
     dependsOnOperationId = ''
 }) {
-    const optimisticChanges = [{
+    const optimisticMutations = [{
         collection: 'productos',
-        id: productId,
-        action: 'patch',
-        increments: { stock: Number(quantity || 0) },
-        confirmField: 'lastInventoryOperationId'
+        documentId: productId,
+        kind: 'increment',
+        data: { stock: Number(quantity || 0) }
     }];
 
     expenses.forEach(expense => {
-        optimisticChanges.push({
+        optimisticMutations.push({
             collection: 'gastos',
-            id: expense.id,
-            action: 'upsert',
+            documentId: expense.id,
+            kind: 'merge',
             data: {
                 ...expense,
                 id: expense.id,
                 lastOperationId: operationId
-            },
-            confirmField: 'lastOperationId'
+            }
         });
     });
+    if (cupControlDate) {
+        const documentId = getCupControlDocumentId(
+            cupControlDate,
+            productId
+        );
+        optimisticMutations.push(
+            {
+                collection: 'control_vasos_diario',
+                documentId,
+                kind: 'merge',
+                data: {
+                    fechaStr: String(cupControlDate),
+                    productoId: String(productId),
+                    localNombre: String(localNombre || '')
+                }
+            },
+            {
+                collection: 'control_vasos_diario',
+                documentId,
+                kind: 'increment',
+                data: {
+                    entradas: Number(quantity || 0)
+                }
+            }
+        );
+    }
 
     return enqueueSyncOperation({
         id: operationId,
         type: 'stock.receive',
-        payload: { operationId, productId, quantity, expenses },
-        optimisticChanges,
-        metadata: { label: 'Ingreso de mercadería' },
-        dependsOnOperationIds: [dependsOnOperationId]
+        ownerId: getQueueOwnerId(),
+        localId: expenses[0]?.localId || '',
+        entityKey: `productos/${productId}`,
+        payload: {
+            operationId,
+            productId,
+            quantity,
+            expenses,
+            cupControlDate,
+            localNombre
+        },
+        optimisticMutations,
+        dependsOn: dependsOnOperationId ? [dependsOnOperationId] : []
     });
 }

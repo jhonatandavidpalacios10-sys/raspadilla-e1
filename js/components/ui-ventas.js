@@ -4,7 +4,12 @@ import {
     replaceCart,
     setPendingSaleAttempt
 } from '../core/store.js';
-import { formatMoney, getTodayDateStr, getTrustedNowMs } from '../utils/helpers.js';
+import {
+    escaparHtml,
+    formatMoney,
+    getTodayDateStr,
+    getTrustedNowMs
+} from '../utils/helpers.js';
 import {
     createSaleDraftScope,
     deleteSaleDraft,
@@ -171,6 +176,19 @@ function sanitizeRestoredCart(items) {
                 && item.saboresDetalle.length <= 100
             ))
             && (!item.toppings || (Array.isArray(item.toppings) && item.toppings.length <= 100))
+            && (!item.consumoVaso || (
+                typeof item.consumoVaso === 'object'
+                && isSafeIdentifier(item.consumoVaso.insumoId)
+                && typeof item.consumoVaso.nombre === 'string'
+                && item.consumoVaso.nombre.length <= 300
+                && Number.isInteger(Number(item.consumoVaso.unidades))
+                && Number(item.consumoVaso.unidades) > 0
+                && Number(item.consumoVaso.unidades) <= 20
+                && (
+                    !item.consumoVaso.localId
+                    || isSafeIdentifier(item.consumoVaso.localId)
+                )
+            ))
         );
     });
 
@@ -1550,6 +1568,116 @@ function confirmarAjuste(e) {
 // ========================================================
 // RENDERIZADO DEL CATÁLOGO EN POS (ORDENADO POR POPULARIDAD)
 // ========================================================
+function getCupConsumptionConfig(product, size) {
+    if (size?.consumoVaso && typeof size.consumoVaso === 'object') {
+        return size.consumoVaso;
+    }
+    if (product?.consumoVaso && typeof product.consumoVaso === 'object') {
+        return product.consumoVaso;
+    }
+    return null;
+}
+
+function getEffectiveSaleLocalId() {
+    return String(
+        window.ticketEditadoContext?.localId
+        || state.userLocalId
+        || 'general'
+    );
+}
+
+function resolveCupConsumption(
+    product,
+    size,
+    localId,
+    catalogById = getIndexedProductsById()
+) {
+    const config = getCupConsumptionConfig(product, size);
+    const assignments = Array.isArray(config?.asignaciones)
+        ? config.asignaciones
+        : [];
+    if (assignments.length === 0) {
+        return {
+            controlled: false,
+            available: true,
+            consumption: null,
+            reason: ''
+        };
+    }
+
+    const normalizedLocalId = String(localId || '');
+    const assignment = assignments.find(item => (
+        String(item?.localId || '') === normalizedLocalId
+    )) || assignments.find(item => (
+        ['global', 'general', ''].includes(String(item?.localId || ''))
+    ));
+    if (!assignment?.insumoId) {
+        return {
+            controlled: true,
+            available: false,
+            consumption: null,
+            reason: 'Este tamaño no tiene vaso asignado para tu sede.'
+        };
+    }
+
+    const cup = catalogById.get(String(assignment.insumoId));
+    const cupLocalId = String(cup?.localId || '');
+    const validCup = Boolean(
+        cup
+        && String(cup.categoria || '').toLowerCase() === 'insumo'
+        && (
+            String(cup.tipoInsumo || '').toLowerCase() === 'vaso'
+            || cup.esVasoInventario === true
+        )
+        && cup.activo !== false
+        && isProductAvailableForLocal(cup, localId)
+        && (
+            ['global', 'general', ''].includes(cupLocalId)
+            || cupLocalId === normalizedLocalId
+        )
+    );
+    const units = Math.max(
+        1,
+        Math.trunc(Number(assignment.unidades ?? config?.unidades) || 1)
+    );
+    const stock = Number(cup?.stock);
+    if (!validCup || !Number.isInteger(stock) || stock < units) {
+        return {
+            controlled: true,
+            available: false,
+            consumption: null,
+            reason: !validCup
+                ? 'El vaso asignado ya no está disponible.'
+                : `No hay suficientes unidades de ${cup.nombre || 'ese vaso'}.`
+        };
+    }
+
+    return {
+        controlled: true,
+        available: true,
+        reason: '',
+        consumption: {
+            insumoId: String(cup.id),
+            nombre: String(cup.nombre || 'Vaso'),
+            unidades: units,
+            localId: cupLocalId || 'global'
+        }
+    };
+}
+
+function isSizeAvailableForSale(product, size) {
+    if (
+        product.stock !== null
+        && product.stock !== undefined
+        && Number(product.stock) <= 0
+    ) return false;
+    return resolveCupConsumption(
+        product,
+        size,
+        getEffectiveSaleLocalId()
+    ).available;
+}
+
 function getProductosVentaFiltrados() {
     const term = document.getElementById('searchInput')?.value.toLowerCase() || ''; 
     const catFiltro = document.getElementById('posCategoryFilter')?.value.toLowerCase() || '';
@@ -1562,7 +1690,10 @@ function getProductosVentaFiltrados() {
         // El POS siempre vende contra la sede asignada a la sesión. Los
         // productos globales se comparten; un producto de otra sede no puede
         // terminar descontando stock dentro de esta venta.
-        const isRightLocal = isProductAvailableForLocal(p, state.userLocalId);
+        const isRightLocal = isProductAvailableForLocal(
+            p,
+            getEffectiveSaleLocalId()
+        );
         return isRightCat && isRightLocal;
     });
 
@@ -1584,7 +1715,10 @@ function getProductosVentaFiltrados() {
 
 function getProductoVentaCardHtml(p, isAdmin) {
     const catLower = String(p.categoria || '').toLowerCase();
-    const isAgt = p.stock !== null && p.stock <= 0;
+    const sizes = Array.isArray(p.tamanos) && p.tamanos.length > 0
+        ? p.tamanos
+        : [{ nombre: 'Estándar', precio: p.precio || 0 }];
+    const isAgt = !sizes.some(size => isSizeAvailableForSale(p, size));
     const blockCls = isAgt
         ? 'opacity-50 grayscale cursor-not-allowed'
         : 'cursor-pointer hover:border-sky-500 hover:shadow-sky-500/20 active:scale-95';
@@ -1738,7 +1872,17 @@ function iniciarArmadoVaso(id) {
     if (!vasoActual.tamanos || vasoActual.tamanos.length === 0) {
          vasoActual.tamanos = [{ nombre: 'Estándar', precio: vasoActual.precio }];
     }
-    tamanoElegido = vasoActual.tamanos[0]; // Seleccionar el primero por defecto
+    tamanoElegido = vasoActual.tamanos.find(size => (
+        isSizeAvailableForSale(vasoActual, size)
+    )) || null;
+    if (!tamanoElegido) {
+        window.mostrarToast?.(
+            'Sin vasos disponibles',
+            'No hay stock del vaso físico asignado a este producto.',
+            'amber'
+        );
+        return;
+    }
 
     document.getElementById('modal-vaso-title').textContent = vasoActual.nombre; 
     document.getElementById('limite-sabores-txt').textContent = limite === 999 ? 'Ilimitados' : `Max: ${limite}`;
@@ -1749,9 +1893,10 @@ function iniciarArmadoVaso(id) {
     // 2. RENDERIZAR SABORES
     const c = document.getElementById('builder-sabores'); 
     let htmlSabores = '';
+    const effectiveLocalId = getEffectiveSaleLocalId();
     const saboresDisp = state.productos.filter(p => (
         String(p.categoria || '').toLowerCase() === 'sabor'
-        && isProductAvailableForLocal(p, state.userLocalId)
+        && isProductAvailableForLocal(p, effectiveLocalId)
     ));
     
     if (vasoActual.categoria !== 'vaso' || limite === 0) {
@@ -1776,7 +1921,7 @@ function iniciarArmadoVaso(id) {
     let htmlToppings = '';
     const toppingsDisp = state.productos.filter(p => (
         String(p.categoria || '').toLowerCase() === 'topping'
-        && isProductAvailableForLocal(p, state.userLocalId)
+        && isProductAvailableForLocal(p, effectiveLocalId)
     ));
     
     toppingsDisp.forEach(top => {
@@ -1810,15 +1955,32 @@ function iniciarArmadoVaso(id) {
 function renderTamanosUI() {
     let tamHtml = '';
     vasoActual.tamanos.forEach((t, idx) => {
-        const isSel = tamanoElegido.nombre === t.nombre;
-        const cls = isSel ? 'bg-sky-500 border-sky-500 shadow-lg shadow-sky-500/20' : 'bg-slate-900 border-slate-700 hover:border-sky-500/50';
+        const isAvailable = isSizeAvailableForSale(vasoActual, t);
+        const cupState = resolveCupConsumption(
+            vasoActual,
+            t,
+            getEffectiveSaleLocalId()
+        );
+        const isSel = tamanoElegido?.nombre === t.nombre;
+        const cls = !isAvailable
+            ? 'bg-slate-100 border-slate-200 opacity-50 cursor-not-allowed'
+            : (
+                isSel
+                    ? 'bg-sky-500 border-sky-500 shadow-lg shadow-sky-500/20'
+                    : 'bg-slate-900 border-slate-700 hover:border-sky-500/50'
+            );
         const txtCls = isSel ? 'text-white' : 'text-slate-300';
         const priceCls = isSel ? 'text-sky-100' : 'text-sky-400';
         
+        const unavailableReason = escaparHtml(
+            isAvailable ? '' : (cupState.reason || 'Sin stock')
+        );
+        const cupName = escaparHtml(cupState.consumption?.nombre || '');
         tamHtml += `
-        <button onclick="window.toggleTamano(${idx})" class="p-3 border rounded-xl flex flex-col items-start transition-all ${cls}">
-            <span class="font-bold text-xs md:text-sm ${txtCls}">${t.nombre}</span>
+        <button type="button" ${isAvailable ? `onclick="window.toggleTamano(${idx})"` : 'disabled'} class="p-3 border rounded-xl flex flex-col items-start transition-all ${cls}" title="${unavailableReason}">
+            <span class="font-bold text-xs md:text-sm ${txtCls}">${escaparHtml(t.nombre)}</span>
             <span class="text-xs font-black ${priceCls} mt-1">${formatMoney(t.precio)}</span>
+            ${cupState.controlled ? `<span class="mt-1 text-[9px] ${isAvailable ? 'text-amber-600' : 'text-red-500'}">${isAvailable ? cupName : 'Vaso no disponible'}</span>` : ''}
         </button>`;
     });
     document.getElementById('builder-tamanos').innerHTML = tamHtml;
@@ -1826,6 +1988,18 @@ function renderTamanosUI() {
 
 function toggleTamano(idx) {
     if(!vasoActual || !vasoActual.tamanos[idx]) return;
+    if (!isSizeAvailableForSale(vasoActual, vasoActual.tamanos[idx])) {
+        window.mostrarToast?.(
+            'Tamaño no disponible',
+            resolveCupConsumption(
+                vasoActual,
+                vasoActual.tamanos[idx],
+                getEffectiveSaleLocalId()
+            ).reason || 'No hay stock suficiente.',
+            'amber'
+        );
+        return;
+    }
     tamanoElegido = vasoActual.tamanos[idx];
     renderTamanosUI();
     actualizarPrecioModal();
@@ -1938,11 +2112,25 @@ function confirmarVasoAlCarrito() {
 
     let precioTotal = parseFloat(tamanoElegido.precio) || 0;
     toppingsElegidos.forEach(t => precioTotal += t.precio);
+    const cupState = resolveCupConsumption(
+        vasoActual,
+        tamanoElegido,
+        getEffectiveSaleLocalId()
+    );
+    if (cupState.controlled && !cupState.available) {
+        window.mostrarToast?.(
+            'Vaso no disponible',
+            cupState.reason || 'Revisa el inventario de vasos.',
+            'amber'
+        );
+        renderTamanosUI();
+        return;
+    }
     const saboresDetalle = saboresElegidos.map(nombre => {
         const producto = state.productos.find(product => (
             String(product.categoria || '').toLowerCase() === 'sabor' &&
             product.nombre === nombre &&
-            isProductAvailableForLocal(product, state.userLocalId)
+            isProductAvailableForLocal(product, getEffectiveSaleLocalId())
         ));
         return producto ? { id: producto.id, nombre: producto.nombre } : { nombre };
     });
@@ -1959,7 +2147,10 @@ function confirmarVasoAlCarrito() {
         toppings: [...toppingsElegidos], // NUEVO
         cantidad: 1, 
         categoria: 'vaso', 
-        isYape: false 
+        isYape: false,
+        ...(cupState.consumption
+            ? { consumoVaso: { ...cupState.consumption } }
+            : {})
     });
     
     cerrarModalArmar(); 
@@ -2187,9 +2378,10 @@ function getCurrentCatalogUnitPrice(item, localId, catalogById) {
 
     const sizes = Array.isArray(product.tamanos) ? product.tamanos : [];
     let basePrice;
+    let selectedSize = null;
     if (sizes.length > 0) {
         const requestedSize = String(item.tamano || '').trim().toLowerCase();
-        const selectedSize = sizes.find(size => (
+        selectedSize = sizes.find(size => (
             String(size.nombre || '').trim().toLowerCase() === requestedSize
         )) || (
             ['', 'estándar', 'único / estándar'].includes(requestedSize)
@@ -2205,6 +2397,37 @@ function getCurrentCatalogUnitPrice(item, localId, catalogById) {
         basePrice = Number(selectedSize.precio);
     } else {
         basePrice = Number(product.precio || 0);
+    }
+
+    const cupState = resolveCupConsumption(
+        product,
+        selectedSize,
+        localId,
+        catalogById
+    );
+    if (cupState.controlled && !cupState.available) {
+        throw new SalesIntegrityError(
+            'insufficient-stock',
+            cupState.reason || `No hay vasos disponibles para "${item.nombre || 'un producto'}".`
+        );
+    }
+    const frozenCup = item.consumoVaso;
+    if (cupState.controlled) {
+        if (
+            !frozenCup
+            || String(frozenCup.insumoId || '') !== cupState.consumption.insumoId
+            || Number(frozenCup.unidades || 0) !== cupState.consumption.unidades
+        ) {
+            throw new SalesIntegrityError(
+                'catalog-changed',
+                `El vaso asignado a "${item.nombre || 'un producto'}" cambió. Retíralo y vuelve a agregarlo.`
+            );
+        }
+    } else if (frozenCup?.insumoId) {
+        throw new SalesIntegrityError(
+            'catalog-changed',
+            `El control de vaso de "${item.nombre || 'un producto'}" cambió. Retíralo y vuelve a agregarlo.`
+        );
     }
 
     if (!Number.isFinite(basePrice) || basePrice < 0) {
@@ -2247,7 +2470,8 @@ function getCurrentCatalogUnitPrice(item, localId, catalogById) {
 
     return {
         expectedPrice: roundMoney(expectedPrice),
-        currentCost: Number(product.costo || 0)
+        currentCost: Number(product.costo || 0),
+        cupConsumption: cupState.consumption
     };
 }
 
@@ -3151,6 +3375,7 @@ function procesarCobroFinal() {
             sale,
             inventoryMovements,
             editContext,
+            cupControlDate: getTodayDateStr(),
             persistAfter: persistenceBarrier.promise,
             supersedesQueueIds: (
                 supersededRecovery?.queueId

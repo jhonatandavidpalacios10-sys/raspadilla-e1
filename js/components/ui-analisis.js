@@ -623,6 +623,19 @@ function changeAnalysisMonth(delta) {
     updateAnalysisRange();
 }
 
+function formatCompactCalendarMoney(value) {
+    const amount = Number(value) || 0;
+    const absolute = Math.abs(amount);
+    if (absolute < 1000) {
+        const rounded = Math.round(amount * 10) / 10;
+        return `S/${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}`;
+    }
+    return `S/${new Intl.NumberFormat('es-PE', {
+        notation: 'compact',
+        maximumFractionDigits: 1
+    }).format(amount)}`;
+}
+
 function renderCalendar(groupedByDate) {
     const y = currentDateAnalysis.getFullYear(); 
     const m = currentDateAnalysis.getMonth();
@@ -655,7 +668,7 @@ function renderCalendar(groupedByDate) {
         const textColor = neto >= 0 ? 'text-emerald-500' : 'text-red-500';
 
         const div = document.createElement('div');
-        div.className = `p-2 md:p-3 border rounded-lg md:rounded-xl cursor-pointer hover:border-sky-500 transition-colors flex flex-col justify-between min-h-[60px] md:min-h-[85px] relative overflow-hidden ${colorClass} ${ring} group shadow-sm`;
+        div.className = `px-1 py-2 md:p-3 border rounded-lg md:rounded-xl cursor-pointer hover:border-sky-500 transition-colors flex flex-col justify-between min-h-[60px] md:min-h-[85px] relative overflow-hidden ${colorClass} ${ring} group shadow-sm`;
         
         let pointIndicators = '';
         if (hasData) {
@@ -666,7 +679,7 @@ function renderCalendar(groupedByDate) {
         div.innerHTML = `
             <span class="text-xs md:text-sm font-bold ${isToday ? 'text-sky-500' : 'text-slate-500'} mb-1">${d}</span>
             <div class="mt-auto text-right w-full flex flex-col items-end gap-1">
-                ${hasData ? `<p class="text-[10px] md:text-xs font-black ${textColor} group-hover:scale-110 origin-right transition-transform">${formatMoney(neto)}</p>` : ''}
+                ${hasData ? `<p title="${formatMoney(neto)}" class="max-w-full truncate text-[8px] sm:text-[10px] md:text-xs font-black ${textColor} group-hover:scale-110 origin-right transition-transform">${formatCompactCalendarMoney(neto)}</p>` : ''}
                 <div class="flex gap-0.5 justify-end">${pointIndicators}</div>
             </div>
         `;

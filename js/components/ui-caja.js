@@ -194,10 +194,12 @@ function renderListaOperaciones(ventas, gastos) {
         
         // --- TRAZABILIDAD VISUAL (AUDITORÍA AÑADIDA) ---
         const autorOriginal = op.cajeroEmail || op.creadoPor || 'Vendedor Anónimo';
-        const autorEdicion = op.editadoPor ? `<span class="text-amber-500 ml-2 font-medium">(Editado por: ${op.editadoPor})</span>` : '';
-        const tagAutor = `<div class="text-[10.5px] text-slate-500 flex items-center mt-1"><i data-lucide="user" class="w-3 h-3 mr-1"></i> Cajero: <b class="ml-1">${autorOriginal}</b> ${autorEdicion}</div>`;
+        const autorEdicion = op.editadoPor
+            ? `<div class="cash-operation-meta text-[10.5px] text-amber-500 font-medium"><i data-lucide="pencil" class="w-3 h-3"></i><span>Editado por: <b>${escaparHtml(op.editadoPor)}</b></span></div>`
+            : '';
+        const tagAutor = `<div class="cash-operation-meta text-[10.5px] text-slate-500"><i data-lucide="user" class="w-3 h-3"></i><span>Cajero: <b>${escaparHtml(autorOriginal)}</b></span></div>${autorEdicion}`;
         const clienteNombre = isVenta ? obtenerNombreCliente(op) : '';
-        const tagCliente = clienteNombre ? `<div class="text-[10.5px] text-sky-500 flex items-center mt-1"><i data-lucide="user" class="w-3 h-3 mr-1"></i> Cliente: <b class="ml-1">${escaparHtml(clienteNombre)}</b></div>` : '';
+        const tagCliente = clienteNombre ? `<div class="cash-operation-meta text-[10.5px] text-sky-500"><i data-lucide="user" class="w-3 h-3"></i><span>Cliente: <b>${escaparHtml(clienteNombre)}</b></span></div>` : '';
         const syncBadge = op.sincronizacionPendiente
             ? '<span class="rounded border border-sky-400/40 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-500">Sincronizando</span>'
             : '';
@@ -211,24 +213,24 @@ function renderListaOperaciones(ventas, gastos) {
         }
 
         return `
-        <div class="bg-white dark:bg-slate-800 p-4 rounded-xl border ${op.editadoPor ? 'border-amber-300 dark:border-amber-700/50 shadow-amber-500/10' : 'border-slate-200 dark:border-slate-700'} shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 relative transition-all hover:border-sky-300">
-            <div class="flex items-center gap-3">
+        <div class="cash-operation-card min-w-0 bg-white dark:bg-slate-800 p-4 rounded-xl border ${op.editadoPor ? 'border-amber-300 dark:border-amber-700/50 shadow-amber-500/10' : 'border-slate-200 dark:border-slate-700'} shadow-sm gap-3 relative transition-all hover:border-sky-300">
+            <div class="cash-operation-main min-w-0">
                 <div class="w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${bgIcon} ${color}">
                     <i data-lucide="${icon}" class="w-5 h-5"></i>
                 </div>
-                <div>
-                    <p class="text-sm font-bold text-slate-800 dark:text-white capitalize flex items-center gap-2">
-                        ${titulo}
+                <div class="min-w-0">
+                    <p class="cash-operation-title min-w-0 text-sm font-bold text-slate-800 dark:text-white capitalize">
+                        <span>${escaparHtml(titulo)}</span>
                         ${op.editadoPor ? '<i data-lucide="alert-circle" class="w-3 h-3 text-amber-500" title="Ticket Editado"></i>' : ''}
                         ${syncBadge}
                     </p>
-                    <div class="mt-1">${badges}</div>
+                    <div class="cash-operation-badges mt-1">${badges}</div>
                     ${tagCliente}
                     ${tagAutor}
                 </div>
             </div>
-            <div class="flex flex-col sm:items-end w-full sm:w-auto mt-2 sm:mt-0">
-                <span class="text-lg font-black ${color} mb-2 sm:mb-0">${isVenta ? '+' : '-'}${monto}</span>
+            <div class="cash-operation-total flex flex-col items-end">
+                <span class="whitespace-nowrap text-lg font-black ${color} mb-2">${isVenta ? '+' : '-'}${monto}</span>
                 
                 <!-- Solo administradores o dueños deberían editar/eliminar -->
                 ${isAdminUser() ? `
@@ -472,7 +474,8 @@ export async function eliminarOperacionCaja(first, second) {
                 allowedStates: ['pendiente', 'listo'],
                 actor: getActorName(),
                 reason: 'anulado_desde_caja',
-                legacyInventoryMovements
+                legacyInventoryMovements,
+                cupControlDate: getTodayDateStr()
             });
         } else {
             result = deleteExpenseTransaction({
