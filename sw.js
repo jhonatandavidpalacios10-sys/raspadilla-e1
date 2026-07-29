@@ -1,4 +1,4 @@
-const CACHE_NAME = 'raffaelito-v14'; // QR del catálogo y rutas directas por sede
+const CACHE_NAME = 'raffaelito-v15'; // Acceso rápido y QR personalizado para compartir
 
 const LOCAL_ASSETS_TO_CACHE = [
   '/',

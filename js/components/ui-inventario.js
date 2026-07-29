@@ -47,11 +47,22 @@ let catalogQrRenderToken = 0;
 let catalogQrCurrentUrl = 'https://raffaelito-catalogo.vercel.app/';
 let catalogQrReadyUrl = '';
 let catalogQrModulePromise = null;
+let catalogQuickQrRenderToken = 0;
+let catalogQuickQrCurrentUrl = '';
+let catalogQuickQrReadyUrl = '';
+let catalogQuickQrCurrentSiteId = 'general';
+let catalogQuickQrReturnFocus = null;
+let catalogQuickQrCloseTimer = null;
+let catalogQuickQrPreparedBlob = null;
+let catalogQuickQrPreparedFile = null;
+let catalogQrLogoPromise = null;
 const virtualCatalogImageStates = new Map();
 const virtualCatalogSaveTokens = new Map();
 
 const PUBLIC_CATALOG_BASE_URL = 'https://raffaelito-catalogo.vercel.app/';
 const CATALOG_SITE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
+const CATALOG_QUICK_QR_SIZE = 2048;
+const CATALOG_QR_LOGO_URL = '/assets/img/logo.png';
 const CATALOG_QR_OPTIONS = Object.freeze({
     errorCorrectionLevel: 'H',
     margin: 4,
@@ -71,6 +82,19 @@ function loadCatalogQrModule() {
             });
     }
     return catalogQrModulePromise;
+}
+
+function loadCatalogQrLogo() {
+    if (!catalogQrLogoPromise) {
+        catalogQrLogoPromise = new Promise(resolve => {
+            const image = new Image();
+            image.decoding = 'async';
+            image.onload = () => resolve(image);
+            image.onerror = () => resolve(null);
+            image.src = CATALOG_QR_LOGO_URL;
+        });
+    }
+    return catalogQrLogoPromise;
 }
 
 // Estado temporal para construir los tamaños en el modal
@@ -275,6 +299,284 @@ function getCatalogQrUrl(siteId = 'general') {
     const url = new URL(PUBLIC_CATALOG_BASE_URL);
     url.searchParams.set('sede', normalizedSiteId);
     return url.toString();
+}
+
+function getCatalogQuickQrSiteId() {
+    const candidate = String(state.userLocalId || '').trim();
+    if (
+        !candidate
+        || ['general', 'global'].includes(candidate.toLowerCase())
+        || !CATALOG_SITE_ID_PATTERN.test(candidate)
+    ) {
+        return 'general';
+    }
+    const knownSiteIds = new Set(
+        (state.locales || []).map(local => String(local?.id || '')).filter(Boolean)
+    );
+    const activeSiteIds = new Set(
+        getActiveCatalogSiteIds().map(siteId => String(siteId))
+    );
+    return (
+        (knownSiteIds.size === 0 || knownSiteIds.has(candidate))
+        && activeSiteIds.has(candidate)
+    )
+        ? candidate
+        : 'general';
+}
+
+function setCatalogQuickQrStatus(message) {
+    const status = document.getElementById('catalog-qr-rapido-status');
+    if (status) status.textContent = message;
+}
+
+function setCatalogQuickQrReady(ready) {
+    [
+        'btn-descargar-catalog-qr-rapido',
+        'btn-compartir-catalog-qr-rapido'
+    ].forEach(id => {
+        const button = document.getElementById(id);
+        if (!button) return;
+        button.disabled = !ready;
+        if (ready) button.removeAttribute('aria-busy');
+        else button.setAttribute('aria-busy', 'true');
+    });
+    document.getElementById('catalog-qr-rapido-loading')
+        ?.classList.toggle('hidden', ready);
+}
+
+function paintCatalogQrLogo(canvas, image) {
+    if (!image) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    const plateSize = Math.round(canvas.width * 0.18);
+    const logoSize = Math.round(canvas.width * 0.16);
+    const plateX = Math.round((canvas.width - plateSize) / 2);
+    const plateY = Math.round((canvas.height - plateSize) / 2);
+    const radius = Math.round(plateSize * 0.18);
+
+    context.save();
+    context.fillStyle = '#ffffff';
+    context.beginPath();
+    if (typeof context.roundRect === 'function') {
+        context.roundRect(plateX, plateY, plateSize, plateSize, radius);
+    } else {
+        context.rect(plateX, plateY, plateSize, plateSize);
+    }
+    context.fill();
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(
+        image,
+        Math.round((canvas.width - logoSize) / 2),
+        Math.round((canvas.height - logoSize) / 2),
+        logoSize,
+        logoSize
+    );
+    context.restore();
+}
+
+function catalogCanvasToBlob(canvas) {
+    return new Promise((resolve, reject) => {
+        canvas.toBlob(blob => {
+            if (blob) resolve(blob);
+            else reject(new Error('No se pudo preparar la imagen del QR.'));
+        }, 'image/png');
+    });
+}
+
+function getCatalogQuickQrFileName() {
+    const siteId = String(catalogQuickQrCurrentSiteId || 'general')
+        .replace(/[^a-zA-Z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        || 'general';
+    return `qr-catalogo-raffaelito-${siteId}.png`;
+}
+
+async function renderCatalogQuickQr() {
+    const canvas = document.getElementById('catalog-qr-rapido-canvas');
+    if (!canvas) return false;
+    const siteId = getCatalogQuickQrSiteId();
+    const url = getCatalogQrUrl(siteId);
+    if (
+        catalogQuickQrReadyUrl === url
+        && catalogQuickQrPreparedBlob
+        && canvas.width === CATALOG_QUICK_QR_SIZE
+    ) {
+        catalogQuickQrCurrentUrl = url;
+        catalogQuickQrCurrentSiteId = siteId;
+        setCatalogQuickQrReady(true);
+        setCatalogQuickQrStatus('Código QR listo.');
+        return true;
+    }
+
+    const token = ++catalogQuickQrRenderToken;
+    catalogQuickQrCurrentUrl = url;
+    catalogQuickQrCurrentSiteId = siteId;
+    catalogQuickQrReadyUrl = '';
+    catalogQuickQrPreparedBlob = null;
+    catalogQuickQrPreparedFile = null;
+    setCatalogQuickQrReady(false);
+    setCatalogQuickQrStatus('Generando código QR.');
+    canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+
+    try {
+        const [QRCode, logo] = await Promise.all([
+            loadCatalogQrModule(),
+            loadCatalogQrLogo()
+        ]);
+        if (token !== catalogQuickQrRenderToken) return false;
+
+        const buffer = document.createElement('canvas');
+        await QRCode.toCanvas(buffer, url, {
+            ...CATALOG_QR_OPTIONS,
+            width: CATALOG_QUICK_QR_SIZE
+        });
+        if (token !== catalogQuickQrRenderToken) return false;
+        paintCatalogQrLogo(buffer, logo);
+
+        canvas.width = buffer.width;
+        canvas.height = buffer.height;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('El navegador no pudo dibujar el QR.');
+        context.imageSmoothingEnabled = false;
+        context.drawImage(buffer, 0, 0);
+
+        const blob = await catalogCanvasToBlob(canvas);
+        if (token !== catalogQuickQrRenderToken) return false;
+        catalogQuickQrPreparedBlob = blob;
+        catalogQuickQrPreparedFile = typeof File === 'function'
+            ? new File([blob], getCatalogQuickQrFileName(), {
+                type: 'image/png'
+            })
+            : null;
+        catalogQuickQrReadyUrl = url;
+        setCatalogQuickQrReady(true);
+        setCatalogQuickQrStatus('Código QR listo.');
+        return true;
+    } catch (error) {
+        console.error('No se pudo preparar el QR rápido:', error);
+        if (token === catalogQuickQrRenderToken) {
+            catalogQuickQrReadyUrl = '';
+            catalogQuickQrPreparedBlob = null;
+            catalogQuickQrPreparedFile = null;
+            setCatalogQuickQrReady(false);
+            document.getElementById('catalog-qr-rapido-loading')
+                ?.classList.add('hidden');
+            setCatalogQuickQrStatus('No se pudo generar el código QR.');
+            window.mostrarToast?.(
+                'No se pudo generar el QR',
+                'Inténtalo nuevamente.',
+                'red'
+            );
+        }
+        return false;
+    }
+}
+
+function openCatalogQuickQrModal() {
+    const modal = document.getElementById('modal-catalog-qr-rapido');
+    if (!modal) return;
+    if (catalogQuickQrCloseTimer) {
+        clearTimeout(catalogQuickQrCloseTimer);
+        catalogQuickQrCloseTimer = null;
+    }
+    catalogQuickQrReturnFocus = document.activeElement;
+    modal.classList.remove('hidden');
+    requestAnimationFrame(() => modal.classList.remove('opacity-0'));
+    void renderCatalogQuickQr();
+    document.getElementById('btn-cerrar-catalog-qr-rapido')?.focus();
+}
+
+function closeCatalogQuickQrModal() {
+    const modal = document.getElementById('modal-catalog-qr-rapido');
+    if (!modal || modal.classList.contains('hidden')) return;
+    modal.classList.add('opacity-0');
+    catalogQuickQrCloseTimer = setTimeout(() => {
+        modal.classList.add('hidden');
+        catalogQuickQrCloseTimer = null;
+    }, 120);
+    if (
+        catalogQuickQrReturnFocus instanceof HTMLElement
+        && catalogQuickQrReturnFocus.isConnected
+    ) {
+        catalogQuickQrReturnFocus.focus();
+    }
+    catalogQuickQrReturnFocus = null;
+}
+
+async function downloadCatalogQuickQr() {
+    if (
+        catalogQuickQrReadyUrl !== catalogQuickQrCurrentUrl
+        || !catalogQuickQrPreparedBlob
+    ) {
+        setCatalogQuickQrStatus('El código QR todavía no está listo.');
+        return false;
+    }
+    try {
+        const objectUrl = URL.createObjectURL(catalogQuickQrPreparedBlob);
+        const link = document.createElement('a');
+        link.download = getCatalogQuickQrFileName();
+        link.href = objectUrl;
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        setCatalogQuickQrStatus('Código QR descargado.');
+        return true;
+    } catch (error) {
+        console.error('No se pudo descargar el QR rápido:', error);
+        window.mostrarToast?.(
+            'No se pudo descargar',
+            'Usa Compartir para guardar la imagen.',
+            'amber'
+        );
+        return false;
+    }
+}
+
+async function shareCatalogQuickQr() {
+    if (
+        catalogQuickQrReadyUrl !== catalogQuickQrCurrentUrl
+        || !catalogQuickQrPreparedBlob
+    ) {
+        setCatalogQuickQrStatus('El código QR todavía no está listo.');
+        return;
+    }
+
+    let canShareFile = false;
+    try {
+        canShareFile = Boolean(
+            catalogQuickQrPreparedFile
+            && typeof navigator.share === 'function'
+            && typeof navigator.canShare === 'function'
+            && navigator.canShare({ files: [catalogQuickQrPreparedFile] })
+        );
+    } catch (_) {
+        canShareFile = false;
+    }
+    if (canShareFile) {
+        try {
+            await navigator.share({ files: [catalogQuickQrPreparedFile] });
+            setCatalogQuickQrStatus('Código QR compartido.');
+            return;
+        } catch (error) {
+            if (error?.name === 'AbortError') {
+                setCatalogQuickQrStatus('No se compartió el código QR.');
+                return;
+            }
+            console.warn('No se pudo abrir el menú para compartir el QR:', error);
+        }
+    }
+
+    const downloaded = await downloadCatalogQuickQr();
+    if (downloaded) {
+        window.mostrarToast?.(
+            'QR descargado',
+            'Tu navegador no comparte archivos directamente. Adjunta la imagen descargada.',
+            'amber'
+        );
+    }
 }
 
 function setCatalogQrStatus(message, tone = 'slate') {
@@ -1381,6 +1683,18 @@ export async function initInventario() {
     });
     document.getElementById('btn-config-catalogo-publico')
         ?.addEventListener('click', openVirtualCatalogModal);
+    document.getElementById('btn-catalog-qr-rapido')
+        ?.addEventListener('click', openCatalogQuickQrModal);
+    document.getElementById('btn-cerrar-catalog-qr-rapido')
+        ?.addEventListener('click', closeCatalogQuickQrModal);
+    document.getElementById('btn-descargar-catalog-qr-rapido')
+        ?.addEventListener('click', () => void downloadCatalogQuickQr());
+    document.getElementById('btn-compartir-catalog-qr-rapido')
+        ?.addEventListener('click', () => void shareCatalogQuickQr());
+    document.getElementById('modal-catalog-qr-rapido')
+        ?.addEventListener('click', event => {
+            if (event.target === event.currentTarget) closeCatalogQuickQrModal();
+        });
     document.getElementById('btn-cerrar-config-catalogo')
         ?.addEventListener('click', closeVirtualCatalogModal);
     document.getElementById('btn-catalog-virtual-productos')
@@ -1410,7 +1724,9 @@ export async function initInventario() {
             if (event.target === event.currentTarget) closeCatalogQrZoom();
         });
     document.addEventListener('keydown', event => {
-        if (event.key === 'Escape') closeCatalogQrZoom();
+        if (event.key !== 'Escape') return;
+        closeCatalogQuickQrModal();
+        closeCatalogQrZoom();
     });
     const virtualProductsList = document.getElementById('catalog-virtual-products-list');
     virtualProductsList?.addEventListener('click', event => {
@@ -1435,6 +1751,15 @@ export async function initInventario() {
         const counter = card?.querySelector('[data-virtual-description-count]');
         if (counter) counter.textContent = `${event.target.value.length}/420`;
     });
+
+    const prewarmCatalogQuickQr = () => {
+        void renderCatalogQuickQr();
+    };
+    if (typeof globalThis.requestIdleCallback === 'function') {
+        globalThis.requestIdleCallback(prewarmCatalogQuickQr, { timeout: 1500 });
+    } else {
+        setTimeout(prewarmCatalogQuickQr, 400);
+    }
     document.getElementById('catalog-description')
         ?.addEventListener('input', updateCatalogDescriptionCount);
     document.getElementById('btn-catalog-image-select')
