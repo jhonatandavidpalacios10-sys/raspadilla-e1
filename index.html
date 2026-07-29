@@ -955,6 +955,7 @@
             const icon = document.getElementById('alerta-icon');
             icon.className = `w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-${colorClass}-500/30 bg-${colorClass}-500/10 text-${colorClass}-400`;
             icon.innerHTML = `<i data-lucide="${colorClass === 'emerald' ? 'check-circle' : (colorClass === 'red' ? 'x-circle' : (colorClass === 'amber' ? 'alert-triangle' : 'info'))}" class="w-8 h-8"></i>`;
+            modal.classList.remove('pointer-events-none');
             modal.classList.remove('hidden');
             if (window.lucide) window.lucide.createIcons({ root: icon });
             setTimeout(() => {
@@ -966,6 +967,7 @@
         
         window.cerrarAlerta = () => {
             const modal = document.getElementById('modal-alerta');
+            modal.classList.add('pointer-events-none');
             modal.classList.add('opacity-0');
             modal.children[0].classList.remove('scale-100');
             modal.children[0].classList.add('scale-95');
@@ -997,6 +999,7 @@
             document.getElementById('confirm-mensaje').textContent = mensaje;
             confirmCallback = callback;
             const modal = document.getElementById('modal-confirmacion');
+            modal.classList.remove('pointer-events-none');
             modal.classList.remove('hidden');
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
@@ -1007,6 +1010,7 @@
         
         window.cerrarConfirmacion = () => {
             const modal = document.getElementById('modal-confirmacion');
+            modal.classList.add('pointer-events-none');
             modal.classList.add('opacity-0');
             modal.children[0].classList.remove('scale-100');
             modal.children[0].classList.add('scale-95');

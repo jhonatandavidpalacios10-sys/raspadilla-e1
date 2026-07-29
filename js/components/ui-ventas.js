@@ -8,8 +8,13 @@ import { formatMoney, getTodayDateStr, getTrustedNowMs } from '../utils/helpers.
 import {
     createSaleDraftScope,
     deleteSaleDraft,
+    deleteSaleDraftIfAttemptMatches,
+    deleteSaleRecoveryDraft,
     loadSaleDraft,
-    saveSaleDraft
+    loadSaleRecoveryDrafts,
+    promoteSaleRecoveryDraft,
+    saveSaleDraft,
+    saveSaleRecoveryDraft
 } from '../core/sale-draft-store.js';
 import {
     SalesIntegrityError,
@@ -17,13 +22,16 @@ import {
     buildInventoryMovements,
     createUuid,
     releaseSaleEditLock,
+    releaseSaleEditLockTransaction,
     roundMoney,
     saveSaleTransaction
 } from '../core/sales-service.js';
 import {
     discardSyncOperation,
     getFailedSyncOperations,
-    getSyncOperationStatus
+    getPendingSyncOperationById,
+    getPendingSyncOperationsForEntity,
+    getSyncOperationSnapshot
 } from '../core/sync-queue.js';
 
 let vasoActual = null; 
@@ -46,7 +54,14 @@ let saleDraftHydrationGeneration = 0;
 let saleDraftPersistenceSuspended = true;
 let saleDraftStorageWarningShown = false;
 let failedSaleRecoveryInProgress = false;
+let failedSaleRecoveryToken = null;
 let recoveredFailedSaleOperation = null;
+let deferredSaleDraftCleanup = null;
+let pendingSalePersistenceCount = 0;
+let saleRecoveryPromotionInProgress = false;
+let saleRecoveryNoticeShown = false;
+let indexedProductsSource = null;
+let indexedProductsById = new Map();
 
 const SALE_DRAFT_WRITE_DELAY_MS = 120;
 const MAX_RESTORED_CART_ITEMS = 200;
@@ -71,10 +86,55 @@ function isTemporaryEditLockError(error) {
     );
 }
 
+function recoveryStillBelongsToSession(operation, generation) {
+    return (
+        generation === ventasSessionGeneration
+        && String(operation?.ownerId || '') !== ''
+        && String(operation.ownerId) === String(state.currentUser?.uid || '')
+    );
+}
+
+function finishFailedSaleRecovery(token) {
+    if (failedSaleRecoveryToken !== token) return;
+    failedSaleRecoveryToken = null;
+    failedSaleRecoveryInProgress = false;
+}
+
 function clonePlainValue(value) {
     if (value === null || value === undefined) return value;
     if (typeof structuredClone === 'function') return structuredClone(value);
     return JSON.parse(JSON.stringify(value));
+}
+
+function getIndexedProductsById() {
+    if (indexedProductsSource !== state.productos) {
+        indexedProductsSource = state.productos;
+        indexedProductsById = new Map(
+            (Array.isArray(state.productos) ? state.productos : [])
+                .map(product => [product.id, product])
+        );
+    }
+    return indexedProductsById;
+}
+
+function getProductById(id) {
+    return getIndexedProductsById().get(id);
+}
+
+function createDeferredBoolean() {
+    let resolvePromise;
+    let settled = false;
+    const promise = new Promise(resolve => {
+        resolvePromise = resolve;
+    });
+    return {
+        promise,
+        resolve(value) {
+            if (settled) return;
+            settled = true;
+            resolvePromise(value !== false);
+        }
+    };
 }
 
 function isSafeIdentifier(value, maxLength = 256) {
@@ -120,10 +180,12 @@ function sanitizeRestoredCart(items) {
 function sanitizeRestoredAttempt(attempt) {
     if (!attempt) return null;
     const status = String(attempt.status || 'prepared').toLowerCase();
+    const queueVersion = String(attempt.queueVersion || '').trim();
     if (
         !isSafeIdentifier(attempt.fingerprint, 500_000)
         || !isSafeIdentifier(attempt.saleId)
         || !isSafeIdentifier(attempt.operationId)
+        || (queueVersion && !isSafeIdentifier(queueVersion))
         || !['prepared', 'submitting', 'queued', 'failed'].includes(status)
     ) {
         return null;
@@ -133,6 +195,7 @@ function sanitizeRestoredAttempt(attempt) {
         fingerprint: String(attempt.fingerprint),
         saleId: String(attempt.saleId),
         operationId: String(attempt.operationId),
+        queueVersion,
         status,
         updatedAt: Number(attempt.updatedAt) || Date.now(),
         lastErrorCode: String(attempt.lastErrorCode || '').slice(0, 120)
@@ -142,17 +205,25 @@ function sanitizeRestoredAttempt(attempt) {
 function sanitizeRestoredEditContext(editContext, scope) {
     if (!editContext) return null;
 
+    const lockExpiresAtMs = Number(editContext.lockExpiresAtMs || 0);
     const expectedRevision = Number(editContext.expectedRevision || 0);
-    const localPendingEdit = editContext.localPendingEdit === true;
+    const lockPending = editContext.lockPending === true;
+    const localPendingCreate = editContext.localPendingCreate === true;
+    const originalFechaHora = Number(editContext.originalFechaHora || 0);
     if (
         !isSafeIdentifier(editContext.saleId)
+        || !isSafeIdentifier(editContext.lockToken)
+        || !isSafeIdentifier(editContext.lockOwnerId)
+        || String(editContext.lockOwnerId) !== scope.uid
         || !Number.isInteger(expectedRevision)
         || expectedRevision <= 0
+        || !Number.isFinite(lockExpiresAtMs)
+        || (!lockPending && lockExpiresAtMs <= 0)
     ) {
         return null;
     }
 
-    const common = {
+    return {
         saleId: String(editContext.saleId),
         expectedRevision,
         legacyInventoryMovements: Array.isArray(editContext.legacyInventoryMovements)
@@ -167,46 +238,21 @@ function sanitizeRestoredEditContext(editContext, scope) {
             ),
         localId: String(editContext.localId || scope.localId || 'general'),
         localNombre: String(editContext.localNombre || 'Sin Local'),
-        lockOwnerId: String(editContext.lockOwnerId || scope.uid),
-        lockOwnerName: String(editContext.lockOwnerName || 'Usuario')
-    };
-
-    if (localPendingEdit) {
-        if (
-            !isSafeIdentifier(editContext.sourceOperationId)
-            || !isSafeIdentifier(editContext.sourceSaleOperationId)
-        ) return null;
-        return {
-            ...common,
-            localPendingEdit: true,
-            sourceOperationId: String(editContext.sourceOperationId),
-            sourceSaleOperationId: String(editContext.sourceSaleOperationId),
-            lockToken: '',
-            lockExpiresAtMs: 0,
-            lockPending: false
-        };
-    }
-
-    const lockExpiresAtMs = Number(editContext.lockExpiresAtMs || 0);
-    const lockPending = editContext.lockPending === true;
-    if (
-        !isSafeIdentifier(editContext.lockToken)
-        || !isSafeIdentifier(editContext.lockOwnerId)
-        || String(editContext.lockOwnerId) !== scope.uid
-        || !Number.isFinite(lockExpiresAtMs)
-        || (!lockPending && lockExpiresAtMs <= 0)
-    ) {
-        return null;
-    }
-
-    return {
-        ...common,
-        localPendingEdit: false,
-        sourceOperationId: '',
-        sourceSaleOperationId: '',
+        originalFechaHora: Number.isFinite(originalFechaHora) && originalFechaHora > 0
+            ? originalFechaHora
+            : 0,
         lockToken: String(editContext.lockToken),
+        lockOwnerId: String(editContext.lockOwnerId),
+        lockOwnerName: String(editContext.lockOwnerName || 'Usuario'),
         lockExpiresAtMs,
-        lockPending
+        lockPending,
+        localPendingCreate,
+        pendingCreateQueueId: String(editContext.pendingCreateQueueId || ''),
+        pendingCreateOperationId: String(
+            editContext.pendingCreateOperationId || ''
+        ),
+        pendingCreateVersion: String(editContext.pendingCreateVersion || ''),
+        pendingCreateStatus: String(editContext.pendingCreateStatus || '')
     };
 }
 
@@ -266,7 +312,10 @@ function reportDraftStorageFailure(error) {
     );
 }
 
-async function persistCurrentSaleDraft({ immediate = false } = {}) {
+async function persistCurrentSaleDraft({
+    immediate = false,
+    draftSnapshot = null
+} = {}) {
     if (saleDraftPersistenceSuspended || !activeSaleDraftScope) return false;
     if (saleDraftWriteTimer) {
         clearTimeout(saleDraftWriteTimer);
@@ -282,13 +331,23 @@ async function persistCurrentSaleDraft({ immediate = false } = {}) {
     }
 
     try {
+        const draft = draftSnapshot || buildCurrentSaleDraft();
         if (
-            state.carrito.length === 0
-            && !window.ticketEditadoContext?.saleId
+            draft.cart.length === 0
+            && !draft.editContext?.saleId
         ) {
+            if (
+                deferredSaleDraftCleanup?.scopeKey
+                === activeSaleDraftScope.key
+            ) {
+                return true;
+            }
             await deleteSaleDraft(activeSaleDraftScope);
         } else {
-            await saveSaleDraft(activeSaleDraftScope, buildCurrentSaleDraft());
+            if (draft.cart.length > 0 && deferredSaleDraftCleanup) {
+                deferredSaleDraftCleanup = null;
+            }
+            await saveSaleDraft(activeSaleDraftScope, draft);
         }
         return true;
     } catch (error) {
@@ -303,17 +362,31 @@ export async function flushVentasDraftForReload() {
 }
 
 function scheduleSaleDraftPersist() {
+    if (state.carrito.length > 0 && deferredSaleDraftCleanup) {
+        deferredSaleDraftCleanup = null;
+    }
     void persistCurrentSaleDraft();
 }
 
-async function discardSaleDraft(scope = activeSaleDraftScope) {
+async function discardSaleDraft(
+    scope = activeSaleDraftScope,
+    { expectedAttempt = null } = {}
+) {
     if (!scope) return;
-    if (scope.key === activeSaleDraftScope?.key && saleDraftWriteTimer) {
+    if (
+        !expectedAttempt
+        && scope.key === activeSaleDraftScope?.key
+        && saleDraftWriteTimer
+    ) {
         clearTimeout(saleDraftWriteTimer);
         saleDraftWriteTimer = null;
     }
     try {
-        await deleteSaleDraft(scope);
+        if (expectedAttempt) {
+            await deleteSaleDraftIfAttemptMatches(scope, expectedAttempt);
+        } else {
+            await deleteSaleDraft(scope);
+        }
     } catch (error) {
         reportDraftStorageFailure(error);
     }
@@ -325,6 +398,11 @@ export async function restoreVentasDraft(context) {
         localId: context?.localId || 'general'
     });
     const hydrationGeneration = ++saleDraftHydrationGeneration;
+    const hydrationStillBelongsToSession = () => (
+        hydrationGeneration === saleDraftHydrationGeneration
+        && state.currentUser?.uid === scope?.uid
+        && String(state.userLocalId || 'general') === scope?.localId
+    );
 
     activeSaleDraftScope = scope;
     saleDraftPersistenceSuspended = true;
@@ -337,47 +415,92 @@ export async function restoreVentasDraft(context) {
 
     try {
         const record = await loadSaleDraft(scope);
-        if (
-            hydrationGeneration !== saleDraftHydrationGeneration
-            || state.currentUser?.uid !== scope.uid
-            || String(state.userLocalId || 'general') !== scope.localId
-        ) {
-            return false;
-        }
+        if (!hydrationStillBelongsToSession()) return false;
         if (!record) return false;
+        const loadedDraftExpectation = {
+            operationId: String(record.attempt?.operationId || ''),
+            queueVersion: String(record.attempt?.queueVersion || ''),
+            updatedAt: Number(record.updatedAt || 0),
+            writeToken: String(record.writeToken || '')
+        };
         if (record.attempt?.status === 'committed') {
-            await discardSaleDraft(scope);
+            await discardSaleDraft(scope, {
+                expectedAttempt: loadedDraftExpectation
+            });
             return false;
         }
         let restoredAttempt = sanitizeRestoredAttempt(record.attempt);
         let restoredFailedQueueId = '';
+        let restoredFailedQueueIds = [];
+        let restoredFailedOperationId = '';
         if (restoredAttempt) {
-            const operationStatus = await getSyncOperationStatus({
+            const operationSnapshot = await getSyncOperationSnapshot({
                 ownerId: scope.uid,
                 type: 'sale.save',
                 id: restoredAttempt.operationId
             });
+            if (!hydrationStillBelongsToSession()) return false;
+            const operationStatus = operationSnapshot?.status || '';
+            const operationVersionMatches = (
+                Boolean(restoredAttempt.queueVersion)
+                && operationSnapshot?.version === restoredAttempt.queueVersion
+            );
+            const durableOperationMatches = (
+                operationSnapshot?.durable === true
+                && operationVersionMatches
+            );
+
+            let failedOperations = [];
+            try {
+                failedOperations = await getFailedSyncOperations();
+            } catch (error) {
+                console.warn(
+                    'No se pudo revisar todavía la cola local fallida:',
+                    error
+                );
+            }
+            if (!hydrationStillBelongsToSession()) return false;
+            const relatedFailures = failedOperations.filter(operation => (
+                operation.type === 'sale.save'
+                && operation.payload?.saleId === restoredAttempt.saleId
+            ));
             if (
                 operationStatus
                 && operationStatus !== 'failed'
+                && durableOperationMatches
+                && relatedFailures.length === 0
             ) {
-                await discardSaleDraft(scope);
+                await discardSaleDraft(scope, {
+                    expectedAttempt: loadedDraftExpectation
+                });
                 return false;
             }
-            if (operationStatus === 'failed') {
+            if (operationStatus === 'failed' || relatedFailures.length > 0) {
                 restoredAttempt = {
                     ...restoredAttempt,
                     status: 'failed'
                 };
-                const failedOperations = await getFailedSyncOperations();
-                restoredFailedQueueId = failedOperations.find(operation => (
-                    operation.type === 'sale.save'
-                    && operation.payload?.operationId === restoredAttempt.operationId
-                ))?.id || '';
+                const matchingFailure = relatedFailures.find(operation => (
+                    operation.payload?.operationId
+                        === restoredAttempt.operationId
+                )) || (
+                    operationStatus === 'failed'
+                        ? operationSnapshot
+                        : relatedFailures[0]
+                );
+                restoredFailedQueueId = matchingFailure?.id || '';
+                restoredFailedQueueIds = relatedFailures.length
+                    ? relatedFailures.map(operation => operation.id)
+                    : [matchingFailure?.id].filter(Boolean);
+                restoredFailedOperationId = String(
+                    matchingFailure?.payload?.operationId || ''
+                );
             }
         }
         if (record.cart.length === 0 && !record.editContext) {
-            await discardSaleDraft(scope);
+            await discardSaleDraft(scope, {
+                expectedAttempt: loadedDraftExpectation
+            });
             return false;
         }
 
@@ -385,7 +508,9 @@ export async function restoreVentasDraft(context) {
         const hadStoredEdit = Boolean(record.editContext);
         let editContext = sanitizeRestoredEditContext(record.editContext, scope);
         if (!cart || (hadStoredEdit && !editContext)) {
-            await discardSaleDraft(scope);
+            await discardSaleDraft(scope, {
+                expectedAttempt: loadedDraftExpectation
+            });
             if (hadStoredEdit) {
                 window.mostrarToast?.(
                     'Edición vencida',
@@ -396,14 +521,15 @@ export async function restoreVentasDraft(context) {
             return false;
         }
 
-        if (editContext && !editContext.localPendingEdit) {
+        if (editContext && !editContext.localPendingCreate) {
             const storedExpectedRevision = editContext.expectedRevision;
             try {
                 const lockResult = await acquireSaleEditLock({
                     saleId: editContext.saleId,
                     lockToken: editContext.lockToken,
                     ownerId: scope.uid,
-                    ownerName: editContext.lockOwnerName
+                    ownerName: editContext.lockOwnerName,
+                    expectedRevision: storedExpectedRevision
                 });
                 if (
                     Number(lockResult.expectedRevision || 1)
@@ -432,7 +558,9 @@ export async function restoreVentasDraft(context) {
                         'amber'
                     );
                 } else {
-                    await discardSaleDraft(scope);
+                    await discardSaleDraft(scope, {
+                        expectedAttempt: loadedDraftExpectation
+                    });
                     void releaseSaleEditLock({
                         saleId: editContext.saleId,
                         lockToken: editContext.lockToken,
@@ -454,7 +582,7 @@ export async function restoreVentasDraft(context) {
             || state.currentUser?.uid !== scope.uid
             || String(state.userLocalId || 'general') !== scope.localId
         ) {
-            if (editContext?.lockToken) {
+            if (editContext && !editContext.localPendingCreate) {
                 void releaseSaleEditLock({
                     saleId: editContext.saleId,
                     lockToken: editContext.lockToken,
@@ -470,12 +598,28 @@ export async function restoreVentasDraft(context) {
         recoveredFailedSaleOperation = restoredFailedQueueId
             ? {
                 queueId: restoredFailedQueueId,
-                operationId: restoredAttempt.operationId
+                queueIds: restoredFailedQueueIds.length
+                    ? restoredFailedQueueIds
+                    : [restoredFailedQueueId],
+                operationId:
+                    restoredFailedOperationId
+                    || restoredAttempt.operationId
             }
             : null;
         window.ticketEditadoOriginal = Boolean(editContext);
         window.ticketEditadoContext = editContext;
         restorePaymentDraft(record.payment);
+        if (
+            record.attempt?.operationId
+            && record.attempt?.queueVersion
+        ) {
+            void deleteSaleRecoveryDraft(
+                scope,
+                record.attempt
+            ).catch(error => {
+                reportDraftStorageFailure(error);
+            });
+        }
 
         window.mostrarToast?.(
             state.pendingSaleAttempt
@@ -495,10 +639,128 @@ export async function restoreVentasDraft(context) {
             saleDraftPersistenceSuspended = false;
             actualizarCarritoUI();
             setTimeout(() => {
-                void recoverNextFailedSaleOperation();
+                void recoverNextFailedSaleOperation()
+                    .catch(() => false)
+                    .then(() => recoverNextSaleRecoveryDraft());
             }, 0);
         }
     }
+}
+
+async function recoverNextSaleRecoveryDraft({
+    scope = activeSaleDraftScope,
+    sessionGeneration = ventasSessionGeneration,
+    ownerId = state.currentUser?.uid,
+    allowDuringPersistenceFailure = false,
+    notifyWhenBusy = true
+} = {}) {
+    const recoveryStillApplies = () => (
+        sessionGeneration === ventasSessionGeneration
+        && String(state.currentUser?.uid || '') === String(ownerId || '')
+        && scope?.key === activeSaleDraftScope?.key
+    );
+    if (
+        saleRecoveryPromotionInProgress
+        || !scope
+        || !recoveryStillApplies()
+    ) {
+        return false;
+    }
+
+    let recoveryRecords;
+    try {
+        recoveryRecords = await loadSaleRecoveryDrafts(scope);
+    } catch (error) {
+        reportDraftStorageFailure(error);
+        return false;
+    }
+    if (!recoveryStillApplies()) return false;
+    if (recoveryRecords.length === 0) {
+        saleRecoveryNoticeShown = false;
+        return false;
+    }
+
+    const interfaceIsBusy = (
+        state.carrito.length > 0
+        || Boolean(window.ticketEditadoContext?.saleId)
+        || (
+            !allowDuringPersistenceFailure
+            && hasPendingSaleLocalPersistence()
+        )
+    );
+    if (interfaceIsBusy) {
+        if (notifyWhenBusy && !saleRecoveryNoticeShown) {
+            saleRecoveryNoticeShown = true;
+            window.mostrarToast?.(
+                'Venta protegida pendiente',
+                'Hay otra venta guardada localmente. Se abrirá para revisión al terminar el carrito actual.',
+                'amber'
+            );
+        }
+        return false;
+    }
+
+    const recoveryRecord = recoveryRecords[0];
+    saleRecoveryPromotionInProgress = true;
+    saleRecoveryNoticeShown = false;
+    preparacionVentaEnProceso = true;
+    try {
+        const promotion = await promoteSaleRecoveryDraft(
+            scope,
+            recoveryRecord
+        );
+        if (!recoveryStillApplies()) return false;
+        if (!promotion?.promoted) {
+            if (promotion?.busy && notifyWhenBusy && !saleRecoveryNoticeShown) {
+                saleRecoveryNoticeShown = true;
+                window.mostrarToast?.(
+                    'Venta protegida pendiente',
+                    'Otro carrito local está activo. La recuperación se conservará para después.',
+                    'amber'
+                );
+            }
+            return false;
+        }
+        return await restoreVentasDraft({
+            uid: scope.uid,
+            localId: scope.localId
+        });
+    } catch (error) {
+        reportDraftStorageFailure(error);
+        return false;
+    } finally {
+        saleRecoveryPromotionInProgress = false;
+        if (recoveryStillApplies()) {
+            preparacionVentaEnProceso = false;
+            actualizarCarritoUI();
+        }
+    }
+}
+
+async function recoverDraftAfterQueuePersistenceFailure({
+    scope,
+    sessionGeneration,
+    ownerId
+}) {
+    const recoveryStillApplies = () => (
+        sessionGeneration === ventasSessionGeneration
+        && String(state.currentUser?.uid || '') === String(ownerId || '')
+        && scope?.key === activeSaleDraftScope?.key
+    );
+    if (
+        !scope
+        || !recoveryStillApplies()
+    ) {
+        return false;
+    }
+
+    return recoverNextSaleRecoveryDraft({
+        scope,
+        sessionGeneration,
+        ownerId,
+        allowDuringPersistenceFailure: true,
+        notifyWhenBusy: true
+    });
 }
 
 let ventasRenderPending = true;
@@ -533,6 +795,25 @@ export function isSaleOperationInProgress() {
     return ventaEnProceso || preparacionVentaEnProceso || liberacionEdicionEnProceso;
 }
 
+export function hasPendingSaleLocalPersistence() {
+    return pendingSalePersistenceCount > 0;
+}
+
+function beginSalePersistenceGuard() {
+    pendingSalePersistenceCount++;
+    window.dispatchEvent(new Event('icepos:update-safety-changed'));
+    let finished = false;
+    return () => {
+        if (finished) return;
+        finished = true;
+        pendingSalePersistenceCount = Math.max(
+            0,
+            pendingSalePersistenceCount - 1
+        );
+        window.dispatchEvent(new Event('icepos:update-safety-changed'));
+    };
+}
+
 function isSaleInteractionLocked() {
     // Renovar el bloqueo remoto nunca debe congelar acciones que son locales
     // (sabores, toppings, cantidades o datos de pago).
@@ -553,6 +834,7 @@ function scheduleEditLockHeartbeat(delayMs = null) {
     if (
         !editContext?.saleId
         || !editContext?.lockToken
+        || editContext.localPendingCreate === true
         || editLockHeartbeatPromise
     ) return;
 
@@ -576,6 +858,7 @@ function ensureEditLockHeartbeat() {
         editLockHeartbeatTimer
         || editLockHeartbeatPromise
         || !window.ticketEditadoContext?.saleId
+        || window.ticketEditadoContext?.localPendingCreate === true
     ) return;
     scheduleEditLockHeartbeat();
 }
@@ -585,6 +868,7 @@ async function refreshEditLockHeartbeat() {
 
     const editContext = window.ticketEditadoContext;
     if (!editContext?.saleId || !editContext?.lockToken) return false;
+    if (editContext.localPendingCreate === true) return true;
 
     if (ventaEnProceso || liberacionEdicionEnProceso) {
         scheduleEditLockHeartbeat(EDIT_LOCK_HEARTBEAT_RETRY_MS);
@@ -604,7 +888,8 @@ async function refreshEditLockHeartbeat() {
                 saleId,
                 lockToken,
                 ownerId: editContext.lockOwnerId,
-                ownerName: editContext.lockOwnerName
+                ownerName: editContext.lockOwnerName,
+                expectedRevision: editContext.expectedRevision
             });
 
             const currentContext = window.ticketEditadoContext;
@@ -713,7 +998,13 @@ async function refreshEditLockHeartbeat() {
     }
 }
 
-function limpiarCarritoYEdicion(force = false) {
+function limpiarCarritoYEdicion(
+    force = false,
+    {
+        discardDraft = true,
+        discardRecoveredOperation = true
+    } = {}
+) {
     if (ventaEnProceso && !force) {
         window.mostrarToast?.(
             'Guardando venta',
@@ -730,13 +1021,30 @@ function limpiarCarritoYEdicion(force = false) {
     window.ticketEditadoContext = null;
     window.ticketEditLockPromise = null;
     clearEditLockHeartbeat();
-    if (!saleDraftPersistenceSuspended) void discardSaleDraft();
-    if (recoveredOperation?.queueId) {
-        void discardSyncOperation(recoveredOperation.queueId).catch(error => {
-            console.warn('No se pudo descartar la venta local recuperada:', error);
+    if (discardDraft && !saleDraftPersistenceSuspended) {
+        void discardSaleDraft();
+    }
+    if (discardRecoveredOperation && recoveredOperation?.queueId) {
+        const recoveredQueueIds = recoveredOperation.queueIds?.length
+            ? recoveredOperation.queueIds
+            : [recoveredOperation.queueId];
+        recoveredQueueIds.forEach(queueId => {
+            void discardSyncOperation(queueId).catch(error => {
+                console.warn(
+                    'No se pudo descartar la venta local recuperada:',
+                    error
+                );
+            });
         });
     }
     renderEditBanner();
+    if (discardDraft) {
+        setTimeout(() => {
+            void recoverNextFailedSaleOperation()
+                .catch(() => false)
+                .then(() => recoverNextSaleRecoveryDraft());
+        }, 0);
+    }
     return true;
 }
 
@@ -790,7 +1098,13 @@ export function resetVentasSession() {
     ventaEnProceso = false;
     preparacionVentaEnProceso = false;
     liberacionEdicionEnProceso = false;
+    failedSaleRecoveryInProgress = false;
+    failedSaleRecoveryToken = null;
     recoveredFailedSaleOperation = null;
+    deferredSaleDraftCleanup = null;
+    pendingSalePersistenceCount = 0;
+    saleRecoveryPromotionInProgress = false;
+    saleRecoveryNoticeShown = false;
     ventasRenderPending = true;
     setPendingSaleAttempt(null);
     vasoActual = null;
@@ -881,7 +1195,7 @@ export function initVentas() {
             const card = e.target.closest('.producto-card');
             if (!card || card.classList.contains('opacity-50')) return;
             
-            const prod = state.productos.find(p => p.id === card.dataset.id);
+            const prod = getProductById(card.dataset.id);
             if (!prod) return;
 
             // NUEVA LÓGICA: Si es un vaso, o si tiene múltiples tamaños, abrir constructor
@@ -1016,10 +1330,7 @@ function renderEditBanner() {
     const editContext = window.ticketEditadoContext;
     const detail = document.getElementById('venta-editando-detalle');
     const cancelButton = document.getElementById('btn-cancelar-edicion-pedido');
-    const hasEdit = Boolean(
-        editContext?.saleId
-        && (editContext?.lockToken || editContext?.localPendingEdit)
-    );
+    const hasEdit = Boolean(editContext?.saleId && editContext?.lockToken);
 
     banner.classList.toggle('hidden', !hasEdit);
     if (!hasEdit) {
@@ -1034,8 +1345,8 @@ function renderEditBanner() {
     const expiresAtMs = Number(editContext.lockExpiresAtMs || 0);
     const expired = expiresAtMs > 0 && expiresAtMs <= getTrustedNowMs();
     if (detail) {
-        detail.textContent = editContext.localPendingEdit
-            ? `#${shortId} · edición local inmediata`
+        detail.textContent = editContext.localPendingCreate
+            ? `#${shortId} · edición local, sincronización pendiente`
             : (
                 editLockHeartbeatPromise
                     ? `#${shortId} · renovando reserva…`
@@ -1050,7 +1361,6 @@ function renderEditBanner() {
         cancelButton.disabled = (
             ventaEnProceso
             || liberacionEdicionEnProceso
-            || Boolean(editLockHeartbeatPromise)
         );
         cancelButton.textContent = liberacionEdicionEnProceso
             ? 'Liberando...'
@@ -1063,11 +1373,11 @@ function renderEditBanner() {
             renderEditBanner();
         }, Math.max(100, expiresAtMs - getTrustedNowMs() + 50));
     }
-    if (!editContext.localPendingEdit) ensureEditLockHeartbeat();
+    ensureEditLockHeartbeat();
 }
 
 function solicitarVaciarCarrito() {
-    if (window.ticketEditadoContext?.saleId) {
+    if (window.ticketEditadoContext?.lockToken) {
         solicitarCancelarEdicion();
         return false;
     }
@@ -1084,11 +1394,10 @@ function solicitarCancelarEdicion() {
     if (
         ventaEnProceso
         || liberacionEdicionEnProceso
-        || editLockHeartbeatPromise
     ) {
         window.mostrarToast?.(
-            'Validando pedido',
-            'Espera un momento mientras termina de renovarse la reserva.',
+            'Venta en proceso',
+            'Espera a que termine la operación actual.',
             'amber'
         );
         return;
@@ -1097,6 +1406,21 @@ function solicitarCancelarEdicion() {
     if (!editContext?.lockToken) {
         limpiarCarritoYEdicion();
         actualizarCarritoUI();
+        return;
+    }
+    if (editContext.localPendingCreate === true) {
+        limpiarCarritoYEdicion(true);
+        resetPaymentInputs();
+        renderAcceptedSaleImmediately();
+        window.mostrarToast?.(
+            'Edición cancelada',
+            'El pedido local original se conservó sin cambios.',
+            'amber'
+        );
+        setTimeout(() => {
+            actualizarCarritoUI();
+            window.switchView?.('pedidos');
+        }, 0);
         return;
     }
 
@@ -1115,8 +1439,8 @@ function solicitarCancelarEdicion() {
     }
 }
 
-async function cancelarEdicionActual() {
-    let editContext = window.ticketEditadoContext;
+function cancelarEdicionActual() {
+    const editContext = window.ticketEditadoContext;
     if (
         liberacionEdicionEnProceso ||
         !editContext?.saleId ||
@@ -1124,68 +1448,49 @@ async function cancelarEdicionActual() {
     ) return;
 
     liberacionEdicionEnProceso = true;
-    renderEditBanner();
-    actualizarCarritoUI();
-
     try {
-        if (editLockHeartbeatPromise) {
-            await editLockHeartbeatPromise;
-            const renewedContext = window.ticketEditadoContext;
-            if (
-                renewedContext?.saleId !== editContext.saleId
-                || renewedContext?.lockToken !== editContext.lockToken
-            ) return;
-            editContext = renewedContext;
-        }
-
-        const releaseResult = await releaseSaleEditLock({
+        releaseSaleEditLockTransaction({
             saleId: editContext.saleId,
+            operationId: createUuid('OP-'),
             lockToken: editContext.lockToken,
             actor: state.currentUser?.username
                 || state.currentUser?.email
                 || 'Desconocido',
             reason: 'edicion_cancelada_desde_ventas'
         });
+    } catch (error) {
+        // Si el almacenamiento local no está disponible, al menos intentamos
+        // liberar directamente. La interfaz no queda bloqueada por ese viaje.
+        void releaseSaleEditLock({
+            saleId: editContext.saleId,
+            lockToken: editContext.lockToken,
+            actor: state.currentUser?.username
+                || state.currentUser?.email
+                || 'Desconocido',
+            reason: 'edicion_cancelada_sin_cola'
+        }).catch(releaseError => {
+            console.warn(
+                'El bloqueo se liberará al expirar si no vuelve la conexión:',
+                releaseError
+            );
+        });
+    }
 
-        if (window.ticketEditadoContext?.lockToken !== editContext.lockToken) return;
+    if (window.ticketEditadoContext?.lockToken === editContext.lockToken) {
         limpiarCarritoYEdicion(true);
         resetPaymentInputs();
-        setTimeout(() => {
-            void recoverNextFailedSaleOperation();
-        }, 0);
-        actualizarCarritoUI();
+        renderAcceptedSaleImmediately();
         window.mostrarToast?.(
             'Edición cancelada',
-            releaseResult?.alreadyReleased
-                ? 'La edición local terminó; el pedido ya había cambiado.'
-                : 'El pedido volvió a estar disponible.',
+            'Los cambios locales se descartaron; la liberación se sincroniza en segundo plano.',
             'amber'
         );
-    } catch (error) {
-        console.error('No se pudo liberar el pedido:', error);
-        if (['sale-edit-lock-lost', 'sale-not-found'].includes(error?.code)) {
-            if (window.ticketEditadoContext?.lockToken === editContext.lockToken) {
-                limpiarCarritoYEdicion(true);
-                resetPaymentInputs();
-                actualizarCarritoUI();
-            }
-            window.mostrarAlerta?.(
-                'Edición finalizada',
-                'Este dispositivo ya no tenía el bloqueo. Se descartaron los cambios locales.',
-                'amber'
-            );
-        } else {
-            window.mostrarAlerta?.(
-                'No se pudo cancelar',
-                'No se liberó el pedido. Revisa la conexión e inténtalo nuevamente.',
-                'red'
-            );
-        }
-    } finally {
-        liberacionEdicionEnProceso = false;
-        renderEditBanner();
-        actualizarCarritoUI();
+        setTimeout(() => {
+            void recoverNextFailedSaleOperation();
+            actualizarCarritoUI();
+        }, 0);
     }
+    liberacionEdicionEnProceso = false;
 }
 
 // ========================================================
@@ -1204,7 +1509,7 @@ function abrirModalAjuste(tipo) {
         ? '<i data-lucide="minus-circle" class="w-5 h-5 text-red-400"></i> Descuento' 
         : '<i data-lucide="plus-circle" class="w-5 h-5 text-emerald-400"></i> Cargo Extra';
         
-    m.classList.remove('hidden'); 
+    m.classList.remove('hidden', 'pointer-events-none'); 
     setTimeout(() => m.classList.remove('opacity-0'), 10);
     if(window.lucide) window.lucide.createIcons({ root: m });
 }
@@ -1237,7 +1542,7 @@ function confirmarAjuste(e) {
     });
     
     const m = document.getElementById('modal-ajuste'); 
-    m.classList.add('opacity-0'); 
+    m.classList.add('opacity-0', 'pointer-events-none'); 
     setTimeout(() => m.classList.add('hidden'), 300);
     actualizarCarritoUI();
 }
@@ -1421,7 +1726,7 @@ function actualizarPrecioModal() {
 }
 
 function iniciarArmadoVaso(id) {
-    vasoActual = state.productos.find(p => p.id === id); 
+    vasoActual = getProductById(id);
     if(!vasoActual) return; 
 
     const limite = Number(vasoActual.limite_sabores !== undefined ? vasoActual.limite_sabores : (vasoActual.limiteSabores || vasoActual.limite || 0));
@@ -1493,7 +1798,7 @@ function iniciarArmadoVaso(id) {
     actualizarPrecioModal();
     
     const m = document.getElementById('modal-armar-vaso'); 
-    m.classList.remove('hidden'); 
+    m.classList.remove('hidden', 'pointer-events-none'); 
     setTimeout(() => m.classList.remove('opacity-0'), 10);
 
     // Expandir automáticamente la primera sección necesaria
@@ -1532,7 +1837,7 @@ function toggleTamano(idx) {
 }
 
 function toggleTopping(id) {
-    const toppingData = state.productos.find(p => p.id === id);
+    const toppingData = getProductById(id);
     if (!toppingData) return;
 
     const existeIdx = toppingsElegidos.findIndex(t => t.id === id);
@@ -1608,14 +1913,14 @@ function toggleSabor(n) {
     if (countEl) countEl.textContent = saboresElegidos.length;
     // Auto-avanzar si llega al límite
     if (saboresElegidos.length === limite && limite !== 999) {
-        setTimeout(() => window.toggleAcordeon('toppings'), 300);
+        window.toggleAcordeon('toppings');
     }
 }
 
 function cerrarModalArmar() { 
     const m = document.getElementById('modal-armar-vaso'); 
     if(m) {
-        m.classList.add('opacity-0'); 
+        m.classList.add('opacity-0', 'pointer-events-none'); 
         setTimeout(() => m.classList.add('hidden'), 300); 
     }
 }
@@ -1666,7 +1971,7 @@ function confirmarVasoAlCarrito() {
 // ========================================================
 function agregarExtra(id) {
     if (isSaleInteractionLocked()) return;
-    const p = state.productos.find(x => x.id === id); 
+    const p = getProductById(id);
     if(!p) return;
     
     const tPrecio = p.tamanos && p.tamanos.length > 0 ? p.tamanos[0].precio : (p.precio || 0);
@@ -1865,8 +2170,8 @@ function isProductAvailableForLocal(product, localId) {
     );
 }
 
-function getCurrentCatalogUnitPrice(item, localId) {
-    const product = state.productos.find(entry => entry.id === item.productoId);
+function getCurrentCatalogUnitPrice(item, localId, catalogById) {
+    const product = catalogById.get(item.productoId);
     if (!product) {
         throw new SalesIntegrityError(
             'catalog-changed',
@@ -1912,14 +2217,17 @@ function getCurrentCatalogUnitPrice(item, localId) {
     let expectedPrice = basePrice;
     (Array.isArray(item.toppings) ? item.toppings : []).forEach(topping => {
         const toppingId = topping?.id || topping?.productoId;
-        const toppingProduct = state.productos.find(entry => (
-            entry.id === toppingId
-            && isProductAvailableForLocal(entry, localId)
-        ));
+        const toppingProduct = catalogById.get(toppingId);
         if (!toppingId || !toppingProduct) {
             throw new SalesIntegrityError(
                 'catalog-changed',
                 `Un topping de "${item.nombre || 'un producto'}" ya no está disponible.`
+            );
+        }
+        if (!isProductAvailableForLocal(toppingProduct, localId)) {
+            throw new SalesIntegrityError(
+                'product-out-of-location',
+                `Un topping de "${item.nombre || 'un producto'}" pertenece a otra sede.`
             );
         }
         const toppingSizes = Array.isArray(toppingProduct.tamanos)
@@ -1943,7 +2251,11 @@ function getCurrentCatalogUnitPrice(item, localId) {
     };
 }
 
-function validateFreshCatalogPricing(items, localId) {
+function validateFreshCatalogPricing(
+    items,
+    localId,
+    catalogById = getIndexedProductsById()
+) {
     if (!Array.isArray(state.productos) || state.productos.length === 0) {
         throw new SalesIntegrityError(
             'catalog-not-available',
@@ -1955,7 +2267,11 @@ function validateFreshCatalogPricing(items, localId) {
         const isAdjustment = item.productoId === 'AJUSTE' || item.categoria === 'ajuste';
         if (isAdjustment) return;
 
-        const { expectedPrice, currentCost } = getCurrentCatalogUnitPrice(item, localId);
+        const { expectedPrice, currentCost } = getCurrentCatalogUnitPrice(
+            item,
+            localId,
+            catalogById
+        );
         if (Math.abs(Number(item.precio) - expectedPrice) > 0.009) {
             throw new SalesIntegrityError(
                 'catalog-changed',
@@ -1993,12 +2309,13 @@ function getLocallyRequiredStock(nextMovements, previousMovements = []) {
 
 function validateLocalInventoryAvailability(
     movements,
-    previousMovements = []
+    previousMovements = [],
+    productsById = getIndexedProductsById()
 ) {
     getLocallyRequiredStock(movements, previousMovements)
         .forEach((requested, productId) => {
         if (requested <= 0) return;
-        const product = state.productos.find(item => item.id === productId);
+        const product = productsById.get(productId);
         if (!product || product.stock === null || product.stock === undefined || product.stock === '') {
             return;
         }
@@ -2043,6 +2360,30 @@ function buildSaleAttemptFingerprint({
     });
 }
 
+function getCoalesciblePendingCreate(editContext) {
+    if (
+        editContext?.localPendingCreate !== true
+        || !editContext.pendingCreateQueueId
+        || !editContext.pendingCreateOperationId
+    ) return null;
+
+    const operation = getPendingSyncOperationById(
+        editContext.pendingCreateQueueId
+    );
+    return (
+        operation
+        && operation.type === 'sale.save'
+        && ['queued', 'retry'].includes(operation.status)
+        && operation.payload?.editContext == null
+        && operation.payload?.saleId === editContext.saleId
+        && operation.payload?.operationId === editContext.pendingCreateOperationId
+        && Boolean(editContext.pendingCreateVersion)
+        && operation.version === editContext.pendingCreateVersion
+    )
+        ? operation
+        : null;
+}
+
 function resolveSaleAttempt({ editContext, cart, totals, payment, localId, clientName }) {
     const fingerprint = buildSaleAttemptFingerprint({
         editContext,
@@ -2053,14 +2394,28 @@ function resolveSaleAttempt({ editContext, cart, totals, payment, localId, clien
         clientName
     });
 
+    const currentAttempt = state.pendingSaleAttempt;
+    const sameFingerprint = currentAttempt?.fingerprint === fingerprint;
+    const coalescibleCreate = getCoalesciblePendingCreate(editContext);
+    const staleCoalesceAttempt = Boolean(
+        editContext?.localPendingCreate
+        && currentAttempt?.operationId === editContext.pendingCreateOperationId
+        && !coalescibleCreate
+    );
     if (
-        !state.pendingSaleAttempt
-        || state.pendingSaleAttempt.fingerprint !== fingerprint
+        !sameFingerprint
+        || currentAttempt?.status === 'failed'
+        || staleCoalesceAttempt
     ) {
         setPendingSaleAttempt({
             fingerprint,
-            saleId: editContext?.saleId || createUuid('T-'),
-            operationId: createUuid('OP-'),
+            saleId: sameFingerprint
+                ? currentAttempt.saleId
+                : (editContext?.saleId || createUuid('T-')),
+            operationId:
+                coalescibleCreate?.payload?.operationId
+                || createUuid('OP-'),
+            queueVersion: String(coalescibleCreate?.version || ''),
             status: 'prepared',
             updatedAt: Date.now(),
             lastErrorCode: ''
@@ -2240,6 +2595,47 @@ function resetPaymentInputs() {
     if (change) change.textContent = 'S/ 0.00';
 }
 
+function renderAcceptedSaleImmediately() {
+    const list = document.getElementById('carrito-items');
+    const emptyState = document.getElementById('carrito-vacio');
+    const total = document.getElementById('carrito-total');
+    const processButton = document.getElementById('btn-procesar-cobro');
+    const clearButton = document.getElementById('btn-vaciar-carrito');
+
+    if (list) {
+        list.innerHTML = '';
+        list.classList.add('hidden');
+    }
+    emptyState?.classList.remove('hidden');
+    if (total) total.textContent = formatMoney(0);
+    if (processButton) {
+        processButton.disabled = true;
+        processButton.classList.add('opacity-50', 'cursor-not-allowed');
+        if (cobroButtonDefaultHtml) {
+            processButton.innerHTML = cobroButtonDefaultHtml;
+        }
+    }
+    if (clearButton) {
+        clearButton.disabled = false;
+        clearButton.classList.remove('opacity-50', 'cursor-not-allowed');
+    }
+    window.dispatchEvent(new Event('icepos:update-safety-changed'));
+}
+
+function scheduleFullSaleUiRefreshAfterPaint() {
+    const refresh = () => {
+        setTimeout(() => actualizarCarritoUI(), 0);
+    };
+    if (
+        typeof requestAnimationFrame === 'function'
+        && document.visibilityState !== 'hidden'
+    ) {
+        requestAnimationFrame(refresh);
+        return;
+    }
+    refresh();
+}
+
 function showSaleError(error) {
     console.error('No se pudo confirmar la venta:', error);
     let message = error?.message || 'No se pudo confirmar la venta.';
@@ -2285,7 +2681,13 @@ function restorePaymentFromSale(sale = {}) {
     if (clientInput) clientInput.value = String(sale.clienteNombre || '');
 }
 
-function setRecoveredSaleAttempt(operation, sale, editContext, cart) {
+function setRecoveredSaleAttempt(
+    operation,
+    sale,
+    editContext,
+    cart,
+    relatedQueueIds = [operation?.id]
+) {
     const payment = {
         method: String(sale.metodoFinal || sale.metodo_pago || 'efectivo').toLowerCase(),
         cash: Number(sale.pagoEfectivo ?? sale.pago_efectivo ?? 0),
@@ -2313,44 +2715,84 @@ function setRecoveredSaleAttempt(operation, sale, editContext, cart) {
         }),
         saleId: String(operation.payload?.saleId || sale.id || ''),
         operationId: String(operation.payload?.operationId || ''),
+        queueVersion: String(operation.version || ''),
         status: 'failed',
         updatedAt: Date.now(),
         lastErrorCode: String(operation.lastErrorCode || 'unknown')
     });
     recoveredFailedSaleOperation = {
         queueId: operation.id,
+        queueIds: [...new Set(
+            relatedQueueIds
+                .map(value => String(value || ''))
+                .filter(Boolean)
+        )],
         operationId: String(operation.payload?.operationId || '')
     };
 }
 
-async function recoverFailedSaleOperation(operation) {
+async function discardRecoverySlotForOperation(operation) {
+    if (
+        !activeSaleDraftScope
+        || !operation?.payload?.operationId
+        || !operation?.version
+    ) return;
+    try {
+        await deleteSaleRecoveryDraft(activeSaleDraftScope, {
+            operationId: operation.payload.operationId,
+            queueVersion: operation.version
+        });
+    } catch (error) {
+        reportDraftStorageFailure(error);
+    }
+}
+
+async function recoverFailedSaleOperation(
+    operation,
+    relatedQueueIds = [operation?.id]
+) {
+    const recoveryGeneration = ventasSessionGeneration;
     if (
         failedSaleRecoveryInProgress
         || operation?.type !== 'sale.save'
+        || !recoveryStillBelongsToSession(operation, recoveryGeneration)
         || state.carrito.length > 0
         || window.ticketEditadoContext?.saleId
     ) return false;
 
     const restoredCart = sanitizeRestoredCart(operation.payload?.sale?.items);
     if (!restoredCart?.length) return false;
+    const recoveryToken = {};
     failedSaleRecoveryInProgress = true;
+    failedSaleRecoveryToken = recoveryToken;
 
     const sale = operation.payload.sale;
     const editContext = operation.payload?.editContext || null;
     replaceCart(restoredCart);
-    setRecoveredSaleAttempt(operation, sale, editContext, restoredCart);
+    setRecoveredSaleAttempt(
+        operation,
+        sale,
+        editContext,
+        restoredCart,
+        relatedQueueIds
+    );
     restorePaymentFromSale(sale);
 
     if (!editContext) {
         actualizarCarritoUI();
         await persistCurrentSaleDraft({ immediate: true });
+        await discardRecoverySlotForOperation(operation);
+        if (!recoveryStillBelongsToSession(operation, recoveryGeneration)) {
+            finishFailedSaleRecovery(recoveryToken);
+            return false;
+        }
         window.switchView?.('ventas');
         window.mostrarToast?.(
             'Carrito recuperado',
             'Corrige el problema indicado y vuelve a procesar la venta.',
             'amber'
         );
-        failedSaleRecoveryInProgress = false;
+        finishFailedSaleRecovery(recoveryToken);
         return true;
     }
 
@@ -2358,12 +2800,34 @@ async function recoverFailedSaleOperation(operation) {
     const recoveryContext = {
         ...clonePlainValue(editContext),
         lockPending: true,
-        lockExpiresAtMs: getTrustedNowMs() + EDIT_LOCK_HEARTBEAT_INTERVAL_MS
+        lockExpiresAtMs: editContext.localPendingCreate
+            ? 0
+            : getTrustedNowMs() + EDIT_LOCK_HEARTBEAT_INTERVAL_MS
     };
     window.ticketEditadoOriginal = true;
     window.ticketEditadoContext = recoveryContext;
     actualizarCarritoUI();
     window.switchView?.('ventas');
+
+    if (recoveryContext.localPendingCreate === true) {
+        await persistCurrentSaleDraft({ immediate: true });
+        await discardRecoverySlotForOperation(operation);
+        if (
+            !recoveryStillBelongsToSession(operation, recoveryGeneration)
+            || window.ticketEditadoContext?.saleId !== recoveryContext.saleId
+            || window.ticketEditadoContext?.lockToken !== recoveryContext.lockToken
+        ) {
+            finishFailedSaleRecovery(recoveryToken);
+            return false;
+        }
+        window.mostrarToast?.(
+            'Edición local recuperada',
+            'Tus cambios volvieron al carrito y se guardarán en orden.',
+            'amber'
+        );
+        finishFailedSaleRecovery(recoveryToken);
+        return true;
+    }
 
     const acquisition = acquireSaleEditLock({
         saleId: recoveryContext.saleId,
@@ -2372,8 +2836,23 @@ async function recoverFailedSaleOperation(operation) {
         ownerName: recoveryContext.lockOwnerName
             || state.currentUser?.username
             || state.currentUser?.email
-            || 'Usuario'
+            || 'Usuario',
+        expectedRevision
     }).then(async lockResult => {
+        const recoveryBecameObsolete = (
+            !recoveryStillBelongsToSession(operation, recoveryGeneration)
+            || window.ticketEditadoContext?.saleId !== recoveryContext.saleId
+            || window.ticketEditadoContext?.lockToken !== recoveryContext.lockToken
+        );
+        if (recoveryBecameObsolete) {
+            void releaseSaleEditLock({
+                saleId: recoveryContext.saleId,
+                lockToken: recoveryContext.lockToken,
+                actor: recoveryContext.lockOwnerName || 'Usuario',
+                reason: 'recuperacion_edicion_obsoleta'
+            }).catch(() => {});
+            return false;
+        }
         if (Number(lockResult.expectedRevision || 1) !== expectedRevision) {
             await releaseSaleEditLock({
                 saleId: recoveryContext.saleId,
@@ -2396,9 +2875,16 @@ async function recoverFailedSaleOperation(operation) {
             operation,
             sale,
             window.ticketEditadoContext,
-            restoredCart
+            restoredCart,
+            relatedQueueIds
         );
         await persistCurrentSaleDraft({ immediate: true });
+        await discardRecoverySlotForOperation(operation);
+        if (
+            !recoveryStillBelongsToSession(operation, recoveryGeneration)
+            || window.ticketEditadoContext?.saleId !== recoveryContext.saleId
+            || window.ticketEditadoContext?.lockToken !== recoveryContext.lockToken
+        ) return false;
         scheduleEditLockHeartbeat();
         actualizarCarritoUI();
         window.mostrarToast?.(
@@ -2407,8 +2893,43 @@ async function recoverFailedSaleOperation(operation) {
             'amber'
         );
         return true;
-    }).catch(error => {
+    }).catch(async error => {
+        if (!recoveryStillBelongsToSession(operation, recoveryGeneration)) {
+            return false;
+        }
         console.warn('No se pudo recuperar la edición fallida:', error);
+        if (isTemporaryEditLockError(error)) {
+            if (
+                window.ticketEditadoContext?.saleId !== recoveryContext.saleId
+                || window.ticketEditadoContext?.lockToken !== recoveryContext.lockToken
+            ) return false;
+            window.ticketEditadoContext = {
+                ...recoveryContext,
+                lockPending: true,
+                lockExpiresAtMs: 0
+            };
+            setRecoveredSaleAttempt(
+                operation,
+                sale,
+                window.ticketEditadoContext,
+                restoredCart,
+                relatedQueueIds
+            );
+            await persistCurrentSaleDraft({ immediate: true });
+            await discardRecoverySlotForOperation(operation);
+            if (
+                !recoveryStillBelongsToSession(operation, recoveryGeneration)
+                || window.ticketEditadoContext?.saleId !== recoveryContext.saleId
+                || window.ticketEditadoContext?.lockToken !== recoveryContext.lockToken
+            ) return false;
+            actualizarCarritoUI();
+            window.mostrarToast?.(
+                'Edición recuperada sin conexión',
+                'Tus cambios siguen locales y se validarán al volver la conexión.',
+                'amber'
+            );
+            return true;
+        }
         clearCart();
         setPendingSaleAttempt(null);
         recoveredFailedSaleOperation = null;
@@ -2427,13 +2948,15 @@ async function recoverFailedSaleOperation(operation) {
         if (window.ticketEditLockPromise === acquisition) {
             window.ticketEditLockPromise = null;
         }
-        failedSaleRecoveryInProgress = false;
+        finishFailedSaleRecovery(recoveryToken);
     });
     window.ticketEditLockPromise = acquisition;
     return acquisition;
 }
 
 async function recoverNextFailedSaleOperation() {
+    const recoveryGeneration = ventasSessionGeneration;
+    const recoveryOwnerId = String(state.currentUser?.uid || '');
     if (
         failedSaleRecoveryInProgress
         || state.carrito.length > 0
@@ -2441,12 +2964,37 @@ async function recoverNextFailedSaleOperation() {
     ) return false;
     try {
         const failedOperations = await getFailedSyncOperations();
-        const saleOperation = failedOperations.find(operation => (
+        if (
+            recoveryGeneration !== ventasSessionGeneration
+            || recoveryOwnerId !== String(state.currentUser?.uid || '')
+        ) return false;
+        const latestBySale = new Map();
+        failedOperations.filter(operation => (
             operation.type === 'sale.save'
             && operation.payload?.sale?.items
-        ));
+        )).forEach(operation => {
+            const saleId = String(operation.payload?.saleId || '');
+            const previous = latestBySale.get(saleId);
+            if (
+                !previous
+                || Number(operation.createdAt || 0) > Number(previous.createdAt || 0)
+            ) {
+                latestBySale.set(saleId, operation);
+            }
+        });
+        const saleOperation = [...latestBySale.values()]
+            .sort((left, right) => (
+                Number(left.createdAt || 0) - Number(right.createdAt || 0)
+            ))[0];
+        const relatedQueueIds = saleOperation
+            ? failedOperations.filter(candidate => (
+                candidate.type === 'sale.save'
+                && candidate.payload?.saleId
+                    === saleOperation.payload?.saleId
+            )).map(candidate => candidate.id)
+            : [];
         return saleOperation
-            ? recoverFailedSaleOperation(saleOperation)
+            ? recoverFailedSaleOperation(saleOperation, relatedQueueIds)
             : false;
     } catch (error) {
         console.warn('No se pudo revisar las ventas locales pendientes:', error);
@@ -2457,6 +3005,8 @@ async function recoverNextFailedSaleOperation() {
 function handleSaleSyncFailure(event) {
     const operation = event.detail?.operation;
     if (operation?.type !== 'sale.save') return;
+    const failureGeneration = ventasSessionGeneration;
+    if (!recoveryStillBelongsToSession(operation, failureGeneration)) return;
     if (state.carrito.length > 0 || window.ticketEditadoContext?.saleId) {
         window.mostrarToast?.(
             'Venta no sincronizada',
@@ -2465,12 +3015,44 @@ function handleSaleSyncFailure(event) {
         );
         return;
     }
-    void recoverFailedSaleOperation(operation);
+    setTimeout(() => {
+        void (async () => {
+            if (!recoveryStillBelongsToSession(operation, failureGeneration)) return;
+            const hasNewerSaleIntent = getPendingSyncOperationsForEntity(
+                `ventas/${operation.payload?.saleId || ''}`
+            ).some(candidate => (
+                candidate.type === 'sale.save'
+                && candidate.payload?.saleId === operation.payload?.saleId
+                && Number(candidate.createdAt || 0) > Number(operation.createdAt || 0)
+            ));
+            if (hasNewerSaleIntent) return;
+
+            let relatedFailures = [operation];
+            try {
+                const failedOperations = await getFailedSyncOperations();
+                relatedFailures = failedOperations.filter(candidate => (
+                    candidate.type === 'sale.save'
+                    && candidate.payload?.saleId === operation.payload?.saleId
+                ));
+            } catch (_) {}
+            if (
+                !recoveryStillBelongsToSession(operation, failureGeneration)
+                || relatedFailures.length === 0
+            ) return;
+            const latestFailure = relatedFailures.sort((left, right) => (
+                Number(right.createdAt || 0) - Number(left.createdAt || 0)
+            ))[0];
+            void recoverFailedSaleOperation(
+                latestFailure,
+                relatedFailures.map(candidate => candidate.id)
+            );
+        })();
+    }, 0);
 }
 
 function procesarCobroFinal() {
     const btn = document.getElementById('btn-procesar-cobro');
-    if (
+    if(
         !btn
         || state.carrito.length === 0
         || btn.disabled
@@ -2479,21 +3061,27 @@ function procesarCobroFinal() {
 
     const originalButtonHtml = btn.innerHTML;
     const sessionGeneration = ventasSessionGeneration;
+    const saleDraftScope = activeSaleDraftScope;
     let activeAttempt = null;
-    let completedImmediately = false;
-
-    // Bloqueo anti-doble-clic sin spinner: la confirmación visual se produce
-    // dentro del mismo evento y todo el almacenamiento se difiere.
+    let saleWasAccepted = false;
+    let finishPersistenceGuard = null;
+    let persistenceBarrier = null;
+    let persistenceBarrierHasProducer = false;
     preparacionVentaEnProceso = true;
-    ventaEnProceso = true;
-    btn.disabled = true;
 
     try {
         const cart = cloneCart(state.carrito);
-        const editContext = window.ticketEditadoContext || null;
+        const editContext = window.ticketEditadoContext
+            ? clonePlainValue(window.ticketEditadoContext)
+            : null;
+        if (window.ticketEditadoOriginal && !editContext?.saleId) {
+            throw new SalesIntegrityError(
+                'missing-sale-edit-context',
+                'Vuelve a abrir el pedido desde Pedidos antes de guardar los cambios.'
+            );
+        }
         const localId = editContext?.localId || state.userLocalId || 'general';
         if (!editContext) validateFreshCatalogPricing(cart, localId);
-
         const totals = validateCartAndTotals(cart);
         const payment = getValidatedPayment(totals.total);
         const clientName = document.getElementById('input-cliente-nombre')?.value.trim() || '';
@@ -2512,22 +3100,10 @@ function procesarCobroFinal() {
             lastErrorCode: ''
         };
         setPendingSaleAttempt(activeAttempt);
-
+        finishPersistenceGuard = beginSalePersistenceGuard();
         const { saleId, operationId } = activeAttempt;
-        if (
-            recoveredFailedSaleOperation?.queueId
-            && recoveredFailedSaleOperation.operationId !== operationId
-        ) {
-            void discardSyncOperation(recoveredFailedSaleOperation.queueId)
-                .catch(error => {
-                    console.warn('La venta recuperada se limpiará después:', error);
-                });
-            recoveredFailedSaleOperation = null;
-        }
-
-        const actor = state.currentUser?.username
-            || state.currentUser?.email
-            || 'Desconocido';
+        const supersededRecovery = recoveredFailedSaleOperation;
+        const actor = state.currentUser?.username || state.currentUser?.email || 'Desconocido';
         const inventoryMovements = buildInventoryMovements(
             cart,
             state.productos,
@@ -2542,7 +3118,13 @@ function procesarCobroFinal() {
 
         const sale = {
             fechaStr: getTodayDateStr(),
-            fechaHora: getTrustedNowMs(),
+            fechaHora: (
+                editContext
+                && Number.isFinite(Number(editContext.originalFechaHora))
+                && Number(editContext.originalFechaHora) > 0
+            )
+                ? Number(editContext.originalFechaHora)
+                : getTrustedNowMs(),
             items: cart,
             total: totals.total,
             costoTotal: totals.cost,
@@ -2562,55 +3144,165 @@ function procesarCobroFinal() {
             estado: 'pendiente'
         };
 
-        if (editContext?.lockToken) {
-            if (!(window.ticketEditSubmissionTokens instanceof Set)) {
-                window.ticketEditSubmissionTokens = new Set();
-            }
-            window.ticketEditSubmissionTokens.add(editContext.lockToken);
-        }
-
-        // Esta llamada agrega la venta a la memoria de la cola de forma
-        // síncrona. IndexedDB y Firebase comienzan después del cambio visual.
-        saveSaleTransaction({
+        persistenceBarrier = createDeferredBoolean();
+        const queueReceipt = saveSaleTransaction({
             saleId,
             operationId,
             sale,
             inventoryMovements,
-            editContext
+            editContext,
+            persistAfter: persistenceBarrier.promise,
+            supersedesQueueIds: (
+                supersededRecovery?.queueId
+                && supersededRecovery.operationId !== operationId
+            )
+                ? (
+                    supersededRecovery.queueIds?.length
+                        ? supersededRecovery.queueIds
+                        : [supersededRecovery.queueId]
+                )
+                : []
         });
-
+        saleWasAccepted = true;
+        const acceptedOperationId =
+            queueReceipt.operationId || operationId;
         activeAttempt = {
             ...activeAttempt,
+            operationId: acceptedOperationId,
+            queueVersion: String(queueReceipt.version || ''),
             status: 'queued',
             updatedAt: Date.now(),
             lastErrorCode: ''
         };
         setPendingSaleAttempt(activeAttempt);
+        const acceptedSaleDraft = {
+            ...buildCurrentSaleDraft(),
+            intentToken: createUuid('DRAFT-')
+        };
+        const currentDraftPromise = persistCurrentSaleDraft({
+            immediate: true,
+            draftSnapshot: acceptedSaleDraft
+        });
+        const recoveryDraftPromise = saveSaleRecoveryDraft(
+            saleDraftScope,
+            acceptedSaleDraft
+        ).then(record => Boolean(record)).catch(error => {
+            reportDraftStorageFailure(error);
+            return false;
+        });
+        const draftSafetyPromise = Promise.all([
+            currentDraftPromise,
+            recoveryDraftPromise
+        ]);
+        persistenceBarrierHasProducer = true;
+        void draftSafetyPromise.then(() => {
+            // Aunque el borrador falle, la outbox todavía puede quedar durable.
+            // Esperamos el intento y luego dejamos que ambas capas se respalden.
+            persistenceBarrier.resolve(true);
+        }).catch(() => {
+            persistenceBarrier.resolve(true);
+        });
+        const cleanupToken = {
+            scopeKey: saleDraftScope?.key || '',
+            operationId: acceptedOperationId,
+            queueVersion: activeAttempt.queueVersion
+        };
+        deferredSaleDraftCleanup = cleanupToken;
         recoveredFailedSaleOperation = null;
-
-        if (sessionGeneration !== ventasSessionGeneration) return;
-
-        limpiarCarritoYEdicion(true);
+        limpiarCarritoYEdicion(true, {
+            discardDraft: false,
+            discardRecoveredOperation: false
+        });
         resetPaymentInputs();
         preparacionVentaEnProceso = false;
-        ventaEnProceso = false;
-        actualizarCarritoUI();
-        completedImmediately = true;
+        renderAcceptedSaleImmediately();
 
-        const shortId = saleId.replace(/^T-/, '').slice(0, 8).toUpperCase();
-        window.mostrarToast?.(
-            editContext ? 'Cambios guardados' : 'Venta procesada',
-            editContext
-                ? `Ticket #${shortId} actualizado inmediatamente en este dispositivo.`
-                : `Ticket #${shortId} creado inmediatamente y enviándose en segundo plano.`,
-            'emerald'
-        );
+        if(window.mostrarToast) {
+            const shortId = saleId.replace(/^T-/, '').slice(0, 8).toUpperCase();
+            window.mostrarToast(
+                editContext ? 'Cambios guardados' : 'Venta guardada',
+                `Ticket #${shortId} registrado en este dispositivo y sincronizándose.`,
+                'emerald'
+            );
+        }
 
-        setTimeout(() => {
-            void recoverNextFailedSaleOperation();
-        }, 0);
+        void draftSafetyPromise;
+        const releasePersistenceGuard = finishPersistenceGuard;
+        finishPersistenceGuard = null;
+        void queueReceipt.persisted.then(async () => {
+            const cleanupStillBelongsToThisSale = (
+                deferredSaleDraftCleanup === cleanupToken
+            );
+            const scopeIsNoLongerActive = (
+                saleDraftScope?.key
+                && activeSaleDraftScope?.key !== saleDraftScope.key
+            );
+            if (cleanupStillBelongsToThisSale) {
+                deferredSaleDraftCleanup = null;
+            }
+            const cleanupPromises = [];
+            if (cleanupStillBelongsToThisSale || scopeIsNoLongerActive) {
+                cleanupPromises.push(discardSaleDraft(saleDraftScope, {
+                    expectedAttempt: cleanupToken
+                }));
+            }
+            cleanupPromises.push(deleteSaleRecoveryDraft(
+                saleDraftScope,
+                cleanupToken
+            ).catch(error => {
+                reportDraftStorageFailure(error);
+            }));
+            await Promise.all(cleanupPromises);
+            setTimeout(() => {
+                void recoverNextFailedSaleOperation()
+                    .catch(() => false)
+                    .then(() => recoverNextSaleRecoveryDraft());
+            }, 0);
+        }).catch(error => {
+            if (deferredSaleDraftCleanup === cleanupToken) {
+                deferredSaleDraftCleanup = null;
+            }
+            console.warn(
+                'La venta quedó pendiente de recuperar en este dispositivo:',
+                error
+            );
+            void recoverDraftAfterQueuePersistenceFailure({
+                scope: saleDraftScope,
+                sessionGeneration,
+                ownerId: saleDraftScope?.uid
+            });
+        }).finally(() => {
+            releasePersistenceGuard?.();
+        });
     } catch (err) {
+        if (persistenceBarrier && !persistenceBarrierHasProducer) {
+            const emergencyDraft = {
+                ...buildCurrentSaleDraft(),
+                intentToken: createUuid('DRAFT-')
+            };
+            const emergencyDraftPromise = Promise.all([
+                persistCurrentSaleDraft({
+                    immediate: true,
+                    draftSnapshot: emergencyDraft
+                }),
+                saveSaleRecoveryDraft(
+                    saleDraftScope,
+                    emergencyDraft
+                ).catch(error => {
+                    reportDraftStorageFailure(error);
+                    return null;
+                })
+            ]);
+            persistenceBarrierHasProducer = true;
+            void emergencyDraftPromise.then(() => {
+                persistenceBarrier.resolve(true);
+            }).catch(() => {
+                persistenceBarrier.resolve(true);
+            });
+        }
         if (
+            !saleWasAccepted
+            &&
             sessionGeneration === ventasSessionGeneration
             && activeAttempt
             && state.pendingSaleAttempt?.operationId === activeAttempt.operationId
@@ -2621,19 +3313,29 @@ function procesarCobroFinal() {
                 updatedAt: Date.now(),
                 lastErrorCode: String(err?.code || 'unknown').slice(0, 120)
             });
-            scheduleSaleDraftPersist();
+            void persistCurrentSaleDraft({ immediate: true });
         }
-        if (sessionGeneration === ventasSessionGeneration) showSaleError(err);
+        if (
+            !saleWasAccepted
+            && sessionGeneration === ventasSessionGeneration
+        ) {
+            showSaleError(err);
+        } else if (saleWasAccepted) {
+            console.error(
+                'La venta quedó aceptada, pero falló una actualización visual:',
+                err
+            );
+        }
     } finally {
+        finishPersistenceGuard?.();
         if (sessionGeneration === ventasSessionGeneration) {
             preparacionVentaEnProceso = false;
-            ventaEnProceso = false;
-            if (state.carrito.length > 0) {
-                btn.disabled = false;
-                btn.innerHTML = originalButtonHtml;
+            if (saleWasAccepted) {
+                scheduleFullSaleUiRefreshAfterPaint();
+            } else {
+                setSaleControlsLocked(false, originalButtonHtml);
+                actualizarCarritoUI();
             }
-            if (!completedImmediately) actualizarCarritoUI();
         }
     }
 }
-

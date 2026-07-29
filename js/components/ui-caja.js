@@ -1,9 +1,4 @@
 import {
-    db,
-    doc,
-    getDoc
-} from '../core/firebase-setup.js';
-import {
     escaparHtml,
     formatMoney,
     getTodayDateStr,
@@ -253,7 +248,7 @@ function renderListaOperaciones(ventas, gastos) {
     if(window.lucide) window.lucide.createIcons({ root: lista });
 }
 
-async function guardarGasto(e) {
+function guardarGasto(e) {
     e.preventDefault();
     const desc = document.getElementById('input-desc-gasto')?.value.trim() || document.getElementById('gasto-desc')?.value.trim();
     const monto = roundMoney(
@@ -269,10 +264,6 @@ async function guardarGasto(e) {
         || (localId === 'general' ? 'General' : state.userLocal || 'Sin Local');
     
     if (!desc || !Number.isFinite(monto) || monto <= 0) return;
-
-    const submitButton = document.querySelector('#form-gasto button[type="submit"]');
-    const originalButtonHtml = submitButton?.innerHTML || '';
-    if (submitButton) submitButton.disabled = true;
 
     try {
         const fStr = getTodayDateStr();
@@ -318,12 +309,6 @@ async function guardarGasto(e) {
                 'red'
             );
         }
-    } finally {
-        if (submitButton) {
-            submitButton.disabled = false;
-            submitButton.innerHTML = originalButtonHtml;
-            if (window.lucide) window.lucide.createIcons({ root: submitButton });
-        }
     }
 }
 
@@ -359,20 +344,6 @@ export async function editarOperacionCaja(first, second, fallbackAmount) {
     let currentData = type === 'venta'
         ? ventasDelDia.find(item => item.id === id)
         : gastosDelDia.find(item => item.id === id);
-
-    // El módulo de análisis también reutiliza estas funciones para operaciones
-    // históricas que no están incluidas en los listeners de "hoy".
-    if (!currentData && !Number.isFinite(Number(externalAmount))) {
-        try {
-            const collectionName = type === 'venta' ? 'ventas' : 'gastos';
-            const snapshot = await getDoc(doc(db, collectionName, id));
-            if (snapshot.exists()) {
-                currentData = { id: snapshot.id, ...snapshot.data() };
-            }
-        } catch (error) {
-            console.error('Error al consultar la operación:', error);
-        }
-    }
 
     const currentAmount = Number(
         type === 'venta'
@@ -430,8 +401,7 @@ export async function editarOperacionCaja(first, second, fallbackAmount) {
                 expenseId: id,
                 operationId: createUuid('OP-'),
                 newAmount,
-                actor: getActorName(),
-                currentExpense: currentData
+                actor: getActorName()
             });
         }
 
@@ -502,15 +472,12 @@ export async function eliminarOperacionCaja(first, second) {
                 allowedStates: ['pendiente', 'listo'],
                 actor: getActorName(),
                 reason: 'anulado_desde_caja',
-                legacyInventoryMovements,
-                currentSale: sale
+                legacyInventoryMovements
             });
         } else {
-            const expense = gastosDelDia.find(item => item.id === id) || null;
             result = deleteExpenseTransaction({
                 expenseId: id,
-                operationId: createUuid('OP-'),
-                currentExpense: expense
+                operationId: createUuid('OP-')
             });
         }
 
@@ -547,7 +514,7 @@ function abrirModalGasto() {
         if (gastoLocal && isAdminUser() && cajaLocal?.value && cajaLocal.value !== 'todas') {
             gastoLocal.value = cajaLocal.value;
         }
-        m.classList.remove('hidden');
+        m.classList.remove('hidden', 'pointer-events-none');
         setTimeout(() => m.classList.remove('opacity-0'), 10);
     }
 }
@@ -555,6 +522,7 @@ function abrirModalGasto() {
 function cerrarModalGasto() {
     const m = document.getElementById('modal-gasto');
     if(m) {
+        m.classList.add('pointer-events-none');
         m.classList.add('opacity-0');
         setTimeout(() => m.classList.add('hidden'), 300);
     }

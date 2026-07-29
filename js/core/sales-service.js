@@ -9,6 +9,8 @@ import {
 import { getTrustedNowMs } from '../utils/helpers.js';
 import {
     enqueueSyncOperation,
+    getPendingSyncOperationById,
+    replaceQueuedSyncOperation,
     registerSyncHandler
 } from './sync-queue.js';
 
@@ -192,21 +194,43 @@ function addMovement(target, productId, quantity, source) {
 export function buildInventoryMovements(items, catalog = [], localId = '') {
     const movements = new Map();
     const flavorsByName = new Map();
-
-    catalog.forEach(product => {
-        if (normalizeName(product.categoria) !== 'sabor') return;
-        const key = normalizeName(product.nombre);
-        if (!key) return;
-
-        const existing = flavorsByName.get(key);
-        const isPreferred =
-            product.localId === localId ||
-            (product.localId === 'global' && existing?.localId !== localId);
-
-        if (!existing || isPreferred) flavorsByName.set(key, product);
+    const normalizedItems = Array.isArray(items) ? items : [];
+    const needsLegacyFlavorLookup = normalizedItems.some(item => {
+        const detailedNames = new Set(
+            (Array.isArray(item?.saboresDetalle)
+                ? item.saboresDetalle
+                : [])
+                .map(flavor => normalizeName(flavor?.nombre))
+                .filter(Boolean)
+        );
+        return (Array.isArray(item?.sabores) ? item.sabores : [])
+            .some(flavor => {
+                const explicitId = typeof flavor === 'object'
+                    ? (flavor?.id || flavor?.productoId)
+                    : '';
+                const flavorName = normalizeName(
+                    typeof flavor === 'object' ? flavor?.nombre : flavor
+                );
+                return !explicitId && !detailedNames.has(flavorName);
+            });
     });
 
-    (Array.isArray(items) ? items : []).forEach(item => {
+    if (needsLegacyFlavorLookup) {
+        catalog.forEach(product => {
+            if (normalizeName(product.categoria) !== 'sabor') return;
+            const key = normalizeName(product.nombre);
+            if (!key) return;
+
+            const existing = flavorsByName.get(key);
+            const isPreferred =
+                product.localId === localId ||
+                (product.localId === 'global' && existing?.localId !== localId);
+
+            if (!existing || isPreferred) flavorsByName.set(key, product);
+        });
+    }
+
+    normalizedItems.forEach(item => {
         const itemQuantity = toPositiveInteger(item.cantidad);
 
         if (item.productoId && item.productoId !== 'AJUSTE') {
@@ -901,6 +925,14 @@ async function commitSaleTransaction({
                 return { saleId, alreadyApplied: true, edited: true };
             }
 
+            const lockToken = String(editContext.lockToken || '');
+            if (!lockToken) {
+                throw new SalesIntegrityError(
+                    'missing-sale-edit-lock',
+                    'Vuelve a abrir el pedido antes de guardar los cambios.'
+                );
+            }
+
             const currentRevision = Number(previousSale.revision || 1);
             if (currentRevision !== Number(editContext.expectedRevision || 1)) {
                 throw new SalesIntegrityError(
@@ -909,48 +941,27 @@ async function commitSaleTransaction({
                 );
             }
 
-            const currentState = String(previousSale.estado || 'pendiente').toLowerCase();
-            if (editContext.localPendingEdit === true) {
-                const sourceSaleOperationId = String(
-                    editContext.sourceSaleOperationId || ''
+            const currentState = String(
+                previousSale.estado || 'pendiente'
+            ).toLowerCase();
+            if (!['pendiente', 'editando'].includes(currentState)) {
+                throw new SalesIntegrityError(
+                    'invalid-sale-state',
+                    'El pedido ya no se encuentra disponible para edición.'
                 );
-                if (
-                    !sourceSaleOperationId
-                    || String(previousSale.lastOperationId || '') !== sourceSaleOperationId
-                    || currentState !== 'pendiente'
-                ) {
-                    throw new SalesIntegrityError(
-                        'edit-conflict',
-                        'La venta original cambió antes de aplicar la edición local.'
-                    );
-                }
-            } else {
-                const editLock = getSaleEditLockState(previousSale);
-                if (!editContext.lockToken) {
-                    throw new SalesIntegrityError(
-                        'missing-sale-edit-lock',
-                        'Vuelve a abrir el pedido antes de guardar los cambios.'
-                    );
-                }
-                if (editLock.token !== editContext.lockToken) {
-                    throw new SalesIntegrityError(
-                        'sale-edit-lock-lost',
-                        editLock.active
-                            ? `El bloqueo pasó a ${editLock.ownerName}.`
-                            : 'El bloqueo de edición ya no te pertenece.',
-                        {
-                            ownerId: editLock.ownerId,
-                            ownerName: editLock.ownerName,
-                            expiresAtMs: editLock.expiresAtMs
-                        }
-                    );
-                }
-                if (currentState !== 'editando') {
-                    throw new SalesIntegrityError(
-                        'invalid-sale-state',
-                        'El pedido ya no se encuentra en modo edición.'
-                    );
-                }
+            }
+
+            const editLock = getSaleEditLockState(previousSale);
+            if (editLock.active && editLock.token !== lockToken) {
+                throw new SalesIntegrityError(
+                    'sale-edit-locked',
+                    `El pedido está siendo editado por ${editLock.ownerName}.`,
+                    {
+                        ownerId: editLock.ownerId,
+                        ownerName: editLock.ownerName,
+                        expiresAtMs: editLock.expiresAtMs
+                    }
+                );
             }
 
             const storedPreviousMovements = normalizeStoredMovements(
@@ -1094,6 +1105,7 @@ async function commitSaleTransaction({
                 fecha: previousSale.fecha || previousSale.timestamp || serverTimestamp(),
                 timestamp: previousSale.timestamp || previousSale.fecha || serverTimestamp(),
                 fechaStr: previousSale.fechaStr || saleForCommit.fechaStr,
+                fechaHora: previousSale.fechaHora ?? saleForCommit.fechaHora,
                 localId: previousSale.localId || saleForCommit.localId || 'general',
                 localNombre: previousSale.localNombre || saleForCommit.localNombre || 'Sin Local',
                 cajeroEmail: previousSale.cajeroEmail || saleForCommit.cajeroEmail || '',
@@ -1145,6 +1157,7 @@ export async function acquireSaleEditLock({
     lockToken,
     ownerId,
     ownerName,
+    expectedRevision = null,
     ttlMs = SALE_EDIT_LOCK_TTL_MS
 }) {
     if (!saleId || !lockToken || !ownerId) {
@@ -1167,6 +1180,15 @@ export async function acquireSaleEditLock({
         }
 
         const sale = snapshot.data();
+        if (
+            expectedRevision !== null
+            && Number(sale.revision || 1) !== Number(expectedRevision)
+        ) {
+            throw new SalesIntegrityError(
+                'edit-conflict',
+                'El pedido cambió desde que comenzaste a editarlo.'
+            );
+        }
         const currentState = String(sale.estado || 'pendiente').toLowerCase();
         const currentLock = getSaleEditLockState(sale);
         const recoverableEditingState =
@@ -1750,7 +1772,9 @@ export function saveSaleTransaction({
     operationId,
     sale,
     inventoryMovements,
-    editContext = null
+    editContext = null,
+    persistAfter = null,
+    supersedesQueueIds = []
 }) {
     if (!saleId || !operationId) {
         throw new SalesIntegrityError(
@@ -1762,59 +1786,148 @@ export function saveSaleTransaction({
 
     const ownerId = getQueueOwnerId();
     const isEdit = Boolean(editContext);
+    const pendingCreate = (
+        editContext?.localPendingCreate === true
+        && editContext.pendingCreateQueueId
+    )
+        ? getPendingSyncOperationById(editContext.pendingCreateQueueId)
+        : null;
+    const validPendingCreate = (
+        pendingCreate?.type === 'sale.save'
+        && pendingCreate.payload?.editContext == null
+        && pendingCreate.payload?.saleId === saleId
+    )
+        ? pendingCreate
+        : null;
+    const canCoalescePendingCreate = Boolean(
+        validPendingCreate
+        && ['queued', 'retry'].includes(validPendingCreate.status)
+        && validPendingCreate.payload?.operationId
+            === editContext.pendingCreateOperationId
+        && Boolean(editContext.pendingCreateVersion)
+        && validPendingCreate.version === editContext.pendingCreateVersion
+        && operationId === editContext.pendingCreateOperationId
+    );
+    const originalCreateSale = validPendingCreate?.payload?.sale || null;
+    const queuedSale = canCoalescePendingCreate
+        ? {
+            ...sale,
+            fechaStr: originalCreateSale?.fechaStr || sale.fechaStr,
+            fechaHora: originalCreateSale?.fechaHora ?? sale.fechaHora,
+            localId: originalCreateSale?.localId || sale.localId,
+            localNombre:
+                originalCreateSale?.localNombre || sale.localNombre,
+            cajeroEmail:
+                originalCreateSale?.cajeroEmail || sale.cajeroEmail,
+            creadoPor: originalCreateSale?.creadoPor || sale.creadoPor
+        }
+        : sale;
+    const queuedEditContext = canCoalescePendingCreate ? null : editContext;
+    let queuedOperationId = operationId;
+    if (
+        editContext?.localPendingCreate === true
+        && !canCoalescePendingCreate
+        && operationId === editContext.pendingCreateOperationId
+    ) {
+        queuedOperationId = createUuid('OP-');
+    }
+    const optimisticIsEdit = Boolean(queuedEditContext);
     const optimisticSale = {
-        ...sale,
+        ...queuedSale,
+        ...(optimisticIsEdit && editContext?.originalFechaHora !== undefined
+            ? { fechaHora: editContext.originalFechaHora }
+            : {}),
         id: saleId,
         estado: 'pendiente',
-        editado: isEdit,
+        editado: optimisticIsEdit,
         edicionActiva: false,
         edicionToken: null,
         inventarioMovimientos: Array.isArray(inventoryMovements)
             ? inventoryMovements
             : [],
-        lastOperationId: operationId,
-        lastOperationType: isEdit ? 'editar_venta' : 'crear_venta',
-        revision: isEdit
+        lastOperationId: queuedOperationId,
+        lastOperationType:
+            optimisticIsEdit ? 'editar_venta' : 'crear_venta',
+        revision: optimisticIsEdit
             ? Number(editContext?.expectedRevision || 1) + 1
             : 1
     };
-
-    const queued = enqueueSyncOperation({
-        id: operationId,
-        type: 'sale.save',
-        ownerId,
-        localId: sale.localId || 'general',
-        payload: {
-            saleId,
-            operationId,
-            sale,
-            inventoryMovements,
-            editContext
+    const optimisticMutations = [
+        {
+            collection: 'ventas',
+            documentId: saleId,
+            kind: 'merge',
+            data: optimisticSale
         },
-        optimisticMutations: [
-            {
-                collection: 'ventas',
-                documentId: saleId,
-                kind: 'merge',
-                data: optimisticSale
-            },
-            ...buildOptimisticInventoryMutations(
-                inventoryMovements,
-                editContext?.originalInventoryMovements
+        ...buildOptimisticInventoryMutations(
+            inventoryMovements,
+            optimisticIsEdit
+                ? (
+                    editContext?.originalInventoryMovements
                     || editContext?.legacyInventoryMovements
                     || []
-            )
-        ],
-        dependsOnOperationIds: editContext?.localPendingEdit
-            ? [String(editContext.sourceOperationId || '')]
-            : []
+                )
+                : []
+        )
+    ];
+
+    if (canCoalescePendingCreate) {
+        const replaced = replaceQueuedSyncOperation({
+            operationId: validPendingCreate.id,
+            expectedVersion: validPendingCreate.version,
+            localId: queuedSale.localId || 'general',
+            persistAfter,
+            entityKey: `ventas/${saleId}`,
+            dependsOn: [],
+            payload: {
+                saleId,
+                operationId: queuedOperationId,
+                sale: queuedSale,
+                inventoryMovements,
+                editContext: null
+            },
+            optimisticMutations
+        });
+
+        return {
+            saleId,
+            operationId: queuedOperationId,
+            edited: true,
+            coalesced: true,
+            alreadyApplied: false,
+            queued: true,
+            version: replaced.version,
+            persisted: replaced.persisted
+        };
+    }
+
+    const queued = enqueueSyncOperation({
+        id: queuedOperationId,
+        type: 'sale.save',
+        ownerId,
+        localId: queuedSale.localId || 'general',
+        entityKey: `ventas/${saleId}`,
+        dependsOn: validPendingCreate ? [validPendingCreate.id] : [],
+        persistAfter,
+        supersedesQueueIds,
+        payload: {
+            saleId,
+            operationId: queuedOperationId,
+            sale: queuedSale,
+            inventoryMovements,
+            editContext: queuedEditContext
+        },
+        optimisticMutations
     });
 
     return {
         saleId,
+        operationId: queuedOperationId,
         edited: isEdit,
         alreadyApplied: queued.alreadyQueued,
-        queued: true
+        queued: true,
+        version: queued.version,
+        persisted: queued.persisted
     };
 }
 
@@ -1825,8 +1938,7 @@ export function transitionSaleTransaction({
     allowedStates,
     actor,
     reason = '',
-    legacyInventoryMovements = [],
-    currentSale = null
+    legacyInventoryMovements = []
 }) {
     const normalizedNextState = String(nextState || '').toLowerCase();
     if (!saleId || !operationId || !normalizedNextState) {
@@ -1841,6 +1953,7 @@ export function transitionSaleTransaction({
         id: operationId,
         type: 'sale.transition',
         ownerId,
+        entityKey: `ventas/${saleId}`,
         payload: {
             saleId,
             operationId,
@@ -1872,17 +1985,71 @@ export function transitionSaleTransaction({
                     legacyInventoryMovements
                 )
                 : [])
-        ],
-        dependsOnOperationIds: [String(
-            currentSale?.sincronizacionOperacionId || ''
-        )].filter(Boolean)
+        ]
     });
 
     return {
         saleId,
         alreadyApplied: queued.alreadyQueued,
         queued: true,
+        persisted: queued.persisted,
         missingProducts: []
+    };
+}
+
+export function releaseSaleEditLockTransaction({
+    saleId,
+    operationId,
+    lockToken,
+    actor,
+    reason = 'edicion_cancelada'
+}) {
+    if (!saleId || !operationId || !lockToken) {
+        throw new SalesIntegrityError(
+            'missing-sale-edit-lock-data',
+            'No se pudo identificar la edición que deseas cancelar.'
+        );
+    }
+
+    const ownerId = getQueueOwnerId();
+    const queued = enqueueSyncOperation({
+        id: operationId,
+        type: 'sale.release-edit',
+        ownerId,
+        entityKey: `ventas/${saleId}`,
+        payload: {
+            saleId,
+            operationId,
+            lockToken,
+            actor,
+            reason
+        },
+        optimisticMutations: [{
+            collection: 'ventas',
+            documentId: saleId,
+            kind: 'merge',
+            data: {
+                estado: 'pendiente',
+                edicionActiva: false,
+                edicionToken: null,
+                edicionPropietarioId: null,
+                edicionPropietarioNombre: null,
+                edicionIniciadaEn: null,
+                edicionActualizadaEn: null,
+                edicionExpiraEnMs: null,
+                edicionTtlMs: null,
+                edicionFinalizadaEnMs: getTrustedNowMs(),
+                edicionFinalizadaPor: actor || 'Desconocido',
+                edicionFinalizadaMotivo: reason || 'liberado'
+            }
+        }]
+    });
+
+    return {
+        saleId,
+        alreadyApplied: queued.alreadyQueued,
+        queued: true,
+        persisted: queued.persisted
     };
 }
 
@@ -1909,6 +2076,7 @@ export function updateSaleAmountTransaction({
         id: operationId,
         type: 'sale.update-amount',
         ownerId,
+        entityKey: `ventas/${saleId}`,
         payload: { saleId, operationId, newTotal: normalizedTotal, actor },
         optimisticMutations: [{
             collection: 'ventas',
@@ -1928,19 +2096,20 @@ export function updateSaleAmountTransaction({
                     : {}),
                 editado: true,
                 editadoPor: actor || 'Desconocido',
+                ...(currentSale
+                    ? { revision: Number(currentSale.revision || 1) + 1 }
+                    : {}),
                 lastOperationId: operationId,
                 lastOperationType: 'editar_monto'
             }
-        }],
-        dependsOnOperationIds: [String(
-            currentSale?.sincronizacionOperacionId || ''
-        )].filter(Boolean)
+        }]
     });
 
     return {
         saleId,
         alreadyApplied: queued.alreadyQueued,
-        queued: true
+        queued: true,
+        persisted: queued.persisted
     };
 }
 
@@ -1948,8 +2117,7 @@ export function updateExpenseAmountTransaction({
     expenseId,
     operationId,
     newAmount,
-    actor,
-    currentExpense = null
+    actor
 }) {
     const normalizedAmount = roundMoney(newAmount);
     if (!expenseId || !operationId || normalizedAmount <= 0) {
@@ -1964,6 +2132,7 @@ export function updateExpenseAmountTransaction({
         id: operationId,
         type: 'expense.update-amount',
         ownerId,
+        entityKey: `gastos/${expenseId}`,
         payload: { expenseId, operationId, newAmount: normalizedAmount, actor },
         optimisticMutations: [{
             collection: 'gastos',
@@ -1975,16 +2144,14 @@ export function updateExpenseAmountTransaction({
                 lastOperationId: operationId,
                 lastOperationType: 'editar_gasto'
             }
-        }],
-        dependsOnOperationIds: [String(
-            currentExpense?.sincronizacionOperacionId || ''
-        )].filter(Boolean)
+        }]
     });
 
     return {
         expenseId,
         alreadyApplied: queued.alreadyQueued,
-        queued: true
+        queued: true,
+        persisted: queued.persisted
     };
 }
 
@@ -2028,6 +2195,7 @@ export function saveExpenseTransaction({
         type: 'expense.save',
         ownerId,
         localId,
+        entityKey: `gastos/${expenseId}`,
         payload: {
             expenseId,
             operationId,
@@ -2044,11 +2212,12 @@ export function saveExpenseTransaction({
     return {
         expenseId,
         alreadyApplied: queued.alreadyQueued,
-        queued: true
+        queued: true,
+        persisted: queued.persisted
     };
 }
 
-export function deleteExpenseTransaction({ expenseId, operationId, currentExpense = null }) {
+export function deleteExpenseTransaction({ expenseId, operationId }) {
     if (!expenseId || !operationId) {
         throw new SalesIntegrityError(
             'missing-operation-id',
@@ -2061,69 +2230,34 @@ export function deleteExpenseTransaction({ expenseId, operationId, currentExpens
         id: operationId,
         type: 'expense.delete',
         ownerId,
+        entityKey: `gastos/${expenseId}`,
         payload: { expenseId, operationId },
         optimisticMutations: [{
             collection: 'gastos',
             documentId: expenseId,
             kind: 'delete'
-        }],
-        dependsOnOperationIds: [String(
-            currentExpense?.sincronizacionOperacionId || ''
-        )].filter(Boolean)
+        }]
     });
 
     return {
         expenseId,
         alreadyApplied: queued.alreadyQueued,
-        queued: true
+        queued: true,
+        persisted: queued.persisted
     };
 }
 
 registerSyncHandler('sale.save', async (payload, operation) => {
     assertOperationOwner(operation);
-    let queuedPayload = payload;
-    const editContext = payload?.editContext;
-
-    // Guardar una edición nunca bloquea la pantalla. Si el bloqueo remoto aún
-    // estaba en camino, se obtiene aquí, dentro del trabajador de sincronización.
-    if (editContext && editContext.localPendingEdit !== true && editContext.lockPending) {
-        const lockResult = await acquireSaleEditLock({
-            saleId: payload.saleId,
-            lockToken: editContext.lockToken,
-            ownerId: editContext.lockOwnerId,
-            ownerName: editContext.lockOwnerName
-        });
-        if (
-            Number(lockResult.expectedRevision || 1)
-            !== Number(editContext.expectedRevision || 1)
-        ) {
-            void releaseSaleEditLock({
-                saleId: payload.saleId,
-                lockToken: editContext.lockToken,
-                actor: editContext.lockOwnerName || 'Usuario',
-                reason: 'edicion_local_en_conflicto'
-            }).catch(() => {});
-            throw new SalesIntegrityError(
-                'edit-conflict',
-                'El pedido cambió antes de sincronizar la edición.'
-            );
-        }
-        queuedPayload = {
-            ...payload,
-            editContext: {
-                ...editContext,
-                expectedRevision: lockResult.expectedRevision,
-                lockExpiresAtMs: lockResult.expiresAtMs,
-                lockPending: false
-            }
-        };
-    }
-
-    return commitSaleTransaction(queuedPayload);
+    return commitSaleTransaction(payload);
 });
 registerSyncHandler('sale.transition', async (payload, operation) => {
     assertOperationOwner(operation);
     return commitSaleStateTransition(payload);
+});
+registerSyncHandler('sale.release-edit', async (payload, operation) => {
+    assertOperationOwner(operation);
+    return releaseSaleEditLock(payload);
 });
 registerSyncHandler('sale.update-amount', async (payload, operation) => {
     assertOperationOwner(operation);

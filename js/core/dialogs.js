@@ -63,6 +63,7 @@ function finishDialog(overlay, value, resolve) {
     if (!overlay.isConnected || overlay.dataset.dialogSettled === 'true') return;
     overlay.dataset.dialogSettled = 'true';
     const panel = overlay.querySelector('section');
+    overlay.classList.add('pointer-events-none');
     overlay.classList.add('opacity-0');
     panel?.classList.remove('scale-100');
     panel?.classList.add('scale-95');

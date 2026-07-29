@@ -9,9 +9,10 @@ import {
 import { state } from './store.js';
 import { getTodayDateStr } from '../utils/helpers.js';
 import { persistLocationsCache } from './local-cache.js';
-import { mergePendingCollectionRows } from './sync-queue.js';
+import { applyPendingDocumentMutations } from './sync-queue.js';
 
 const sharedSubscriptions = new Map();
+let syncQueueListenerInstalled = false;
 
 function isPrivilegedRole() {
     const role = String(state.userRole || '').trim().toLowerCase();
@@ -48,16 +49,44 @@ function makeScopedQuery(collectionName, constraints = [], requestedLocalId = 't
     };
 }
 
-function publishSharedEntry(entry) {
-    const remoteRows = Array.from(entry.rowsById.values());
-    const mergedRows = mergePendingCollectionRows(entry.collectionName, remoteRows);
-    entry.rows = entry.localRowFilter
-        ? mergedRows.filter(entry.localRowFilter)
-        : mergedRows;
-    entry.callbacks.forEach(callback => callback(entry.rows));
+function projectEntryRows(entry) {
+    let rows = entry.rows || [];
+    if (entry.collectionName) {
+        rows = applyPendingDocumentMutations(entry.collectionName, rows);
+    }
+    if (entry.rowPredicate) rows = rows.filter(entry.rowPredicate);
+    return rows;
 }
 
-function subscribeShared(key, queryRef, onData, onError, options = {}) {
+function deliverEntry(entry) {
+    if (!entry.rows || entry.closed) return;
+    const rows = projectEntryRows(entry);
+    entry.callbacks.forEach(callback => callback(rows));
+}
+
+function installSyncQueueListener() {
+    if (syncQueueListenerInstalled || typeof window === 'undefined') return;
+    syncQueueListenerInstalled = true;
+    window.addEventListener('icepos:sync-queue-changed', event => {
+        const affectedCollections = event.detail?.affectedCollections;
+        sharedSubscriptions.forEach(entry => {
+            if (
+                Array.isArray(affectedCollections)
+                && !affectedCollections.includes(entry.collectionName)
+            ) return;
+            deliverEntry(entry);
+        });
+    });
+}
+
+function subscribeShared(
+    key,
+    queryRef,
+    onData,
+    onError,
+    { collectionName = '', rowPredicate = null } = {}
+) {
+    installSyncQueueListener();
     let entry = sharedSubscriptions.get(key);
 
     if (!entry) {
@@ -66,12 +95,10 @@ function subscribeShared(key, queryRef, onData, onError, options = {}) {
             errorCallbacks: new Set(),
             rowsById: new Map(),
             rows: null,
-            collectionName: String(options.collectionName || key.split(':')[0] || ''),
-            localRowFilter: typeof options.localRowFilter === 'function'
-                ? options.localRowFilter
-                : null,
             unsubscribe: null,
-            closed: false
+            closed: false,
+            collectionName,
+            rowPredicate
         };
 
         entry.unsubscribe = onSnapshot(
@@ -88,7 +115,8 @@ function subscribeShared(key, queryRef, onData, onError, options = {}) {
                         ...change.doc.data({ serverTimestamps: 'estimate' })
                     });
                 });
-                publishSharedEntry(entry);
+                entry.rows = Array.from(entry.rowsById.values());
+                deliverEntry(entry);
             },
             error => {
                 if (entry.closed) return;
@@ -112,7 +140,9 @@ function subscribeShared(key, queryRef, onData, onError, options = {}) {
     if (onError) entry.errorCallbacks.add(onError);
     if (entry.rows) {
         queueMicrotask(() => {
-            if (active && !entry.closed && entry.callbacks.has(onData)) onData(entry.rows);
+            if (active && !entry.closed && entry.callbacks.has(onData)) {
+                onData(projectEntryRows(entry));
+            }
         });
     }
     return () => {
@@ -132,28 +162,10 @@ function subscribeShared(key, queryRef, onData, onError, options = {}) {
     };
 }
 
-globalThis.addEventListener?.('icepos:sync-queue-changed', event => {
-    const changedCollections = new Set(event.detail?.collections || []);
-    sharedSubscriptions.forEach(entry => {
-        if (entry.closed) return;
-        if (changedCollections.size > 0 && !changedCollections.has(entry.collectionName)) return;
-        publishSharedEntry(entry);
-    });
-});
-
-function rowMatchesScope(row, scope) {
-    if (scope.mode === 'local') {
-        return String(row.localId || '') === String(scope.localId || '');
-    }
-    if (scope.mode === 'legacy') {
-        return !row.localId || row.localId === '' || row.localId === 'general';
-    }
-    return true;
-}
-
-function deliverForScope(scope, onData) {
-    if (scope.mode !== 'legacy') return onData;
-    return rows => onData(rows.filter(row => rowMatchesScope(row, scope)));
+function matchesScope(row, scope) {
+    if (scope.localId) return row.localId === scope.localId;
+    if (scope.mode !== 'legacy') return true;
+    return !row.localId || row.localId === '' || row.localId === 'general';
 }
 
 export function subscribeDailySales(onData, onError, date = getTodayDateStr(), requestedLocalId = 'todas') {
@@ -163,13 +175,12 @@ export function subscribeDailySales(onData, onError, date = getTodayDateStr(), r
     return subscribeShared(
         `ventas:${date}:${scope.key}`,
         ref,
-        deliverForScope(scope, onData),
+        onData,
         onError,
         {
             collectionName: 'ventas',
-            localRowFilter: row => (
-                String(row.fechaStr || '') === String(date)
-                && rowMatchesScope(row, scope)
+            rowPredicate: row => (
+                row.fechaStr === date && matchesScope(row, scope)
             )
         }
     );
@@ -182,13 +193,12 @@ export function subscribeDailyExpenses(onData, onError, date = getTodayDateStr()
     return subscribeShared(
         `gastos:${date}:${scope.key}`,
         ref,
-        deliverForScope(scope, onData),
+        onData,
         onError,
         {
             collectionName: 'gastos',
-            localRowFilter: row => (
-                String(row.fechaStr || '') === String(date)
-                && rowMatchesScope(row, scope)
+            rowPredicate: row => (
+                row.fechaStr === date && matchesScope(row, scope)
             )
         }
     );
@@ -200,9 +210,13 @@ function subscribeRange(collectionName, startDate, endDate, onData, onError, req
         where('fechaStr', '<=', endDate)
     ];
     const { ref, scope } = makeScopedQuery(collectionName, constraints, requestedLocalId);
-    const deliver = deliverForScope(scope, onData);
     let fallbackRelease = null;
     let primaryRelease = () => {};
+    const rowPredicate = row => (
+        row.fechaStr >= startDate
+        && row.fechaStr <= endDate
+        && matchesScope(row, scope)
+    );
 
     const handlePrimaryError = error => {
         // Una combinación localId + rango puede requerir un índice compuesto
@@ -214,16 +228,9 @@ function subscribeRange(collectionName, startDate, endDate, onData, onError, req
             fallbackRelease = subscribeShared(
                 `${collectionName}:${startDate}:${endDate}:fallback:${scope.key}`,
                 fallbackRef,
-                rows => onData(rows.filter(row => row.localId === scope.localId)),
+                onData,
                 onError,
-                {
-                    collectionName,
-                    localRowFilter: row => (
-                        String(row.fechaStr || '') >= String(startDate)
-                        && String(row.fechaStr || '') <= String(endDate)
-                        && rowMatchesScope(row, scope)
-                    )
-                }
+                { collectionName, rowPredicate }
             );
             return;
         }
@@ -233,16 +240,9 @@ function subscribeRange(collectionName, startDate, endDate, onData, onError, req
     primaryRelease = subscribeShared(
         `${collectionName}:${startDate}:${endDate}:${scope.key}`,
         ref,
-        deliver,
+        onData,
         handlePrimaryError,
-        {
-            collectionName,
-            localRowFilter: row => (
-                String(row.fechaStr || '') >= String(startDate)
-                && String(row.fechaStr || '') <= String(endDate)
-                && rowMatchesScope(row, scope)
-            )
-        }
+        { collectionName, rowPredicate }
     );
 
     return () => {
