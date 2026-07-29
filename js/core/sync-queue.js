@@ -43,6 +43,11 @@ const TRANSIENT_ERROR_CODES = new Set([
     'unauthenticated',
     'unavailable'
 ]);
+const CONNECTIVITY_ERROR_CODES = new Set([
+    'network-request-failed',
+    'unavailable',
+    'deadline-exceeded'
+]);
 
 function cloneValue(value) {
     if (typeof structuredClone === 'function') return structuredClone(value);
@@ -665,6 +670,15 @@ function emitWindowEvent(name, detail) {
     window.dispatchEvent(new CustomEvent(name, { detail }));
 }
 
+function emitConnectivityEvidence({ ok, code = '' }) {
+    emitWindowEvent('icepos:connectivity-evidence', {
+        ok: ok === true,
+        code: String(code || '').replace(/^firestore\//, ''),
+        source: 'sync-queue',
+        at: Date.now()
+    });
+}
+
 function getPublicOperation(record) {
     return {
         id: record.id,
@@ -1109,6 +1123,7 @@ async function processOperations(
         try {
             const affectedCollections = getAffectedCollections(record);
             const result = await handler(cloneValue(record.payload), getPublicOperation(record));
+            emitConnectivityEvidence({ ok: true });
             const committedAt = Date.now();
             const committedBridgeMutations = getCommittedBridgeMutations(record);
             const committedRecord = await persistWorkerStateBestEffort({
@@ -1144,6 +1159,9 @@ async function processOperations(
             const updatedAt = Date.now();
 
             if (isTransientError(error)) {
+                if (CONNECTIVITY_ERROR_CODES.has(code)) {
+                    emitConnectivityEvidence({ ok: false, code });
+                }
                 const delay = getRetryDelay(attempts);
                 const retryRecord = await persistWorkerStateBestEffort({
                     ...record,

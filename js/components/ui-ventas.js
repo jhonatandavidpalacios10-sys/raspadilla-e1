@@ -1975,12 +1975,11 @@ function renderTamanosUI() {
         const unavailableReason = escaparHtml(
             isAvailable ? '' : (cupState.reason || 'Sin stock')
         );
-        const cupName = escaparHtml(cupState.consumption?.nombre || '');
         tamHtml += `
         <button type="button" ${isAvailable ? `onclick="window.toggleTamano(${idx})"` : 'disabled'} class="p-3 border rounded-xl flex flex-col items-start transition-all ${cls}" title="${unavailableReason}">
             <span class="font-bold text-xs md:text-sm ${txtCls}">${escaparHtml(t.nombre)}</span>
             <span class="text-xs font-black ${priceCls} mt-1">${formatMoney(t.precio)}</span>
-            ${cupState.controlled ? `<span class="mt-1 text-[9px] ${isAvailable ? 'text-amber-600' : 'text-red-500'}">${isAvailable ? cupName : 'Vaso no disponible'}</span>` : ''}
+            ${cupState.controlled && !isAvailable ? '<span class="mt-1 text-[9px] text-red-500">Vaso no disponible</span>' : ''}
         </button>`;
     });
     document.getElementById('builder-tamanos').innerHTML = tamHtml;

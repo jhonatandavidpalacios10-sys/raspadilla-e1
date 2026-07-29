@@ -83,12 +83,306 @@ document.addEventListener('focusout', () => {
 });
 // -----------------------------------------------------------------
 
+// ---- ESTADO DE CONECTIVIDAD: RED REAL + EVIDENCIA DE FIREBASE ----
+const CONNECTIVITY_PROBE_INTERVAL_MS = 30_000;
+const CONNECTIVITY_PROBE_TIMEOUT_MS = 6_000;
+const CONNECTIVITY_SLOW_THRESHOLD_MS = 2_000;
+const FIREBASE_FAILURE_HOLD_MS = 15_000;
+const CONNECTIVITY_STATES = new Set([
+    'online',
+    'unstable',
+    'offline'
+]);
+const SYNC_NETWORK_ERROR_CODES = new Set([
+    'network-request-failed',
+    'unavailable',
+    'deadline-exceeded'
+]);
+
+let connectivityState = 'unknown';
+let connectivityVisualState = (
+    navigator.onLine === false ? 'offline' : 'unstable'
+);
+let connectivityFailures = 0;
+let connectivityProbePromise = null;
+let connectivityProbeController = null;
+let connectivityProbeSequence = 0;
+let connectivityRecoveredTimer = null;
+let lastFirebaseConnectivityFailureAt = 0;
+
+document.documentElement.dataset.connectivityState = connectivityVisualState;
+
+function setConnectivityVisualState(nextState) {
+    if (connectivityVisualState === nextState) return;
+    connectivityVisualState = nextState;
+    document.documentElement.dataset.connectivityState = nextState;
+}
+
+function showConnectivityToast(nextState) {
+    if (nextState === 'offline') {
+        window.mostrarToast?.(
+            'Sin conexión',
+            'La aplicación seguirá trabajando en modo local.',
+            'red'
+        );
+        return;
+    }
+    if (nextState === 'unstable') {
+        window.mostrarToast?.(
+            'Conexión inestable',
+            'La sincronización puede tardar un poco más.',
+            'amber'
+        );
+        return;
+    }
+    if (nextState === 'recovered') {
+        window.mostrarToast?.(
+            'Conexión recuperada',
+            'Los cambios pendientes volverán a sincronizarse.',
+            'emerald'
+        );
+    }
+}
+
+function setConnectivityState(nextState, { silent = false } = {}) {
+    if (!CONNECTIVITY_STATES.has(nextState)) return;
+    const previousState = connectivityState;
+    if (previousState === nextState) {
+        if (
+            connectivityVisualState === 'recovered'
+            && nextState !== 'online'
+        ) {
+            clearTimeout(connectivityRecoveredTimer);
+            connectivityRecoveredTimer = null;
+            setConnectivityVisualState(nextState);
+        }
+        return;
+    }
+
+    clearTimeout(connectivityRecoveredTimer);
+    connectivityRecoveredTimer = null;
+    connectivityState = nextState;
+
+    const recovered = (
+        nextState === 'online'
+        && ['offline', 'unstable'].includes(previousState)
+    );
+    if (recovered) {
+        setConnectivityVisualState('recovered');
+        if (!silent) showConnectivityToast('recovered');
+        connectivityRecoveredTimer = setTimeout(() => {
+            connectivityRecoveredTimer = null;
+            if (connectivityState === 'online') {
+                setConnectivityVisualState('online');
+            }
+        }, 2_500);
+        return;
+    }
+
+    setConnectivityVisualState(nextState);
+    if (
+        !silent
+        && nextState !== 'online'
+    ) {
+        showConnectivityToast(nextState);
+    }
+}
+
+function hasSlowNetworkInformation() {
+    const connection = (
+        navigator.connection
+        || navigator.mozConnection
+        || navigator.webkitConnection
+    );
+    if (!connection) return false;
+
+    const effectiveType = String(connection.effectiveType || '').toLowerCase();
+    const rtt = Number(connection.rtt);
+    const downlink = Number(connection.downlink);
+    return (
+        effectiveType === 'slow-2g'
+        || effectiveType === '2g'
+        || (Number.isFinite(rtt) && rtt > 1_200)
+        || (Number.isFinite(downlink) && downlink > 0 && downlink < 0.8)
+    );
+}
+
+function recordConnectivityFailure() {
+    connectivityFailures += 1;
+    if (navigator.onLine === false || connectivityFailures >= 2) {
+        setConnectivityState('offline');
+        return 'offline';
+    }
+    setConnectivityState('unstable');
+    return 'unstable';
+}
+
+function recordConnectivitySuccess({ elapsedMs = 0 } = {}) {
+    if (navigator.onLine === false) {
+        connectivityFailures = Math.max(connectivityFailures, 2);
+        setConnectivityState('offline');
+        return 'offline';
+    }
+    const firebaseFailureIsRecent = (
+        lastFirebaseConnectivityFailureAt > 0
+        && Date.now() - lastFirebaseConnectivityFailureAt
+            < FIREBASE_FAILURE_HOLD_MS
+    );
+    if (
+        firebaseFailureIsRecent
+        || elapsedMs >= CONNECTIVITY_SLOW_THRESHOLD_MS
+        || hasSlowNetworkInformation()
+    ) {
+        connectivityFailures = 0;
+        setConnectivityState('unstable');
+        return 'unstable';
+    }
+
+    connectivityFailures = 0;
+    setConnectivityState('online');
+    return 'online';
+}
+
+async function probeConnectivity({ force = false } = {}) {
+    if (navigator.onLine === false) {
+        connectivityProbeController?.abort();
+        connectivityFailures = Math.max(connectivityFailures, 2);
+        setConnectivityState('offline');
+        return 'offline';
+    }
+    if (connectivityProbePromise && !force) return connectivityProbePromise;
+
+    if (force) connectivityProbeController?.abort();
+    const sequence = ++connectivityProbeSequence;
+    const controller = new AbortController();
+    connectivityProbeController = controller;
+
+    const probe = (async () => {
+        const startedAt = performance.now();
+        const timeout = setTimeout(
+            () => controller.abort(),
+            CONNECTIVITY_PROBE_TIMEOUT_MS
+        );
+        try {
+            const response = await fetch(
+                `/manifest.json?connectivity_probe=${Date.now()}`,
+                {
+                    method: 'HEAD',
+                    cache: 'no-store',
+                    credentials: 'same-origin',
+                    signal: controller.signal
+                }
+            );
+            if (!response.ok) {
+                throw new Error(`connectivity-probe-${response.status}`);
+            }
+            if (sequence !== connectivityProbeSequence) {
+                return connectivityState;
+            }
+            return recordConnectivitySuccess({
+                elapsedMs: performance.now() - startedAt
+            });
+        } catch (_) {
+            if (sequence !== connectivityProbeSequence) {
+                return connectivityState;
+            }
+            return recordConnectivityFailure();
+        } finally {
+            clearTimeout(timeout);
+            if (connectivityProbeController === controller) {
+                connectivityProbeController = null;
+            }
+        }
+    })();
+
+    const trackedProbe = probe.finally(() => {
+        if (connectivityProbePromise === trackedProbe) {
+            connectivityProbePromise = null;
+        }
+    });
+    connectivityProbePromise = trackedProbe;
+    return connectivityProbePromise;
+}
+
+function handleSyncConnectivityEvidence(event) {
+    const detail = event.detail || {};
+    if (detail.ok === true) {
+        lastFirebaseConnectivityFailureAt = 0;
+        connectivityFailures = 0;
+        recordConnectivitySuccess();
+        return;
+    }
+
+    const code = String(detail.code || '')
+        .replace(/^firestore\//, '');
+    if (!SYNC_NETWORK_ERROR_CODES.has(code)) return;
+    lastFirebaseConnectivityFailureAt = Date.now();
+    recordConnectivityFailure();
+}
+
+function installConnectivityMonitoring() {
+    if (window.__raffaelitoConnectivityInstalled) return;
+    window.__raffaelitoConnectivityInstalled = true;
+
+    window.addEventListener('icepos:connectivity-evidence', handleSyncConnectivityEvidence);
+    window.addEventListener('offline', () => {
+        connectivityProbeController?.abort();
+        connectivityFailures = Math.max(connectivityFailures, 2);
+        setConnectivityState('offline');
+    });
+    window.addEventListener('online', () => {
+        setConnectivityState('unstable', { silent: true });
+        void probeConnectivity({ force: true });
+    });
+    window.addEventListener('pageshow', () => {
+        if (document.visibilityState === 'visible') {
+            void probeConnectivity({ force: true });
+        }
+    });
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            void probeConnectivity({ force: true });
+        }
+    });
+
+    const connection = (
+        navigator.connection
+        || navigator.mozConnection
+        || navigator.webkitConnection
+    );
+    connection?.addEventListener?.('change', () => {
+        void probeConnectivity({ force: true });
+    });
+
+    setInterval(() => {
+        if (document.visibilityState === 'visible') {
+            void probeConnectivity();
+        }
+    }, CONNECTIVITY_PROBE_INTERVAL_MS);
+
+    if (navigator.onLine === false) {
+        connectivityFailures = 2;
+        setConnectivityState('offline');
+    } else {
+        void probeConnectivity({ force: true });
+    }
+}
+// -----------------------------------------------------------------
+
 // ---- SERVICE WORKER: ACTUALIZACIÓN VOLUNTARIA Y SEGURA ----
+const WORKER_UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1_000;
+const APP_SYNC_RELOAD_KEY = 'raffaelito:app-sync-complete';
+const LEGACY_APP_CACHE_PATTERN = /^raffaelito-v\d+$/;
+
 let serviceWorkerRegistration = null;
 let pendingServiceWorker = null;
 let reloadWhenSafeAfterControllerChange = false;
 let safeWorkerReloadInProgress = false;
 let lastWorkerCheck = 0;
+let workerUpdateCheckPromise = null;
+let appSyncPromise = null;
+let clearSafeCachesBeforeReload = false;
+let manualWorkerActivationWaiter = null;
 let pageHadServiceWorkerController = Boolean(
     navigator.serviceWorker?.controller
 );
@@ -104,6 +398,52 @@ function isCurrentTabBusy() {
         || hasPendingSaleLocalPersistence()
         || Boolean(window.ticketEditadoContext?.saleId)
     );
+}
+
+function setAppSyncControlsBusy(isBusy) {
+    document
+        .querySelectorAll('[data-app-sync-trigger]')
+        .forEach(button => {
+            button.disabled = isBusy;
+            button.toggleAttribute('aria-busy', isBusy);
+            button.classList.toggle('opacity-60', isBusy);
+            button.classList.toggle('cursor-wait', isBusy);
+        });
+}
+
+async function clearSafeApplicationCaches() {
+    if (!('caches' in globalThis)) return;
+    const cacheNames = await caches.keys();
+    const safeNames = cacheNames.filter(cacheName => (
+        cacheName === 'raffaelito-runtime-assets'
+        || LEGACY_APP_CACHE_PATTERN.test(cacheName)
+    ));
+    await Promise.allSettled(
+        safeNames.map(cacheName => caches.delete(cacheName))
+    );
+}
+
+function markAppSyncReload() {
+    try {
+        sessionStorage.setItem(APP_SYNC_RELOAD_KEY, '1');
+    } catch (_) {}
+}
+
+function showCompletedAppSyncAfterReload() {
+    let shouldNotify = false;
+    try {
+        shouldNotify = sessionStorage.getItem(APP_SYNC_RELOAD_KEY) === '1';
+        if (shouldNotify) sessionStorage.removeItem(APP_SYNC_RELOAD_KEY);
+    } catch (_) {}
+    if (!shouldNotify) return;
+
+    setTimeout(() => {
+        window.mostrarToast?.(
+            'Aplicación sincronizada',
+            'La versión y los datos se están actualizando.',
+            'emerald'
+        );
+    }, 250);
 }
 
 async function reloadAfterControllerChangeWhenSafe() {
@@ -122,6 +462,12 @@ async function reloadAfterControllerChangeWhenSafe() {
             || isCurrentTabBusy()
         ) return false;
 
+        const shouldClearSafeCaches = clearSafeCachesBeforeReload;
+        if (shouldClearSafeCaches) {
+            await clearSafeApplicationCaches();
+            markAppSyncReload();
+        }
+        clearSafeCachesBeforeReload = false;
         reloadWhenSafeAfterControllerChange = false;
         window.location.reload();
         return true;
@@ -192,44 +538,71 @@ async function canApplyPendingUpdate() {
     return true;
 }
 
-async function applyPendingUpdate() {
-    if (!await canApplyPendingUpdate()) return;
+function settleManualWorkerActivation(error = null) {
+    if (!manualWorkerActivationWaiter) return;
+    const waiter = manualWorkerActivationWaiter;
+    manualWorkerActivationWaiter = null;
+    clearTimeout(waiter.timeout);
+    if (error) waiter.reject(error);
+    else waiter.resolve();
+}
 
-    if (!pendingServiceWorker) {
-        window.mostrarToast?.(
-            'Aplicación actualizada',
-            'Ya tienes la versión más reciente disponible.',
-            'emerald'
-        );
-        return;
+function activatePendingWorkerForManualSync(worker) {
+    if (!worker) return Promise.resolve(false);
+    if (manualWorkerActivationWaiter) {
+        return manualWorkerActivationWaiter.promise;
     }
 
-    const activate = async () => {
-        if (!await canApplyPendingUpdate()) return;
-        pendingServiceWorker?.postMessage({ type: 'SKIP_WAITING' });
+    const previousController = navigator.serviceWorker.controller;
+    let resolveActivation;
+    let rejectActivation;
+    const activationPromise = new Promise((resolve, reject) => {
+        resolveActivation = resolve;
+        rejectActivation = reject;
+    });
+    const timeout = setTimeout(() => {
+        if (
+            navigator.serviceWorker.controller
+            && navigator.serviceWorker.controller !== previousController
+        ) {
+            settleManualWorkerActivation();
+            return;
+        }
+        clearSafeCachesBeforeReload = false;
+        settleManualWorkerActivation(
+            new Error('La nueva versión no pudo activarse a tiempo.')
+        );
+    }, 20_000);
+    manualWorkerActivationWaiter = {
+        promise: activationPromise,
+        resolve: resolveActivation,
+        reject: rejectActivation,
+        timeout
     };
+    clearSafeCachesBeforeReload = true;
 
-    if (window.mostrarConfirmacion) {
-        window.mostrarConfirmacion(
-            'Hay una versión nueva lista. ¿Actualizar ahora?',
-            () => void activate()
-        );
-    } else {
-        void activate();
+    try {
+        worker.postMessage({ type: 'SKIP_WAITING' });
+    } catch (error) {
+        clearSafeCachesBeforeReload = false;
+        settleManualWorkerActivation(error);
     }
+    return activationPromise;
 }
 
 function registerPendingWorker(worker) {
-    if (!worker) return;
+    if (!worker || worker.state === 'redundant') return false;
+    if (pendingServiceWorker === worker) return false;
     pendingServiceWorker = worker;
 
-    if (state.carrito.length === 0) {
-        window.mostrarToast?.(
-            'Actualización disponible',
-            'Pulsa “Reparar / Actualizar App” cuando quieras aplicarla.',
-            'emerald'
-        );
-    }
+    window.mostrarToast?.(
+        'Actualización disponible',
+        isCurrentTabBusy()
+            ? 'Podrás aplicarla cuando termines la operación abierta.'
+            : 'Pulsa “Sincronizar App” para aplicarla.',
+        'amber'
+    );
+    return true;
 }
 
 async function waitForInstalledWorker(registration) {
@@ -261,45 +634,152 @@ async function waitForInstalledWorker(registration) {
         || (worker.state === 'installed' ? worker : null);
 }
 
-window.forzarActualizacionApp = async () => {
+const monitoredWorkerRegistrations = new WeakSet();
+
+function monitorWorkerRegistration(registration) {
+    if (!registration || monitoredWorkerRegistrations.has(registration)) return;
+    monitoredWorkerRegistrations.add(registration);
+    registration.addEventListener('updatefound', () => {
+        const installingWorker = registration.installing;
+        installingWorker?.addEventListener('statechange', () => {
+            if (
+                installingWorker.state === 'installed'
+                && navigator.serviceWorker.controller
+            ) {
+                registerPendingWorker(registration.waiting || installingWorker);
+            }
+        });
+    });
+}
+
+async function ensureServiceWorkerRegistration() {
+    serviceWorkerRegistration ||= await navigator.serviceWorker.getRegistration();
+    if (!serviceWorkerRegistration) {
+        serviceWorkerRegistration = await navigator.serviceWorker.register('/sw.js');
+    }
+    if (!serviceWorkerRegistration) {
+        throw new Error('El navegador no devolvió un registro de actualización.');
+    }
+    monitorWorkerRegistration(serviceWorkerRegistration);
+    return serviceWorkerRegistration;
+}
+
+async function checkForWorkerUpdate({ force = false } = {}) {
+    if (
+        !('serviceWorker' in navigator)
+        || navigator.onLine === false
+        || document.visibilityState !== 'visible'
+    ) return null;
+    if (workerUpdateCheckPromise) return workerUpdateCheckPromise;
+
+    const now = Date.now();
+    if (
+        !force
+        && now - lastWorkerCheck < WORKER_UPDATE_CHECK_INTERVAL_MS
+    ) {
+        return serviceWorkerRegistration?.waiting || null;
+    }
+    lastWorkerCheck = now;
+
+    const check = (async () => {
+        const registration = await ensureServiceWorkerRegistration();
+        registerPendingWorker(registration.waiting);
+        await registration.update();
+        const installedWorker = await waitForInstalledWorker(registration);
+        if (installedWorker && navigator.serviceWorker.controller) {
+            registerPendingWorker(installedWorker);
+        }
+        return installedWorker;
+    })();
+    const trackedCheck = check.finally(() => {
+        if (workerUpdateCheckPromise === trackedCheck) {
+            workerUpdateCheckPromise = null;
+        }
+    });
+    workerUpdateCheckPromise = trackedCheck;
+    return workerUpdateCheckPromise;
+}
+
+async function reloadCurrentAppSafely() {
+    await clearSafeApplicationCaches();
+    markAppSyncReload();
+    window.location.reload();
+}
+
+async function runManualAppSync() {
+    if (!await canApplyPendingUpdate()) return false;
+
+    const networkState = await probeConnectivity({ force: true });
+    if (networkState === 'offline') return false;
+
+    const draftFlushed = await flushVentasDraftForReload();
+    if (!draftFlushed) {
+        window.mostrarToast?.(
+            'No se pudo sincronizar',
+            'No se pudo guardar de forma segura la operación abierta.',
+            'red'
+        );
+        return false;
+    }
+    if (isCurrentTabBusy()) return false;
+
     if (!('serviceWorker' in navigator)) {
-        window.location.reload();
-        return;
+        await reloadCurrentAppSafely();
+        return true;
     }
 
-    try {
-        serviceWorkerRegistration ||= await navigator.serviceWorker.getRegistration();
-        if (!serviceWorkerRegistration) {
-            serviceWorkerRegistration = await navigator.serviceWorker.register('/sw.js');
-        }
-        await serviceWorkerRegistration.update();
-        registerPendingWorker(
-            await waitForInstalledWorker(serviceWorkerRegistration)
-        );
-        void applyPendingUpdate();
-    } catch (error) {
-        console.error('No se pudo comprobar la actualización:', error);
-        window.mostrarToast?.('Sin conexión', 'No se pudo comprobar una versión nueva.', 'red');
+    const registration = await ensureServiceWorkerRegistration();
+    await registration.update();
+    const installedWorker = await waitForInstalledWorker(registration);
+    if (installedWorker && navigator.serviceWorker.controller) {
+        registerPendingWorker(installedWorker);
+        if (!await canApplyPendingUpdate()) return false;
+        await activatePendingWorkerForManualSync(installedWorker);
+        return true;
     }
+
+    if (!await canApplyPendingUpdate()) return false;
+    await reloadCurrentAppSafely();
+    return true;
+}
+
+window.forzarActualizacionApp = () => {
+    if (appSyncPromise) return appSyncPromise;
+    setAppSyncControlsBusy(true);
+
+    const syncRequest = runManualAppSync()
+        .catch(error => {
+            console.error('No se pudo sincronizar la aplicación:', error);
+            if (
+                navigator.onLine === false
+                || error?.name === 'TypeError'
+                || error?.name === 'AbortError'
+            ) {
+                recordConnectivityFailure();
+            }
+            window.mostrarToast?.(
+                'No se pudo sincronizar',
+                'La actualización se reintentará cuando mejore la conexión.',
+                'amber'
+            );
+            return false;
+        });
+    const trackedSyncRequest = syncRequest.finally(() => {
+        if (appSyncPromise === trackedSyncRequest) {
+            appSyncPromise = null;
+        }
+        setAppSyncControlsBusy(false);
+    });
+    appSyncPromise = trackedSyncRequest;
+    return appSyncPromise;
 };
 
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', async () => {
         try {
-            serviceWorkerRegistration = await navigator.serviceWorker.register('/sw.js');
+            serviceWorkerRegistration = await ensureServiceWorkerRegistration();
             registerPendingWorker(serviceWorkerRegistration.waiting);
-
-            serviceWorkerRegistration.addEventListener('updatefound', () => {
-                const installingWorker = serviceWorkerRegistration.installing;
-                installingWorker?.addEventListener('statechange', () => {
-                    if (
-                        installingWorker.state === 'installed'
-                        && navigator.serviceWorker.controller
-                    ) {
-                        registerPendingWorker(serviceWorkerRegistration.waiting || installingWorker);
-                    }
-                });
-            });
+            await checkForWorkerUpdate({ force: true });
         } catch (error) {
             console.warn('El modo sin conexión no pudo iniciarse:', error);
         }
@@ -307,12 +787,14 @@ if ('serviceWorker' in navigator) {
 
     navigator.serviceWorker.addEventListener('controllerchange', () => {
         const replacedExistingController = pageHadServiceWorkerController;
+        const wasManualAppSync = clearSafeCachesBeforeReload;
         pageHadServiceWorkerController = true;
+        pendingServiceWorker = null;
+        settleManualWorkerActivation();
         // En una instalación nueva, clientsClaim entrega por primera vez el
         // control al worker. No es una actualización y no debe cortar Auth ni
         // recargar mientras Firebase está preparando la sesión.
-        if (!replacedExistingController) {
-            pendingServiceWorker = null;
+        if (!replacedExistingController && !wasManualAppSync) {
             reloadWhenSafeAfterControllerChange = false;
             return;
         }
@@ -330,6 +812,12 @@ if ('serviceWorker' in navigator) {
         );
     });
 
+    window.addEventListener('online', () => {
+        void checkForWorkerUpdate({ force: true }).catch(() => {});
+    });
+    window.addEventListener('pageshow', () => {
+        void checkForWorkerUpdate({ force: true }).catch(() => {});
+    });
     document.addEventListener('visibilitychange', () => {
         if (
             document.visibilityState === 'visible'
@@ -338,12 +826,14 @@ if ('serviceWorker' in navigator) {
             void reloadAfterControllerChangeWhenSafe();
             return;
         }
-        if (document.visibilityState !== 'visible' || !serviceWorkerRegistration) return;
-        const now = Date.now();
-        if (now - lastWorkerCheck < 60 * 60 * 1000) return;
-        lastWorkerCheck = now;
-        serviceWorkerRegistration.update().catch(() => {});
+        if (document.visibilityState !== 'visible') return;
+        void checkForWorkerUpdate().catch(() => {});
     });
+    setInterval(() => {
+        if (document.visibilityState === 'visible') {
+            void checkForWorkerUpdate().catch(() => {});
+        }
+    }, WORKER_UPDATE_CHECK_INTERVAL_MS);
 }
 // -----------------------------------------------------------------
 
@@ -824,6 +1314,8 @@ function cleanupUserSession() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+    installConnectivityMonitoring();
+    showCompletedAppSyncAfterReload();
     window.addEventListener('icepos:sync-operation-complete', event => {
         const operation = event.detail?.operation;
         const currentUid = String(state.currentUser?.uid || '');

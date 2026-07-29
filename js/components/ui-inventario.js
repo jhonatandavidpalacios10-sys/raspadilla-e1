@@ -77,6 +77,57 @@ const CATALOG_QR_OPTIONS = Object.freeze({
         light: '#ffffff'
     }
 });
+const INVENTORY_CATEGORY_UI = Object.freeze({
+    vaso: {
+        addLabel: 'Añadir vaso',
+        newTitle: 'Nuevo vaso',
+        editTitle: 'Editar vaso',
+        nameLabel: 'Nombre del vaso',
+        namePlaceholder: 'Ej. Raspadilla clásica',
+        emptyLabel: 'No hay vasos registrados.',
+        icon: 'cup-soda'
+    },
+    sabor: {
+        addLabel: 'Añadir sabor',
+        newTitle: 'Nuevo sabor',
+        editTitle: 'Editar sabor',
+        nameLabel: 'Nombre del sabor',
+        namePlaceholder: 'Ej. Maracuyá',
+        emptyLabel: 'No hay sabores registrados.',
+        icon: 'droplets'
+    },
+    extra: {
+        addLabel: 'Añadir extra',
+        newTitle: 'Nuevo extra',
+        editTitle: 'Editar extra',
+        nameLabel: 'Nombre del extra',
+        namePlaceholder: 'Ej. Leche condensada',
+        emptyLabel: 'No hay extras registrados.',
+        icon: 'package-plus'
+    },
+    topping: {
+        addLabel: 'Añadir topping',
+        newTitle: 'Nuevo topping',
+        editTitle: 'Editar topping',
+        nameLabel: 'Nombre del topping',
+        namePlaceholder: 'Ej. Chispas',
+        emptyLabel: 'No hay toppings registrados.',
+        icon: 'sparkles'
+    },
+    insumo: {
+        addLabel: 'Añadir insumo',
+        newTitle: 'Nuevo insumo',
+        editTitle: 'Editar insumo',
+        nameLabel: 'Nombre o tamaño del vaso',
+        namePlaceholder: 'Ej. Vaso 12 oz',
+        emptyLabel: 'No hay vasos registrados.',
+        icon: 'package'
+    }
+});
+
+function getInventoryCategoryUi(category = categoriaActual) {
+    return INVENTORY_CATEGORY_UI[category] || INVENTORY_CATEGORY_UI.insumo;
+}
 
 function loadCatalogQrModule() {
     if (!catalogQrModulePromise) {
@@ -377,18 +428,16 @@ function renderCupControlSummary() {
 
 function updateInventoryModeUi() {
     const isCupMode = categoriaActual === 'insumo';
+    const categoryUi = getInventoryCategoryUi();
     const addButton = document.getElementById('btn-nuevo-producto');
     const addText = document.getElementById('btn-nuevo-producto-texto');
     const historyHeading = document.getElementById('inventory-heading-history');
     const priceHeading = document.getElementById('inventory-heading-price');
     const stockHeading = document.getElementById('inventory-heading-stock');
 
-    if (addText) addText.textContent = isCupMode ? 'Nuevo vaso' : 'Añadir ítem';
+    if (addText) addText.textContent = categoryUi.addLabel;
     if (addButton) {
-        addButton.setAttribute(
-            'aria-label',
-            isCupMode ? 'Añadir vaso de inventario' : 'Añadir producto'
-        );
+        addButton.setAttribute('aria-label', categoryUi.addLabel);
     }
     if (historyHeading) {
         historyHeading.textContent = isCupMode ? 'Inicio / Mov. hoy' : 'Ventas Hist.';
@@ -2305,39 +2354,18 @@ export async function initInventario() {
         if (field === 'precio') tamanosActuales[idx][field] = parseFloat(val) || 0;
         else tamanosActuales[idx][field] = val;
     };
-    window.updateCupUnits = (idx, value) => {
+    window.updateCupAssignment = (idx, _localId, insumoId) => {
         const size = tamanosActuales[idx];
         if (!size) return;
-        const units = Math.max(1, Math.trunc(Number(value) || 1));
         size.consumoVaso = {
             ...(size.consumoVaso || {}),
-            unidades: units,
-            asignaciones: Array.isArray(size.consumoVaso?.asignaciones)
-                ? size.consumoVaso.asignaciones
+            unidades: 1,
+            asignaciones: insumoId
+                ? [{
+                    localId: 'global',
+                    insumoId: String(insumoId)
+                }]
                 : []
-        };
-    };
-    window.updateCupAssignment = (idx, localId, insumoId) => {
-        const size = tamanosActuales[idx];
-        if (!size) return;
-        const assignments = Array.isArray(size.consumoVaso?.asignaciones)
-            ? size.consumoVaso.asignaciones.filter(item => (
-                String(item?.localId || '') !== String(localId || '')
-            ))
-            : [];
-        if (insumoId) {
-            assignments.push({
-                localId: String(localId || 'global'),
-                insumoId: String(insumoId)
-            });
-        }
-        size.consumoVaso = {
-            ...(size.consumoVaso || {}),
-            unidades: Math.max(
-                1,
-                Math.trunc(Number(size.consumoVaso?.unidades) || 1)
-            ),
-            asignaciones: assignments
         };
     };
     window.removeTamano = (idx) => {
@@ -2382,36 +2410,7 @@ export function destroyInventario() {
 // RENDERIZADOR DINÁMICO DE TAMAÑOS (UI)
 // ========================================================
 function getCupAssignmentTargets() {
-    const role = String(state.userRole || '').trim().toLowerCase();
-    const canManageAllSites = [
-        'admin',
-        'administrador',
-        'master'
-    ].includes(role);
-    if (!canManageAllSites && state.userLocalId) {
-        return [{
-            id: String(state.userLocalId),
-            nombre: String(state.userLocal || 'Mi sede')
-        }];
-    }
-
-    const selectedLocal = String(
-        document.getElementById('prod-local')?.value || 'global'
-    );
-    if (!['global', 'general', ''].includes(selectedLocal)) {
-        return [{
-            id: selectedLocal,
-            nombre: state.locales.find(local => local.id === selectedLocal)?.nombre
-                || 'Sede asignada'
-        }];
-    }
-    if (state.locales.length === 0) {
-        return [{ id: 'global', nombre: 'Todas las sedes' }];
-    }
-    return state.locales.map(local => ({
-        id: String(local.id),
-        nombre: String(local.nombre || 'Sede')
-    }));
+    return [{ id: 'global', nombre: 'Local general' }];
 }
 
 function getCupOptionsForTarget(targetLocalId, selectedCupId = '') {
@@ -2439,44 +2438,46 @@ function getCupOptionsForTarget(targetLocalId, selectedCupId = '') {
     return options;
 }
 
-function getSizeCupAssignment(size, targetLocalId) {
+function getSizeCupAssignment(size) {
     const assignments = Array.isArray(size?.consumoVaso?.asignaciones)
         ? size.consumoVaso.asignaciones
         : [];
-    return assignments.find(item => (
-        String(item?.localId || '') === String(targetLocalId || '')
-    )) || (
-        targetLocalId !== 'global'
-            ? assignments.find(item => (
-                ['global', 'general', ''].includes(String(item?.localId || ''))
-            ))
-            : null
-    );
+    const globalAssignment = assignments.find(item => (
+        ['global', 'general', ''].includes(String(item?.localId || ''))
+        && String(item?.insumoId || '').trim()
+    ));
+    if (globalAssignment) {
+        return {
+            localId: 'global',
+            insumoId: String(globalAssignment.insumoId)
+        };
+    }
+    const cupIds = [
+        ...new Set(
+            assignments
+                .map(item => String(item?.insumoId || '').trim())
+                .filter(Boolean)
+        )
+    ];
+    if (cupIds.length !== 1) return null;
+    return {
+        localId: 'global',
+        insumoId: cupIds[0]
+    };
 }
 
 function renderCupAssignmentsForSize(size, sizeIndex) {
     if (categoriaActual !== 'vaso') return '';
     const targets = getCupAssignmentTargets();
-    const units = Math.max(
-        1,
-        Math.trunc(Number(size?.consumoVaso?.unidades) || 1)
-    );
     const rows = targets.map(target => {
-        const selected = getSizeCupAssignment(size, target.id);
+        const selected = getSizeCupAssignment(size);
         const cupOptions = getCupOptionsForTarget(
             target.id,
             selected?.insumoId || ''
         );
         const optionHtml = cupOptions.map(cup => {
-            const cupLocal = String(cup.localId || 'global');
-            const scope = ['global', 'general', ''].includes(cupLocal)
-                ? 'Global'
-                : (
-                    state.locales.find(local => local.id === cupLocal)?.nombre
-                    || 'Sede'
-                );
             const archived = cup.activo === false ? ' · archivado' : '';
-            return `<option value="${escapeCatalogHtml(cup.id)}" ${String(selected?.insumoId || '') === String(cup.id) ? 'selected' : ''}>${escapeCatalogHtml(cup.nombre)} · stock ${Number(cup.stock || 0)} · ${escapeCatalogHtml(scope)}${archived}</option>`;
+            return `<option value="${escapeCatalogHtml(cup.id)}" ${String(selected?.insumoId || '') === String(cup.id) ? 'selected' : ''}>${escapeCatalogHtml(cup.nombre)} · stock ${Number(cup.stock || 0)}${archived}</option>`;
         }).join('');
         return `
             <label class="cup-assignment-row">
@@ -2490,17 +2491,7 @@ function renderCupAssignmentsForSize(size, sizeIndex) {
 
     return `
         <div class="cup-size-config mt-2 rounded-lg border border-amber-200 bg-amber-50/80 p-2.5">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
-                <div>
-                    <p class="text-[10px] font-black uppercase text-amber-700">Vaso físico utilizado</p>
-                    <p class="text-[10px] text-slate-500">Se descuenta al confirmar y se devuelve al anular.</p>
-                </div>
-                <label class="flex items-center gap-2 text-[10px] font-bold text-slate-600 shrink-0">
-                    Vasos por venta
-                    <input type="number" min="1" max="20" value="${units}" onchange="window.updateCupUnits(${sizeIndex}, this.value)" class="w-16 bg-white border border-amber-200 rounded-lg px-2 py-1.5 text-center text-xs text-slate-800 outline-none">
-                </label>
-            </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">${rows}</div>
+            <div class="grid grid-cols-1 gap-2">${rows}</div>
         </div>`;
 }
 
@@ -2711,28 +2702,35 @@ function procesarIngresoStock(e) {
 function configureProductModalForCategory() {
     const isCupInventory = categoriaActual === 'insumo';
     const isSellableCup = categoriaActual === 'vaso';
+    const hidesInternalCost = isCupInventory || isSellableCup;
+    const categoryUi = getInventoryCategoryUi();
+    const isEditing = Boolean(document.getElementById('prod-id')?.value);
     const isEditingCup = Boolean(
         isCupInventory
-        && document.getElementById('prod-id')?.value
+        && isEditing
     );
     const title = document.getElementById('modal-producto-titulo');
+    const nameLabel = document.getElementById('prod-nombre-label');
+    const nameInput = document.getElementById('prod-nombre');
     const sizes = document.getElementById('div-tamanos-producto');
+    const sizesLabel = document.getElementById('prod-tamanos-label');
     const costs = document.getElementById('div-campos-costos');
     const flavorLimit = document.getElementById('div-limite-sabores');
     const publicCatalog = document.getElementById('div-catalogo-publico');
-    const cupInfo = document.getElementById('div-insumo-vaso-info');
     const stock = document.getElementById('prod-stock');
     const stockLabel = document.getElementById('prod-stock-label');
 
     if (title) {
-        title.innerHTML = isCupInventory
-            ? '<i data-lucide="cup-soda" class="w-5 h-5 text-amber-500"></i> Vaso de inventario'
-            : '<i data-lucide="package" class="w-5 h-5 text-emerald-400"></i> Ítem del Catálogo';
+        title.innerHTML = `<i data-lucide="${categoryUi.icon}" class="w-5 h-5 ${
+            isCupInventory ? 'text-amber-500' : 'text-emerald-400'
+        }"></i> ${isEditing ? categoryUi.editTitle : categoryUi.newTitle}`;
     }
+    if (nameLabel) nameLabel.textContent = categoryUi.nameLabel;
+    if (nameInput) nameInput.placeholder = categoryUi.namePlaceholder;
+    if (sizesLabel) sizesLabel.textContent = 'Tamaños y precios';
     sizes?.classList.toggle('hidden', isCupInventory);
-    costs?.classList.remove('hidden');
+    costs?.classList.toggle('hidden', hidesInternalCost);
     flavorLimit?.classList.toggle('hidden', !isSellableCup);
-    cupInfo?.classList.toggle('hidden', !isCupInventory);
     if (isCupInventory) publicCatalog?.classList.add('hidden');
     if (stock) {
         stock.required = isCupInventory;
@@ -2740,16 +2738,12 @@ function configureProductModalForCategory() {
         stock.min = '0';
         stock.step = '1';
         stock.readOnly = isEditingCup;
-        stock.title = isEditingCup
-            ? 'Para cambiar esta cantidad usa el botón + Stock.'
-            : '';
+        stock.removeAttribute('title');
     }
     if (stockLabel) {
-        stockLabel.textContent = isEditingCup
-            ? 'Stock actual (usa + Stock)'
-            : (isCupInventory
-                ? 'Cantidad actual de vasos'
-                : 'Stock inicial');
+        stockLabel.textContent = isCupInventory
+            ? (isEditingCup ? 'Stock actual' : 'Cantidad actual de vasos')
+            : 'Stock inicial';
     }
     window.lucide?.createIcons({ root: title?.parentElement || undefined });
 }
@@ -2773,6 +2767,7 @@ function abrirModalProducto() {
         let opts = '<option value="global">Disponible en Todas (Global)</option>';
         state.locales.forEach(l => opts += `<option value="${l.id}">${l.nombre}</option>`);
         selLocal.innerHTML = opts;
+        selLocal.value = 'global';
         
         if (state.userRole === 'vendedor') {
             selLocal.value = state.userLocalId || 'global';
@@ -2781,13 +2776,6 @@ function abrirModalProducto() {
         } else {
             selLocal.disabled = false;
             selLocal.parentElement.classList.remove('hidden');
-            if (
-                categoriaActual === 'insumo'
-                && state.userLocalId
-                && state.locales.some(local => local.id === state.userLocalId)
-            ) {
-                selLocal.value = state.userLocalId;
-            }
         }
     }
 
@@ -2838,9 +2826,7 @@ function getInventoryItems(cat) {
 }
 
 function getInventoryEmptyRowHtml() {
-    const message = categoriaActual === 'insumo'
-        ? 'Todavía no hay vasos físicos. Pulsa “Nuevo vaso” para iniciar el control.'
-        : 'No hay ítems registrados en esta categoría.';
+    const message = getInventoryCategoryUi().emptyLabel;
     return `<tr data-empty-state="true"><td colspan="5" class="p-8 text-center text-slate-500 text-sm">${message}</td></tr>`;
 }
 
@@ -2986,22 +2972,16 @@ export function renderInventarioUI(cat) {
     inventoryRenderPending = false;
 }
 
-function normalizeSizesForSave(selectedLocal, baseProduct = null) {
+function normalizeSizesForSave() {
     if (categoriaActual === 'insumo') {
         return [{ nombre: 'Unidad', precio: 0 }];
     }
 
-    const role = String(state.userRole || '').trim().toLowerCase();
-    const canManageAllSites = [
-        'admin',
-        'administrador',
-        'master'
-    ].includes(role);
     const cupInventoryExists = getVisibleCupInventoryItems({
         includeArchived: false
     }).length > 0;
 
-    return tamanosActuales.map((size, sizeIndex) => {
+    return tamanosActuales.map(size => {
         const normalized = {
             ...size,
             nombre: String(size.nombre || '').trim(),
@@ -3014,68 +2994,19 @@ function normalizeSizesForSave(selectedLocal, baseProduct = null) {
             return normalized;
         }
 
-        const units = Math.max(
-            1,
-            Math.trunc(Number(size.consumoVaso?.unidades) || 1)
-        );
-        const allowedTargets = new Set(
-            getCupAssignmentTargets().map(target => String(target.id))
-        );
-        // Una asignación global es un fallback válido para sedes actuales y
-        // futuras. Se conserva aunque luego se creen nuevas sedes.
-        allowedTargets.add('global');
-        const deduplicated = new Map();
-        const currentAssignments = Array.isArray(size.consumoVaso?.asignaciones)
-            ? size.consumoVaso.asignaciones
+        const selectedAssignment = getSizeCupAssignment(size);
+        const assignments = selectedAssignment
+            ? [{
+                localId: 'global',
+                insumoId: selectedAssignment.insumoId
+            }]
             : [];
-        const baseAssignments = Array.isArray(
-            baseProduct?.tamanos?.[sizeIndex]?.consumoVaso?.asignaciones
-        )
-            ? baseProduct.tamanos[sizeIndex].consumoVaso.asignaciones
-            : [];
-
-        // Un vendedor solo modifica la asociación de su sede. Las asociaciones
-        // de las demás sedes se copian desde el documento que abrió.
-        if (!canManageAllSites) {
-            baseAssignments.forEach(assignment => {
-                const localId = String(assignment?.localId || 'global');
-                const cupId = String(assignment?.insumoId || '');
-                if (!cupId || allowedTargets.has(localId)) return;
-                deduplicated.set(localId, { localId, insumoId: cupId });
-            });
-        }
-
-        currentAssignments.forEach(assignment => {
-                const localId = String(assignment?.localId || 'global');
-                const cupId = String(assignment?.insumoId || '');
-                if (!cupId || !allowedTargets.has(localId)) return;
-                deduplicated.set(localId, { localId, insumoId: cupId });
-            });
-
-        const assignments = [...deduplicated.values()];
-        const globalFallback = assignments.find(assignment => (
-            ['global', 'general', ''].includes(assignment.localId)
-        ));
-        const missingTargets = getCupAssignmentTargets().filter(target => (
-            !globalFallback
-            && !assignments.some(assignment => (
-                assignment.localId === String(target.id)
-            ))
-        ));
-        if (cupInventoryExists && missingTargets.length > 0) {
+        if (cupInventoryExists && assignments.length === 0) {
             throw new Error(
-                `Asigna un vaso a "${normalized.nombre || 'un tamaño'}" para: ${
-                    missingTargets.map(target => target.nombre).join(', ')
-                }.`
+                `Asigna un vaso a "${normalized.nombre || 'un tamaño'}".`
             );
         }
         assignments.forEach(assignment => {
-            if (
-                !canManageAllSites
-                && !allowedTargets.has(assignment.localId)
-            ) {
-                return;
-            }
             const cup = state.productos.find(product => (
                 String(product.id) === assignment.insumoId
             ));
@@ -3093,13 +3024,13 @@ function normalizeSizesForSave(selectedLocal, baseProduct = null) {
                 || !locationIsCompatible
             ) {
                 throw new Error(
-                    `El vaso asignado a "${normalized.nombre || 'un tamaño'}" no está disponible para esa sede.`
+                    `El vaso asignado a "${normalized.nombre || 'un tamaño'}" no está disponible en Local general.`
                 );
             }
         });
 
         normalized.consumoVaso = {
-            unidades: units,
+            unidades: 1,
             asignaciones: assignments
         };
         delete normalized.vasoInsumoId;
@@ -3128,6 +3059,7 @@ function guardarProducto(e) {
     const id = document.getElementById('prod-id').value;
     let selectedLocal = document.getElementById('prod-local').value;
     if (state.userRole === 'vendedor') selectedLocal = state.userLocalId || 'global';
+    if (categoriaActual === 'insumo') selectedLocal = 'global';
 
     // Recuperar ventasTotales actuales para no borrarlas al guardar
     let ventasTotalesGuardadas = 0;
@@ -3165,10 +3097,7 @@ function guardarProducto(e) {
 
     let sizesToSave;
     try {
-        sizesToSave = normalizeSizesForSave(
-            selectedLocal,
-            productoBase || prodExistente
-        );
+        sizesToSave = normalizeSizesForSave();
     } catch (error) {
         window.mostrarToast?.(
             'Revisa el vaso asignado',
@@ -3179,12 +3108,15 @@ function guardarProducto(e) {
     }
 
     const isCupInventory = categoriaActual === 'insumo';
+    const hidesInternalCost = isCupInventory || categoriaActual === 'vaso';
     const prodData = {
         nombre: document.getElementById('prod-nombre').value.trim(),
         categoria: categoriaActual,
         tamanos: sizesToSave,
         precio: isCupInventory ? 0 : (sizesToSave[0]?.precio || 0),
-        costo: parseFloat(document.getElementById('prod-costo').value) || 0,
+        costo: hidesInternalCost
+            ? 0
+            : (parseFloat(document.getElementById('prod-costo').value) || 0),
         limite_sabores: isCupInventory
             ? 0
             : (parseInt(document.getElementById('prod-limite').value) || 0),
@@ -3206,6 +3138,7 @@ function guardarProducto(e) {
         // valor que el modal leyó unos segundos antes.
         delete prodData.ventasTotales;
         if (isCupInventory) delete prodData.stock;
+        if (hidesInternalCost) delete prodData.costo;
     }
 
     try {

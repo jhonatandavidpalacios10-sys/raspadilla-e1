@@ -208,6 +208,38 @@ input:focus, select:focus { border-color: #e05f5f !important; }
     font-weight: 800;
 }
 
+#app-navigation,
+#app-navigation .mobile-nav-actions {
+    transition:
+        background-color 320ms ease,
+        border-color 320ms ease,
+        box-shadow 320ms ease;
+}
+
+html[data-connectivity-state="online"] #app-navigation,
+html[data-connectivity-state="online"] #app-navigation .mobile-nav-actions {
+    background-color: #fdfdfd !important;
+    border-color: #f2e8e8 !important;
+}
+
+html[data-connectivity-state="offline"] #app-navigation,
+html[data-connectivity-state="offline"] #app-navigation .mobile-nav-actions {
+    background-color: #fff1f2 !important;
+    border-color: #fecdd3 !important;
+}
+
+html[data-connectivity-state="unstable"] #app-navigation,
+html[data-connectivity-state="unstable"] #app-navigation .mobile-nav-actions {
+    background-color: #fffbeb !important;
+    border-color: #fde68a !important;
+}
+
+html[data-connectivity-state="recovered"] #app-navigation,
+html[data-connectivity-state="recovered"] #app-navigation .mobile-nav-actions {
+    background-color: #ecfdf5 !important;
+    border-color: #a7f3d0 !important;
+}
+
 /* --------------------------------------------------------
    9. HOVERS Y ELEMENTOS ACTIVOS (Interactividad)
    -------------------------------------------------------- */
