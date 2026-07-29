@@ -16,8 +16,8 @@ import { state } from './store.js';
 export const GENERAL_CATALOG_ID = 'general';
 
 const ACTIVE_SITES_CACHE_KEY = 'raffaelito_catalog_sites_v1';
-const AUTO_PUBLISH_CACHE_KEY = 'raffaelito_catalog_auto_publish_v1';
-const AUTO_PUBLISH_SCHEMA_VERSION = 1;
+const AUTO_PUBLISH_CACHE_KEY = 'raffaelito_catalog_auto_publish_v2';
+const AUTO_PUBLISH_SCHEMA_VERSION = 2;
 const IMAGE_MAX_SIDE = 720;
 const IMAGE_TARGET_BYTES = 90 * 1024;
 const IMAGE_HARD_LIMIT_BYTES = 128 * 1024;
@@ -169,6 +169,64 @@ function cloneProductsForPublicSync(products = []) {
                     ? { ...product.catalogo }
                     : product.catalogo
         }));
+}
+
+function upsertProductSnapshot(products = [], product = null) {
+    const rows = cloneProductsForPublicSync(products);
+    if (!product?.id) return rows;
+    const id = String(product.id);
+    const index = rows.findIndex(row => String(row.id) === id);
+    const nextProduct = cloneProductsForPublicSync([product])[0];
+    if (!nextProduct) return rows;
+    if (index >= 0) rows[index] = nextProduct;
+    else rows.push(nextProduct);
+    return rows;
+}
+
+function withoutProductSnapshot(products = [], productId = '') {
+    const id = String(productId || '');
+    return cloneProductsForPublicSync(products)
+        .filter(product => String(product.id) !== id);
+}
+
+function queueAutomaticPublicationMarker(
+    batch,
+    products,
+    locales,
+    activeIds
+) {
+    const fingerprint = createPublicProjectionFingerprint(
+        products,
+        locales,
+        activeIds
+    );
+    batch.set(doc(db, 'catalogos_publicos', GENERAL_CATALOG_ID), {
+        autoPublicacionVersion: AUTO_PUBLISH_SCHEMA_VERSION,
+        autoPublicacionFirma: fingerprint,
+        autoPublicacionProductos: products.length,
+        autoPublicacionEn: serverTimestamp()
+    }, { merge: true });
+    return fingerprint;
+}
+
+async function resolveLocalesForAutomaticPublication(locales = []) {
+    let current = Array.isArray(locales)
+        ? locales.filter(local => local?.id)
+        : [];
+    if (current.length > 0) return current.map(local => ({ ...local }));
+
+    // La sesión inicia Inventario y Sedes en paralelo. Esperar brevemente aquí
+    // evita publicar nombres genéricos o asumir que solo existe General.
+    for (let attempt = 0; attempt < 15; attempt++) {
+        const loaded = Array.isArray(state.locales)
+            ? state.locales.filter(local => local?.id)
+            : [];
+        if (loaded.length > 0) {
+            return loaded.map(local => ({ ...local }));
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return [];
 }
 
 function readActiveSitesCache() {
@@ -378,15 +436,27 @@ export async function ensurePublicCatalogPublished({
     }
 
     const productSnapshot = cloneProductsForPublicSync(products);
-    const localeSnapshot = locales.map(local => ({ ...local }));
-    await loadCatalogSiteSettings(localeSnapshot, { force: true });
-    const activeIds = getActiveIdsForLocales(localeSnapshot);
-    const fingerprint = createPublicProjectionFingerprint(
+    const localeSnapshot = await resolveLocalesForAutomaticPublication(locales);
+    let activeIds = getActiveIdsForLocales(localeSnapshot);
+    let fingerprint = createPublicProjectionFingerprint(
         productSnapshot,
         localeSnapshot,
         activeIds
     );
 
+    if (automaticPublishedFingerprint === fingerprint) {
+        return { published: false, reason: 'already-verified', fingerprint };
+    }
+
+    // La lista pública de sedes se precarga al iniciar Inventario. Reutilizarla
+    // aquí evita leer toda la configuración ante cada snapshot de productos.
+    await loadCatalogSiteSettings(localeSnapshot);
+    activeIds = getActiveIdsForLocales(localeSnapshot);
+    fingerprint = createPublicProjectionFingerprint(
+        productSnapshot,
+        localeSnapshot,
+        activeIds
+    );
     if (automaticPublishedFingerprint === fingerprint) {
         return { published: false, reason: 'already-verified', fingerprint };
     }
@@ -576,6 +646,7 @@ export async function saveProductAndPublicCatalog({
     const manager = canManagePublicCatalog();
     if (manager) await loadCatalogSiteSettings(locales);
     const batch = writeBatch(db);
+    let publicationFingerprint = '';
     const productRef = doc(db, 'productos', String(productId));
     if (isNew) batch.set(productRef, privateData);
     else batch.update(productRef, privateData);
@@ -601,9 +672,26 @@ export async function saveProductAndPublicCatalog({
         } else if (removeImage) {
             batch.delete(imageRef);
         }
+
+        const nextProducts = upsertProductSnapshot(
+            state.productos || [],
+            optimisticProduct
+        );
+        publicationFingerprint = queueAutomaticPublicationMarker(
+            batch,
+            nextProducts,
+            locales,
+            activeIds
+        );
     }
 
     await batch.commit();
+    if (publicationFingerprint) {
+        persistAutomaticPublishCache(
+            publicationFingerprint,
+            state.productos?.length || 0
+        );
+    }
     return true;
 }
 
@@ -615,6 +703,7 @@ export async function deleteProductAndPublicCatalog(
     const manager = canManagePublicCatalog();
     if (manager) await loadCatalogSiteSettings(locales);
     const batch = writeBatch(db);
+    let publicationFingerprint = '';
     batch.delete(doc(db, 'productos', String(productId)));
     if (manager) {
         const activeIds = getActiveIdsForLocales(locales);
@@ -628,8 +717,24 @@ export async function deleteProductAndPublicCatalog(
             ));
         });
         batch.delete(doc(db, 'catalogo_imagenes', String(productId)));
+        const nextProducts = withoutProductSnapshot(
+            state.productos || [],
+            productId
+        );
+        publicationFingerprint = queueAutomaticPublicationMarker(
+            batch,
+            nextProducts,
+            locales,
+            activeIds
+        );
     }
     await batch.commit();
+    if (publicationFingerprint) {
+        persistAutomaticPublishCache(
+            publicationFingerprint,
+            withoutProductSnapshot(state.productos || [], productId).length
+        );
+    }
     return true;
 }
 
@@ -650,7 +755,18 @@ export async function deletePublicCatalogProduct(
         ));
     });
     batch.delete(doc(db, 'catalogo_imagenes', String(productId)));
+    const nextProducts = withoutProductSnapshot(
+        state.productos || [],
+        productId
+    );
+    const publicationFingerprint = queueAutomaticPublicationMarker(
+        batch,
+        nextProducts,
+        locales,
+        activeIds
+    );
     await batch.commit();
+    persistAutomaticPublishCache(publicationFingerprint, nextProducts.length);
     return true;
 }
 

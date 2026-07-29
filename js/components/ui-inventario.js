@@ -42,6 +42,9 @@ let catalogImagePreviewUrl = '';
 let catalogImageRemoved = false;
 let catalogEditorToken = 0;
 let catalogSitesLoadToken = 0;
+let virtualCatalogOpenToken = 0;
+const virtualCatalogImageStates = new Map();
+const virtualCatalogSaveTokens = new Map();
 
 // Estado temporal para construir los tamaños en el modal
 let tamanosActuales = [];
@@ -224,6 +227,542 @@ function removeCatalogEditorImage() {
     setCatalogImageStatus('La imagen se quitará al guardar.', 'amber');
 }
 
+function escapeCatalogHtml(value = '') {
+    return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+}
+
+function normalizeVirtualCatalogValue(value = '') {
+    return String(value).trim().toLocaleLowerCase('es');
+}
+
+function releaseVirtualCatalogImageStates() {
+    virtualCatalogImageStates.forEach(imageState => {
+        imageState.token++;
+        if (imageState.previewUrl) URL.revokeObjectURL(imageState.previewUrl);
+    });
+    virtualCatalogImageStates.clear();
+    virtualCatalogSaveTokens.clear();
+}
+
+function getVirtualCatalogOptionCount(category, product) {
+    const expectedCategory = normalizeVirtualCatalogValue(category);
+    const productLocalId = normalizeVirtualCatalogValue(product.localId);
+    const productIsGlobal = (
+        !productLocalId
+        || productLocalId === 'global'
+        || productLocalId === 'general'
+    );
+    return state.productos.filter(option => {
+        if (normalizeVirtualCatalogValue(option.categoria) !== expectedCategory) {
+            return false;
+        }
+        const optionLocalId = normalizeVirtualCatalogValue(option.localId);
+        const optionIsGlobal = (
+            !optionLocalId
+            || optionLocalId === 'global'
+            || optionLocalId === 'general'
+        );
+        // General reúne las opciones de todas las sedes. Una carta de sede
+        // combina sus propias opciones con las globales.
+        if (!productIsGlobal && !optionIsGlobal && optionLocalId !== productLocalId) {
+            return false;
+        }
+        return resolvePublicAvailability(option);
+    }).length;
+}
+
+function getVirtualCatalogSizes(product) {
+    const sizes = Array.isArray(product.tamanos) && product.tamanos.length > 0
+        ? product.tamanos
+        : [{ nombre: 'Único / Estándar', precio: Number(product.precio || 0) }];
+    return sizes
+        .map(size => ({
+            nombre: String(size?.nombre || 'Único'),
+            precio: Math.max(0, Number(size?.precio || 0))
+        }))
+        .slice(0, 12);
+}
+
+function getVirtualCatalogLocalLabel(product) {
+    const productLocalId = normalizeVirtualCatalogValue(product.localId);
+    if (
+        !productLocalId
+        || productLocalId === 'global'
+        || productLocalId === 'general'
+    ) return 'Todas las sedes';
+    return state.locales?.find(
+        local => normalizeVirtualCatalogValue(local.id) === productLocalId
+    )
+        ?.nombre || 'Sede';
+}
+
+function setVirtualCatalogImage(card, url = '', message = '', allowRemove = Boolean(url)) {
+    if (!card) return;
+    const image = card.querySelector('[data-virtual-image]');
+    const placeholder = card.querySelector('[data-virtual-image-placeholder]');
+    const removeButton = card.querySelector('[data-virtual-action="remove-image"]');
+    const status = card.querySelector('[data-virtual-image-status]');
+    if (image && placeholder) {
+        if (url) {
+            image.src = url;
+            image.classList.remove('hidden');
+            placeholder.classList.add('hidden');
+        } else {
+            image.removeAttribute('src');
+            image.classList.add('hidden');
+            placeholder.classList.remove('hidden');
+        }
+    }
+    removeButton?.classList.toggle('hidden', !allowRemove);
+    if (status && message) status.textContent = message;
+}
+
+function updateVirtualCatalogCardBadge(card, product, settings) {
+    const badge = card?.querySelector('[data-virtual-public-state]');
+    if (!badge) return;
+    const available = resolvePublicAvailability({
+        ...product,
+        catalogo: settings
+    });
+    let text = 'Publicado';
+    let classes = 'bg-emerald-100 text-emerald-700';
+    if (!settings.visible) {
+        text = 'Oculto';
+        classes = 'bg-slate-200 text-slate-600';
+    } else if (!available) {
+        text = 'Agotado';
+        classes = 'bg-amber-100 text-amber-700';
+    }
+    badge.textContent = text;
+    badge.className = `inline-flex rounded-full px-2 py-1 text-[10px] font-bold ${classes}`;
+}
+
+function createVirtualCatalogProductCard(product) {
+    const settings = getCatalogSettings(product);
+    const sizes = getVirtualCatalogSizes(product);
+    const flavorLimit = Math.max(0, Math.trunc(Number(product.limite_sabores || 0)));
+    const flavorLimitLabel = flavorLimit === 0
+        ? 'Sin sabores'
+        : (flavorLimit >= 999 ? 'Sabores ilimitados' : `Máx. ${flavorLimit} sabores`);
+    const flavorCount = getVirtualCatalogOptionCount('sabor', product);
+    const toppingCount = getVirtualCatalogOptionCount('topping', product);
+    const card = document.createElement('article');
+    card.dataset.catalogVirtualProductId = String(product.id);
+    card.className = 'rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden';
+    card.innerHTML = `
+        <div class="p-3 sm:p-4 border-b border-slate-100">
+            <div class="flex items-start gap-3">
+                <div class="h-24 w-24 sm:h-28 sm:w-28 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center">
+                    <img data-virtual-image alt="" class="hidden h-full w-full object-cover">
+                    <span data-virtual-image-placeholder class="flex flex-col items-center gap-1 text-slate-300">
+                        <i data-lucide="image" class="w-7 h-7"></i>
+                        <span class="text-[9px] font-bold uppercase">Sin foto</span>
+                    </span>
+                </div>
+                <div class="min-w-0 flex-1">
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                            <h4 class="truncate text-base sm:text-lg font-bold text-slate-900">${escapeCatalogHtml(product.nombre || 'Vaso')}</h4>
+                            <p class="mt-0.5 truncate text-[11px] text-slate-500">${escapeCatalogHtml(getVirtualCatalogLocalLabel(product))}</p>
+                        </div>
+                        <span data-virtual-public-state></span>
+                    </div>
+                    <div class="mt-2 flex flex-wrap gap-1.5">
+                        ${sizes.map(size => `
+                            <span class="rounded-lg bg-sky-50 px-2 py-1 text-[10px] font-bold text-sky-700">
+                                ${escapeCatalogHtml(size.nombre)} · ${escapeCatalogHtml(formatMoney(size.precio))}
+                            </span>
+                        `).join('')}
+                    </div>
+                    <p class="mt-2 text-[11px] leading-relaxed text-slate-500">
+                        <strong class="text-slate-700">${escapeCatalogHtml(flavorLimitLabel)}</strong>
+                        · ${flavorCount} sabores disponibles · ${toppingCount} toppings disponibles
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-3 sm:p-4 space-y-3">
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <label class="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 flex items-center gap-2 text-xs font-bold text-slate-700">
+                    <input data-virtual-field="visible" type="checkbox" class="h-5 w-5 accent-emerald-600" ${settings.visible ? 'checked' : ''}>
+                    Publicar
+                </label>
+                <label class="min-h-12 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 flex items-center gap-2 text-xs font-bold text-slate-700">
+                    <input data-virtual-field="show-price" type="checkbox" class="h-5 w-5 accent-emerald-600" ${settings.mostrarPrecio ? 'checked' : ''}>
+                    Mostrar precio
+                </label>
+                <label class="min-h-12 col-span-2 sm:col-span-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 flex items-center gap-2 text-xs font-bold text-slate-700">
+                    <input data-virtual-field="featured" type="checkbox" class="h-5 w-5 accent-amber-500" ${settings.destacado ? 'checked' : ''}>
+                    Destacado
+                </label>
+            </div>
+
+            <div class="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-2">
+                <label class="min-w-0">
+                    <span class="block mb-1 text-[10px] font-bold uppercase text-slate-500">Disponibilidad</span>
+                    <select data-virtual-field="availability" class="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-emerald-500">
+                        <option value="auto" ${settings.disponibilidad === 'auto' ? 'selected' : ''}>Automática por stock</option>
+                        <option value="disponible" ${settings.disponibilidad === 'disponible' ? 'selected' : ''}>Disponible</option>
+                        <option value="agotado" ${settings.disponibilidad === 'agotado' ? 'selected' : ''}>Agotado</option>
+                    </select>
+                </label>
+                <label>
+                    <span class="block mb-1 text-[10px] font-bold uppercase text-slate-500">Orden</span>
+                    <input data-virtual-field="order" type="number" min="0" max="9999" value="${settings.orden}" class="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-emerald-500">
+                </label>
+            </div>
+
+            <label class="block">
+                <span class="block mb-1 text-[10px] font-bold uppercase text-slate-500">Nombre para clientes</span>
+                <input data-virtual-field="name" type="text" maxlength="80" value="${escapeCatalogHtml(settings.nombrePublico)}" placeholder="${escapeCatalogHtml(product.nombre || 'Nombre del vaso')}" class="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-emerald-500">
+            </label>
+
+            <label class="block">
+                <span class="flex items-center justify-between gap-2 mb-1 text-[10px] font-bold uppercase text-slate-500">
+                    Descripción
+                    <span data-virtual-description-count>${settings.descripcion.length}/420</span>
+                </span>
+                <textarea data-virtual-field="description" maxlength="420" rows="2" placeholder="Ejemplo: incluye hasta 3 sabores y toppings a elección." class="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-500">${escapeCatalogHtml(settings.descripcion)}</textarea>
+            </label>
+
+            <div class="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-2.5">
+                <input data-virtual-image-file type="file" accept="image/jpeg,image/png,image/webp" class="hidden">
+                <div class="flex items-center gap-2">
+                    <button data-virtual-action="choose-image" type="button" class="min-h-10 flex-1 rounded-lg bg-slate-800 hover:bg-slate-700 px-3 text-xs font-bold text-white transition-colors">
+                        Elegir foto
+                    </button>
+                    <button data-virtual-action="remove-image" type="button" class="hidden min-h-10 rounded-lg border border-red-200 bg-white px-3 text-xs font-bold text-red-500">
+                        Quitar
+                    </button>
+                </div>
+                <p data-virtual-image-status class="mt-1.5 text-[10px] text-slate-500">La foto se optimiza automáticamente.</p>
+            </div>
+        </div>
+
+        <div class="px-3 pb-3 sm:px-4 sm:pb-4 flex items-center gap-3">
+            <p data-virtual-save-status class="min-w-0 flex-1 truncate text-[11px] text-slate-500">Los cambios solo afectan la carta virtual.</p>
+            <button data-virtual-action="save" type="button" class="min-h-11 shrink-0 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-4 text-sm font-bold text-white flex items-center justify-center gap-2 transition-colors">
+                <i data-lucide="save" class="w-4 h-4"></i>
+                Guardar
+            </button>
+        </div>
+    `;
+    updateVirtualCatalogCardBadge(card, product, settings);
+    return card;
+}
+
+function loadVirtualCatalogCardImage(card, product, openToken) {
+    const settings = getCatalogSettings(product);
+    const productId = String(product.id);
+    const imageState = {
+        token: 0,
+        previewUrl: '',
+        prepared: null,
+        removeImage: false,
+        existingImageId: settings.imagenId,
+        preparing: null
+    };
+    virtualCatalogImageStates.set(productId, imageState);
+    if (!settings.imagenId) return;
+    const imageLoadToken = imageState.token;
+
+    setVirtualCatalogImage(card, '', 'Cargando foto guardada…', true);
+    void getCatalogImagePreviewUrl(settings.imagenId)
+        .then(url => {
+            if (
+                openToken !== virtualCatalogOpenToken
+                || imageState.token !== imageLoadToken
+                || virtualCatalogImageStates.get(productId) !== imageState
+                || !card.isConnected
+            ) {
+                if (url) URL.revokeObjectURL(url);
+                return;
+            }
+            if (!url) {
+                setVirtualCatalogImage(
+                    card,
+                    '',
+                    'La foto no está disponible, pero puedes reemplazarla o quitarla.',
+                    true
+                );
+                return;
+            }
+            imageState.previewUrl = url;
+            setVirtualCatalogImage(card, url, 'Foto actual del catálogo.');
+        })
+        .catch(error => {
+            console.warn('No se pudo cargar una foto del catálogo:', error);
+            if (
+                openToken === virtualCatalogOpenToken
+                && imageState.token === imageLoadToken
+                && card.isConnected
+            ) {
+                setVirtualCatalogImage(
+                    card,
+                    '',
+                    'No se pudo cargar la foto; puedes reemplazarla o quitarla.',
+                    true
+                );
+            }
+        });
+}
+
+function renderVirtualCatalogProducts() {
+    const container = document.getElementById('catalog-virtual-products-list');
+    if (!container) return;
+    releaseVirtualCatalogImageStates();
+    const openToken = ++virtualCatalogOpenToken;
+    const products = state.productos
+        .filter(product => normalizeVirtualCatalogValue(product.categoria) === 'vaso')
+        .sort((left, right) => {
+            const leftSettings = getCatalogSettings(left);
+            const rightSettings = getCatalogSettings(right);
+            if (leftSettings.orden !== rightSettings.orden) {
+                return leftSettings.orden - rightSettings.orden;
+            }
+            return String(left.nombre || '').localeCompare(
+                String(right.nombre || ''),
+                'es',
+                { sensitivity: 'base' }
+            );
+        });
+
+    if (products.length === 0) {
+        container.innerHTML = `
+            <div class="lg:col-span-2 rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
+                <i data-lucide="cup-soda" class="w-9 h-9 mx-auto text-slate-300"></i>
+                <h4 class="mt-3 text-sm font-bold text-slate-800">Todavía no hay vasos</h4>
+                <p class="mt-1 text-xs text-slate-500">Primero crea un producto en la categoría Vasos.</p>
+            </div>
+        `;
+        window.lucide?.createIcons({ root: container });
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    products.forEach(product => {
+        const card = createVirtualCatalogProductCard(product);
+        fragment.appendChild(card);
+        loadVirtualCatalogCardImage(card, product, openToken);
+    });
+    container.replaceChildren(fragment);
+    window.lucide?.createIcons({ root: container });
+}
+
+function readVirtualCatalogSettings(card, product, imageState) {
+    const existing = getCatalogSettings(product);
+    const availability = card.querySelector('[data-virtual-field="availability"]')?.value;
+    const order = Number(card.querySelector('[data-virtual-field="order"]')?.value);
+    return {
+        visible: card.querySelector('[data-virtual-field="visible"]')?.checked === true,
+        nombrePublico: card.querySelector('[data-virtual-field="name"]')?.value.trim() || '',
+        descripcion: card.querySelector('[data-virtual-field="description"]')?.value.trim() || '',
+        mostrarPrecio: card.querySelector('[data-virtual-field="show-price"]')?.checked === true,
+        disponibilidad: ['auto', 'disponible', 'agotado'].includes(availability)
+            ? availability
+            : 'auto',
+        destacado: card.querySelector('[data-virtual-field="featured"]')?.checked === true,
+        orden: Math.max(0, Math.min(9999, Number.isFinite(order) ? Math.trunc(order) : 1000)),
+        imagenId: imageState?.prepared
+            ? String(product.id)
+            : (imageState?.removeImage ? '' : existing.imagenId),
+        imagenVersion: imageState?.prepared || imageState?.removeImage
+            ? Date.now()
+            : existing.imagenVersion
+    };
+}
+
+function saveVirtualCatalogProduct(card) {
+    if (!canManagePublicCatalog() || !card) return;
+    const productId = String(card.dataset.catalogVirtualProductId || '');
+    const currentProduct = state.productos.find(
+        product => String(product.id) === productId
+    );
+    if (!currentProduct) return;
+    const imageState = virtualCatalogImageStates.get(productId);
+    if (imageState?.preparing) {
+        window.mostrarToast?.(
+            'Foto en preparación',
+            'Espera un instante antes de guardar.',
+            'amber'
+        );
+        return;
+    }
+
+    const settings = readVirtualCatalogSettings(card, currentProduct, imageState);
+    const optimisticProduct = {
+        ...currentProduct,
+        catalogo: settings
+    };
+    const baseCatalog = confirmedCatalogRows.length > 0
+        ? confirmedCatalogRows
+        : state.productos;
+    confirmedCatalogRows = baseCatalog.map(product => (
+        String(product.id) === productId ? optimisticProduct : product
+    ));
+    state.productos = applyPendingDocumentMutations(
+        'productos',
+        confirmedCatalogRows
+    );
+    persistProductsCache(confirmedCatalogRows);
+    queueCatalogUiUpdate({ changedIds: [productId] });
+    updateVirtualCatalogCardBadge(card, optimisticProduct, settings);
+
+    const saveButton = card.querySelector('[data-virtual-action="save"]');
+    const saveStatus = card.querySelector('[data-virtual-save-status]');
+    const saveToken = (virtualCatalogSaveTokens.get(productId) || 0) + 1;
+    virtualCatalogSaveTokens.set(productId, saveToken);
+    if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.classList.add('opacity-60', 'cursor-wait');
+    }
+    if (saveStatus) {
+        saveStatus.textContent = 'Guardado en este dispositivo · sincronizando…';
+        saveStatus.className = 'min-w-0 flex-1 truncate text-[11px] text-emerald-600';
+    }
+    window.mostrarToast?.(
+        'Catálogo actualizado',
+        `${currentProduct.nombre} quedó actualizado localmente.`,
+        'emerald'
+    );
+
+    const imageToSave = imageState?.prepared || null;
+    const removeImage = imageState?.removeImage === true;
+    runAfterImmediateUiPaint(() => {
+        void saveProductAndPublicCatalog({
+            productId,
+            privateData: { catalogo: settings },
+            optimisticProduct,
+            isNew: false,
+            image: imageToSave,
+            removeImage
+        })
+            .then(() => {
+                if (virtualCatalogSaveTokens.get(productId) !== saveToken) return;
+                if (imageState) {
+                    imageState.prepared = null;
+                    imageState.removeImage = false;
+                    imageState.existingImageId = settings.imagenId;
+                }
+                if (saveStatus?.isConnected) {
+                    saveStatus.textContent = 'Sincronizado con el catálogo virtual.';
+                    saveStatus.className = 'min-w-0 flex-1 truncate text-[11px] text-emerald-600';
+                }
+            })
+            .catch(error => {
+                console.error('No se pudo sincronizar el catálogo virtual:', error);
+                if (virtualCatalogSaveTokens.get(productId) !== saveToken) return;
+                if (saveStatus?.isConnected) {
+                    saveStatus.textContent = 'Pendiente de sincronización. Puedes volver a guardar.';
+                    saveStatus.className = 'min-w-0 flex-1 truncate text-[11px] text-amber-600';
+                }
+                window.mostrarAlerta?.(
+                    'Sincronización pendiente',
+                    'El cambio se guardó localmente, pero Firebase todavía no pudo recibirlo.',
+                    'amber'
+                );
+            })
+            .finally(() => {
+                if (
+                    virtualCatalogSaveTokens.get(productId) === saveToken
+                    && saveButton?.isConnected
+                ) {
+                    saveButton.disabled = false;
+                    saveButton.classList.remove('opacity-60', 'cursor-wait');
+                }
+            });
+    });
+}
+
+function handleVirtualCatalogImageSelection(input) {
+    const card = input.closest('[data-catalog-virtual-product-id]');
+    const file = input.files?.[0];
+    if (!card || !file) return;
+    const productId = String(card.dataset.catalogVirtualProductId || '');
+    const imageState = virtualCatalogImageStates.get(productId);
+    if (!imageState) return;
+    const token = ++imageState.token;
+    setVirtualCatalogImage(card, imageState.previewUrl, 'Optimizando la nueva foto…');
+
+    const preparation = prepareCatalogImage(file)
+        .then(prepared => {
+            if (
+                imageState.token !== token
+                || virtualCatalogImageStates.get(productId) !== imageState
+                || !card.isConnected
+            ) {
+                URL.revokeObjectURL(prepared.previewUrl);
+                return null;
+            }
+            if (imageState.previewUrl) URL.revokeObjectURL(imageState.previewUrl);
+            imageState.previewUrl = prepared.previewUrl;
+            imageState.prepared = prepared;
+            imageState.removeImage = false;
+            setVirtualCatalogImage(
+                card,
+                prepared.previewUrl,
+                `Lista para guardar · ${Math.max(1, Math.round(prepared.size / 1024))} KB`
+            );
+            return prepared;
+        })
+        .catch(error => {
+            console.error('No se pudo preparar la foto del catálogo virtual:', error);
+            if (imageState.token === token && card.isConnected) {
+                setVirtualCatalogImage(
+                    card,
+                    imageState.previewUrl,
+                    error?.message || 'La foto no es válida.'
+                );
+            }
+            return null;
+        })
+        .finally(() => {
+            if (imageState.preparing === preparation) imageState.preparing = null;
+        });
+    imageState.preparing = preparation;
+}
+
+function removeVirtualCatalogImage(card) {
+    const productId = String(card?.dataset.catalogVirtualProductId || '');
+    const imageState = virtualCatalogImageStates.get(productId);
+    if (!card || !imageState) return;
+    imageState.token++;
+    imageState.preparing = null;
+    imageState.prepared = null;
+    imageState.removeImage = true;
+    if (imageState.previewUrl) URL.revokeObjectURL(imageState.previewUrl);
+    imageState.previewUrl = '';
+    const fileInput = card.querySelector('[data-virtual-image-file]');
+    if (fileInput) fileInput.value = '';
+    setVirtualCatalogImage(card, '', 'La foto se quitará al guardar.');
+}
+
+function switchVirtualCatalogPanel(panelName = 'productos') {
+    const showProducts = panelName !== 'sedes';
+    document.getElementById('catalog-virtual-panel-productos')
+        ?.classList.toggle('hidden', !showProducts);
+    document.getElementById('catalog-virtual-panel-sedes')
+        ?.classList.toggle('hidden', showProducts);
+    const productButton = document.getElementById('btn-catalog-virtual-productos');
+    const siteButton = document.getElementById('btn-catalog-virtual-sedes');
+    [
+        [productButton, showProducts],
+        [siteButton, !showProducts]
+    ].forEach(([button, active]) => {
+        if (!button) return;
+        button.classList.toggle('border-emerald-600', active);
+        button.classList.toggle('text-emerald-700', active);
+        button.classList.toggle('border-transparent', !active);
+        button.classList.toggle('text-slate-500', !active);
+    });
+}
+
 function renderCatalogSites(activeIds = [], { loading = false } = {}) {
     const container = document.getElementById('catalog-sites-list');
     if (!container) return;
@@ -264,12 +803,21 @@ function renderCatalogSites(activeIds = [], { loading = false } = {}) {
     });
 }
 
-function openCatalogSitesModal() {
+function closeVirtualCatalogModal() {
+    catalogSitesLoadToken++;
+    virtualCatalogOpenToken++;
+    releaseVirtualCatalogImageStates();
+    closeModal('modal-config-catalogo-publico', 150);
+}
+
+function openVirtualCatalogModal() {
     if (!canManagePublicCatalog()) return;
     const modal = document.getElementById('modal-config-catalogo-publico');
     if (!modal) return;
     const loadToken = ++catalogSitesLoadToken;
     const saveButton = document.getElementById('btn-guardar-config-catalogo');
+    switchVirtualCatalogPanel('productos');
+    renderVirtualCatalogProducts();
     if (saveButton) {
         saveButton.disabled = true;
         saveButton.setAttribute('aria-busy', 'true');
@@ -295,6 +843,14 @@ function openCatalogSitesModal() {
             saveButton.removeAttribute('aria-busy');
             saveButton.classList.remove('opacity-60', 'cursor-wait');
         });
+    runAfterImmediateUiPaint(() => {
+        void ensurePublicCatalogPublished({
+            products: state.productos,
+            locales: state.locales || []
+        }).catch(error => {
+            console.warn('La publicación automática del catálogo sigue pendiente:', error);
+        });
+    });
 }
 
 function saveCatalogSitesFromModal() {
@@ -305,7 +861,10 @@ function saveCatalogSitesFromModal() {
     const activeIds = Array.from(
         document.querySelectorAll('[data-catalog-site-id]:checked')
     ).map(input => input.dataset.catalogSiteId);
-    closeModal('modal-config-catalogo-publico');
+    if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.classList.add('opacity-60', 'cursor-wait');
+    }
     window.mostrarToast?.(
         'Sedes actualizadas',
         'La configuración quedó aplicada y se sincroniza en segundo plano.',
@@ -315,14 +874,21 @@ function saveCatalogSitesFromModal() {
         void saveCatalogSiteSettings({
             activeIds,
             products: state.productos
-        }).catch(error => {
-            console.error('No se pudieron sincronizar las sedes públicas:', error);
-            window.mostrarAlerta?.(
-                'Sincronización pendiente',
-                'No se pudo publicar toda la configuración. Vuelve a intentarlo cuando tengas conexión.',
-                'amber'
-            );
-        });
+        })
+            .then(savedIds => renderCatalogSites(savedIds))
+            .catch(error => {
+                console.error('No se pudieron sincronizar las sedes públicas:', error);
+                window.mostrarAlerta?.(
+                    'Sincronización pendiente',
+                    'No se pudo publicar toda la configuración. Vuelve a intentarlo cuando tengas conexión.',
+                    'amber'
+                );
+            })
+            .finally(() => {
+                if (!saveButton?.isConnected) return;
+                saveButton.disabled = false;
+                saveButton.classList.remove('opacity-60', 'cursor-wait');
+            });
     });
 }
 
@@ -466,11 +1032,38 @@ export async function initInventario() {
         closeModal('modal-producto', 300);
     });
     document.getElementById('btn-config-catalogo-publico')
-        ?.addEventListener('click', openCatalogSitesModal);
+        ?.addEventListener('click', openVirtualCatalogModal);
     document.getElementById('btn-cerrar-config-catalogo')
-        ?.addEventListener('click', () => closeModal('modal-config-catalogo-publico'));
+        ?.addEventListener('click', closeVirtualCatalogModal);
+    document.getElementById('btn-catalog-virtual-productos')
+        ?.addEventListener('click', () => switchVirtualCatalogPanel('productos'));
+    document.getElementById('btn-catalog-virtual-sedes')
+        ?.addEventListener('click', () => switchVirtualCatalogPanel('sedes'));
     document.getElementById('btn-guardar-config-catalogo')
         ?.addEventListener('click', saveCatalogSitesFromModal);
+    const virtualProductsList = document.getElementById('catalog-virtual-products-list');
+    virtualProductsList?.addEventListener('click', event => {
+        const actionButton = event.target.closest('[data-virtual-action]');
+        const card = actionButton?.closest('[data-catalog-virtual-product-id]');
+        if (!actionButton || !card) return;
+        const action = actionButton.dataset.virtualAction;
+        if (action === 'save') saveVirtualCatalogProduct(card);
+        if (action === 'choose-image') {
+            card.querySelector('[data-virtual-image-file]')?.click();
+        }
+        if (action === 'remove-image') removeVirtualCatalogImage(card);
+    });
+    virtualProductsList?.addEventListener('change', event => {
+        if (event.target.matches('[data-virtual-image-file]')) {
+            handleVirtualCatalogImageSelection(event.target);
+        }
+    });
+    virtualProductsList?.addEventListener('input', event => {
+        if (!event.target.matches('[data-virtual-field="description"]')) return;
+        const card = event.target.closest('[data-catalog-virtual-product-id]');
+        const counter = card?.querySelector('[data-virtual-description-count]');
+        if (counter) counter.textContent = `${event.target.value.length}/420`;
+    });
     document.getElementById('catalog-description')
         ?.addEventListener('input', updateCatalogDescriptionCount);
     document.getElementById('btn-catalog-image-select')
