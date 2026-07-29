@@ -601,6 +601,65 @@ function isVisiblePending(record) {
     return getBlockingDependency(record)?.status !== 'failed';
 }
 
+function getCommittedProjectionOperationId(record) {
+    return String(
+        record?.projectionOperationId
+        || record?.payload?.operationId
+        || ''
+    );
+}
+
+function getCommittedBridgeMutations(record) {
+    const operationId = String(record?.payload?.operationId || '');
+    if (!operationId) return [];
+
+    return (Array.isArray(record?.optimisticMutations)
+        ? record.optimisticMutations
+        : [])
+        .filter(mutation => (
+            ['ventas', 'gastos'].includes(String(mutation?.collection || ''))
+            && ['merge', 'delete'].includes(String(mutation?.kind || ''))
+            && Boolean(mutation?.documentId)
+            && (
+                mutation.kind === 'delete'
+                || String(mutation?.data?.lastOperationId || '') === operationId
+            )
+        ))
+        .map(mutation => cloneValue(mutation));
+}
+
+function isVisibleCommittedProjection(record) {
+    return (
+        record
+        && record.ownerId === activeOwnerId
+        && record.status === 'committed'
+        && getCommittedProjectionOperationId(record)
+        && Array.isArray(record.optimisticMutations)
+        && record.optimisticMutations.length > 0
+    );
+}
+
+function baseDocumentAcknowledgesCommittedMutation(
+    mutation,
+    documents,
+    operationId
+) {
+    const documentId = String(mutation?.documentId || '');
+    if (!documentId) return true;
+    if (mutation.kind === 'delete') return !documents.has(documentId);
+
+    const row = documents.get(documentId);
+    if (!row) return false;
+    return (
+        String(row.lastOperationId || '') === operationId
+        || Boolean(
+            row.appliedOperations
+            && typeof row.appliedOperations === 'object'
+            && row.appliedOperations[operationId]
+        )
+    );
+}
+
 function emitWindowEvent(name, detail) {
     if (typeof window === 'undefined') return;
     window.dispatchEvent(new CustomEvent(name, { detail }));
@@ -1051,13 +1110,18 @@ async function processOperations(
             const affectedCollections = getAffectedCollections(record);
             const result = await handler(cloneValue(record.payload), getPublicOperation(record));
             const committedAt = Date.now();
+            const committedBridgeMutations = getCommittedBridgeMutations(record);
             const committedRecord = await persistWorkerStateBestEffort({
                 ...record,
                 status: 'committed',
                 updatedAt: committedAt,
                 committedAt,
+                projectionOperationId: String(record.payload?.operationId || ''),
                 payload: {},
-                optimisticMutations: []
+                // La proyección primaria permanece hasta que onSnapshot
+                // confirme el mismo operationId. Así no reaparece una versión
+                // antigua entre la confirmación de Firebase y su snapshot.
+                optimisticMutations: committedBridgeMutations
             }, 'No se pudo marcar localmente una operación confirmada:');
             operations.set(committedRecord.id, committedRecord);
             emitQueueChanged({ affectedCollections });
@@ -1764,19 +1828,58 @@ export async function getFailedSyncOperations() {
 }
 
 export function applyPendingDocumentMutations(collectionName, rows = []) {
-    const documents = new Map(
+    const baseDocuments = new Map(
         (Array.isArray(rows) ? rows : []).map(row => [String(row.id), row])
     );
+    const documents = new Map(baseDocuments);
+    const visibleRecords = [...operations.values()]
+        .filter(record => (
+            isVisiblePending(record)
+            || isVisibleCommittedProjection(record)
+        ))
+        .sort(compareOperationOrder);
+    const acknowledgedThroughIndex = new Map();
 
-    [...operations.values()]
-        .filter(isVisiblePending)
-        .sort(compareOperationOrder)
-        .forEach(record => {
+    visibleRecords.forEach((record, recordIndex) => {
+        if (record.status !== 'committed') return;
+        const operationId = getCommittedProjectionOperationId(record);
+        record.optimisticMutations.forEach(mutation => {
+            if (
+                mutation?.collection !== collectionName
+                || !mutation.documentId
+                || !baseDocumentAcknowledgesCommittedMutation(
+                    mutation,
+                    baseDocuments,
+                    operationId
+                )
+            ) return;
+            const documentKey = `${collectionName}/${String(mutation.documentId)}`;
+            acknowledgedThroughIndex.set(
+                documentKey,
+                Math.max(
+                    acknowledgedThroughIndex.get(documentKey) ?? -1,
+                    recordIndex
+                )
+            );
+        });
+    });
+
+    visibleRecords.forEach((record, recordIndex) => {
+            const isCommittedProjection = record.status === 'committed';
+
             record.optimisticMutations.forEach(mutation => {
                 if (
                     mutation?.collection !== collectionName
                     || !mutation.documentId
                 ) return;
+                if (
+                    isCommittedProjection
+                    && (acknowledgedThroughIndex.get(
+                        `${collectionName}/${String(mutation.documentId)}`
+                    ) ?? -1) >= recordIndex
+                ) {
+                    return;
+                }
 
                 const id = String(mutation.documentId);
                 if (mutation.kind === 'delete') {
@@ -1808,8 +1911,15 @@ export function applyPendingDocumentMutations(collectionName, rows = []) {
                     documents.set(id, {
                         ...next,
                         id,
-                        sincronizacionPendiente: true,
-                        sincronizacionOperacionId: record.id
+                        ...(isCommittedProjection
+                            ? {
+                                sincronizacionPendiente: false,
+                                sincronizacionOperacionId: ''
+                            }
+                            : {
+                                sincronizacionPendiente: true,
+                                sincronizacionOperacionId: record.id
+                            })
                     });
                     return;
                 }
@@ -1819,11 +1929,18 @@ export function applyPendingDocumentMutations(collectionName, rows = []) {
                     ...(documents.get(id) || {}),
                     ...(mutation.data || {}),
                     id,
-                    sincronizacionPendiente: true,
-                    sincronizacionOperacionId: record.id
+                    ...(isCommittedProjection
+                        ? {
+                            sincronizacionPendiente: false,
+                            sincronizacionOperacionId: ''
+                        }
+                        : {
+                            sincronizacionPendiente: true,
+                            sincronizacionOperacionId: record.id
+                        })
                 });
             });
-        });
+    });
 
     return [...documents.values()];
 }

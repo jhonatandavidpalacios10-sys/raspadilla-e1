@@ -21,6 +21,12 @@ const analysisLoadErrors = new Set();
 let analysisByDate = new Map();
 let currentRangeSummary = createEmptyAnalysisSummary();
 let breakdownCloseTimer = null;
+let breakdownShowTimer = null;
+let analysisHasRendered = false;
+let analysisRequestGeneration = 0;
+let renderedAnalysisKey = '';
+let pendingAnalysisKey = '';
+let lastAnalysisDataSignature = '';
 
 function toAmount(value) {
     const amount = Number(value);
@@ -106,6 +112,40 @@ function buildAnalysisAggregates(ventas, gastos) {
     return { rangeSummary, groupedByDate };
 }
 
+function getAnalysisDataSignature(ventas, gastos) {
+    const saleRows = ventas.map(sale => [
+        String(sale.id || ''),
+        Number(sale.revision || 0),
+        String(sale.lastOperationId || ''),
+        String(sale.estado || ''),
+        Number(sale.total || 0),
+        Number(sale.pago_efectivo ?? sale.pagoEfectivo ?? 0),
+        Number(sale.pago_yape ?? sale.pagoYape ?? 0),
+        String(sale.metodo_pago || sale.metodoFinal || ''),
+        String(sale.localId || ''),
+        String(sale.localNombre || ''),
+        obtenerNombreCliente(sale),
+        Number(sale.fechaHora || sale.timestamp?.seconds || 0),
+        (Array.isArray(sale.items) ? sale.items : []).map(item => [
+            String(item?.nombre || ''),
+            Number(item?.cantidad || 0),
+            Number(item?.precio || 0),
+            String(item?.categoria || '')
+        ])
+    ]).sort((left, right) => left[0].localeCompare(right[0]));
+    const expenseRows = gastos.map(expense => [
+        String(expense.id || ''),
+        String(expense.lastOperationId || ''),
+        Number(expense.monto || 0),
+        String(expense.descripcion || ''),
+        String(expense.categoria || expense.tipo || ''),
+        String(expense.localId || ''),
+        String(expense.localNombre || ''),
+        Number(expense.fechaHora || expense.timestamp?.seconds || 0)
+    ]).sort((left, right) => left[0].localeCompare(right[0]));
+    return JSON.stringify([saleRows, expenseRows]);
+}
+
 function toLocalDateInput(date) {
     return [
         date.getFullYear(),
@@ -159,6 +199,29 @@ function ensureSelectedDayExpenseCard() {
         <p class="text-sm md:text-base font-bold text-red-400" id="selectedDayGastos">${formatMoney(0)}</p>
     `;
     cardsGrid.appendChild(expenseCard);
+}
+
+function handleSelectedTransactionsClick(event) {
+    const actionButton = event.target.closest('button[data-analysis-action]');
+    if (actionButton) {
+        const recordId = actionButton.dataset.recordId || '';
+        const kind = actionButton.dataset.recordKind || '';
+        const action = actionButton.dataset.analysisAction;
+        if (action === 'edit') {
+            editarOperacionCaja(
+                recordId,
+                kind,
+                Number(actionButton.dataset.recordAmount) || 0
+            );
+        } else if (action === 'delete') {
+            eliminarOperacionCaja(recordId, kind);
+        }
+        return;
+    }
+
+    const card = event.target.closest('[data-analysis-transaction-card]');
+    card?.querySelector('[data-analysis-transaction-detail]')
+        ?.classList.toggle('hidden');
 }
 
 export function initAnalisis() {
@@ -219,11 +282,17 @@ export function initAnalisis() {
         const trigger = event.target.closest('[data-analysis-breakdown]');
         if (trigger) showBreakdown(trigger.dataset.analysisBreakdown, null);
     }, eventOptions);
+    document.getElementById('selectedDayTransactions')?.addEventListener(
+        'click',
+        handleSelectedTransactionsClick,
+        eventOptions
+    );
 
     updateAnalysisRange(); 
 }
 
 export function destroyAnalisis() {
+    analysisRequestGeneration++;
     if (unsubscribeVentas) {
         unsubscribeVentas();
         unsubscribeVentas = null;
@@ -245,18 +314,62 @@ export function destroyAnalisis() {
     analisisInicializado = false;
     analysisByDate = new Map();
     currentRangeSummary = createEmptyAnalysisSummary();
+    analysisHasRendered = false;
+    renderedAnalysisKey = '';
+    pendingAnalysisKey = '';
+    lastAnalysisDataSignature = '';
     window.currentSelectedDayObj = null;
-    closeBreakdownModal();
+    if (breakdownCloseTimer) clearTimeout(breakdownCloseTimer);
+    if (breakdownShowTimer) clearTimeout(breakdownShowTimer);
+    breakdownCloseTimer = null;
+    breakdownShowTimer = null;
+    const breakdownModal = document.getElementById('breakdownModal');
+    breakdownModal?.classList.add('hidden', 'opacity-0');
+
+    const summary = document.getElementById('analysisRangeSummary');
+    const calendar = document.getElementById('calendarGrid');
+    const monthLabel = document.getElementById('calendarMonthLabel');
+    const dateLabel = document.getElementById('selectedDateLabel');
+    const dayIncome = document.getElementById('selectedDayIngresos');
+    const dayNet = document.getElementById('selectedDayGanancias');
+    const dayExpenses = document.getElementById('selectedDayGastos');
+    const transactions = document.getElementById('selectedDayTransactions');
+    if (summary) {
+        summary.innerHTML = '';
+        summary.removeAttribute('aria-busy');
+    }
+    if (calendar) calendar.innerHTML = '';
+    if (monthLabel) monthLabel.textContent = 'Mes Año';
+    if (dateLabel) dateLabel.textContent = 'Selecciona un día';
+    if (dayIncome) dayIncome.textContent = formatMoney(0);
+    if (dayNet) dayNet.textContent = formatMoney(0);
+    if (dayExpenses) dayExpenses.textContent = formatMoney(0);
+    if (transactions) transactions.innerHTML = '';
 }
 
 function finishAnalysisLoad() {
     if (!readyV || !readyG) return;
     if (analysisLoadErrors.size === 0) {
         processAndRenderAnalysis();
+        analysisHasRendered = true;
+        renderedAnalysisKey = pendingAnalysisKey;
+        document.getElementById('analysisRangeSummary')?.removeAttribute('aria-busy');
         return;
     }
 
     const summary = document.getElementById('analysisRangeSummary');
+    summary?.removeAttribute('aria-busy');
+    if (
+        analysisHasRendered
+        && renderedAnalysisKey === pendingAnalysisKey
+    ) {
+        window.mostrarToast?.(
+            'Análisis sin conexión',
+            'Se mantienen los últimos datos disponibles.',
+            'amber'
+        );
+        return;
+    }
     if (summary) {
         summary.innerHTML = `
             <div class="col-span-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-center">
@@ -277,22 +390,67 @@ function updateAnalysisRange() {
 
     if (unsubscribeVentas) unsubscribeVentas();
     if (unsubscribeGastos) unsubscribeGastos();
+    const requestGeneration = ++analysisRequestGeneration;
+    const localFilter = document.getElementById('analisisLocalFilter');
+    const selectedLocal = localFilter ? localFilter.value : 'todas';
+    const nextAnalysisKey = `${fS}:${fE}:${selectedLocal}`;
+    const canKeepRenderedData = (
+        analysisHasRendered
+        && renderedAnalysisKey === nextAnalysisKey
+    );
+    pendingAnalysisKey = nextAnalysisKey;
 
     const cSum = document.getElementById('analysisRangeSummary');
-    if(cSum) cSum.innerHTML = '<div class="col-span-4 text-center py-2"><i data-lucide="loader-2" class="w-5 h-5 animate-spin mx-auto text-sky-500"></i></div>';
-    if(window.lucide && cSum) window.lucide.createIcons({ root: cSum });
+    if (cSum) {
+        cSum.setAttribute('aria-busy', 'true');
+        if (!canKeepRenderedData) {
+            cSum.innerHTML = '<div class="col-span-4 text-center py-2"><i data-lucide="loader-2" class="w-5 h-5 animate-spin mx-auto text-sky-500"></i></div>';
+            if(window.lucide) window.lucide.createIcons({ root: cSum });
+        }
+    }
+    if (!canKeepRenderedData) {
+        analysisHasRendered = false;
+        renderedAnalysisKey = '';
+        lastAnalysisDataSignature = '';
+        analysisData = [];
+        analysisGastos = [];
+        analysisByDate = new Map();
+        currentRangeSummary = createEmptyAnalysisSummary();
+        window.currentSelectedDayObj = null;
+        renderCalendar(analysisByDate);
+        const dateLabel = document.getElementById('selectedDateLabel');
+        const dayIncome = document.getElementById('selectedDayIngresos');
+        const dayNet = document.getElementById('selectedDayGanancias');
+        const dayExpenses = document.getElementById('selectedDayGastos');
+        const transactions = document.getElementById('selectedDayTransactions');
+        if (dateLabel) dateLabel.textContent = 'Selecciona un día';
+        if (dayIncome) dayIncome.textContent = formatMoney(0);
+        if (dayNet) dayNet.textContent = formatMoney(0);
+        if (dayExpenses) dayExpenses.textContent = formatMoney(0);
+        if (transactions) transactions.innerHTML = '';
+    }
 
     readyV = false;
     readyG = false;
     analysisLoadErrors.clear();
-    const localFilter = document.getElementById('analisisLocalFilter');
-    const selectedLocal = localFilter ? localFilter.value : 'todas';
 
-    unsubscribeVentas = subscribeSalesRange(fS, fE, rows => {
+    unsubscribeVentas = subscribeSalesRange(fS, fE, (rows, metadata) => {
+        if (requestGeneration !== analysisRequestGeneration) return;
+        if (
+            rows.length === 0
+            && metadata?.fromCache === true
+            && metadata?.hasPendingWrites !== true
+            && (
+                analysisData.length > 0
+                || metadata?.emptyCacheSettled !== true
+            )
+            && (typeof navigator === 'undefined' || navigator.onLine !== false)
+        ) return;
         analysisData = rows;
         readyV = true;
         finishAnalysisLoad();
     }, error => {
+        if (requestGeneration !== analysisRequestGeneration) return;
         console.error("Error cargando ventas para análisis:", error);
         analysisData = [];
         readyV = true;
@@ -300,11 +458,23 @@ function updateAnalysisRange() {
         finishAnalysisLoad();
     }, selectedLocal);
 
-    unsubscribeGastos = subscribeExpensesRange(fS, fE, rows => {
+    unsubscribeGastos = subscribeExpensesRange(fS, fE, (rows, metadata) => {
+        if (requestGeneration !== analysisRequestGeneration) return;
+        if (
+            rows.length === 0
+            && metadata?.fromCache === true
+            && metadata?.hasPendingWrites !== true
+            && (
+                analysisGastos.length > 0
+                || metadata?.emptyCacheSettled !== true
+            )
+            && (typeof navigator === 'undefined' || navigator.onLine !== false)
+        ) return;
         analysisGastos = rows;
         readyG = true;
         finishAnalysisLoad();
     }, error => {
+        if (requestGeneration !== analysisRequestGeneration) return;
         console.error("Error cargando gastos para análisis:", error);
         analysisGastos = [];
         readyG = true;
@@ -343,6 +513,21 @@ function processAndRenderAnalysis() {
         }
         if (mostrar) filteredGastos.push(g); 
     });
+
+    const dataSignature = getAnalysisDataSignature(
+        filteredVentas,
+        filteredGastos
+    );
+    if (
+        analysisHasRendered
+        && renderedAnalysisKey === pendingAnalysisKey
+        && dataSignature === lastAnalysisDataSignature
+    ) {
+        document.getElementById('analysisRangeSummary')
+            ?.removeAttribute('aria-busy');
+        return;
+    }
+    lastAnalysisDataSignature = dataSignature;
 
     // Una sola agrupación por fecha alimenta el resumen, calendario y detalle.
     // Evita volver a recorrer todo el rango por cada casilla del calendario.
@@ -525,33 +710,43 @@ function showDayDetails(daySummary) {
     let lHtml = '';
     
     ventas.forEach(v => {
-        // FIX: Mostrar hora correcta o actual si no hay timestamp temporal
         const time = getOperationTime(v);
-        const num = v.id.split('-')[1] || '--';
-        const cantItems = v.items ? v.items.reduce((s,i) => s + i.cantidad, 0) : 0;
-        const localInfo = v.localNombre ? ` • <span class="text-[9px] uppercase tracking-wider">${v.localNombre}</span>` : '';
+        const saleId = String(v.id || '');
+        const safeSaleId = escaparHtml(saleId);
+        const num = escaparHtml(saleId.split('-')[1] || '--');
+        const items = Array.isArray(v.items) ? v.items : [];
+        const cantItems = items.reduce(
+            (sum, item) => sum + (Number(item?.cantidad) || 0),
+            0
+        );
+        const localInfo = v.localNombre
+            ? ` • <span class="text-[9px] uppercase tracking-wider">${escaparHtml(v.localNombre)}</span>`
+            : '';
         const clienteNombre = obtenerNombreCliente(v);
         const clienteInfo = clienteNombre ? `<p class="text-[10px] text-sky-500 font-bold mt-0.5 flex items-center gap-1"><i data-lucide="user" class="w-3 h-3 shrink-0"></i><span class="truncate">Cliente: ${escaparHtml(clienteNombre)}</span></p>` : '';
-        const metodoPago = String(v.metodo_pago || v.metodoFinal || 'Efectivo').toUpperCase();
+        const metodoPago = escaparHtml(
+            String(v.metodo_pago || v.metodoFinal || 'Efectivo').toUpperCase()
+        );
         
-        let iHtml = `<div id="det-${v.id}" class="hidden mt-3 pt-3 border-t border-slate-200 dark:border-slate-700/50 space-y-1.5">`;
-        v.items?.forEach(i => { 
-            iHtml += `<div class="flex justify-between text-xs items-center"><p class="text-slate-500 pr-2 leading-tight"><span class="text-sky-500 font-bold">${i.cantidad}x</span> ${i.nombre}</p><p class="text-[10px] text-emerald-500 font-bold">${formatMoney(i.precio * i.cantidad)}</p></div>`; 
+        let iHtml = '<div data-analysis-transaction-detail class="hidden mt-3 pt-3 border-t border-slate-200 dark:border-slate-700/50 space-y-1.5">';
+        items.forEach(i => {
+            const quantity = Number(i?.cantidad) || 0;
+            const price = Number(i?.precio) || 0;
+            iHtml += `<div class="flex justify-between text-xs items-center"><p class="text-slate-500 pr-2 leading-tight"><span class="text-sky-500 font-bold">${escaparHtml(quantity)}x</span> ${escaparHtml(i?.nombre || 'Producto')}</p><p class="text-[10px] text-emerald-500 font-bold">${formatMoney(price * quantity)}</p></div>`;
         });
         
-        // Botones de acción dinámicos para administradores (Igual que en Caja)
         if (isAdmin) {
             iHtml += `
             <div class="flex gap-1.5 mt-3 justify-end border-t border-slate-200 dark:border-slate-700/30 pt-2">
-                <button onclick="window.editarOperacionCaja('${v.id}', 'venta', ${Number(v.total)})" class="text-slate-500 hover:text-amber-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
-                <button onclick="window.eliminarOperacionCaja('${v.id}', 'venta')" class="text-slate-500 hover:text-red-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Anular</button>
+                <button data-analysis-action="edit" data-record-id="${safeSaleId}" data-record-kind="venta" data-record-amount="${escaparHtml(Number(v.total) || 0)}" class="text-slate-500 hover:text-amber-500 bg-slate-50 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
+                <button data-analysis-action="delete" data-record-id="${safeSaleId}" data-record-kind="venta" class="text-slate-500 hover:text-red-500 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Anular</button>
             </div>
             `;
         }
         iHtml += `</div>`;
         
         lHtml += `
-            <div class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col cursor-pointer hover:border-emerald-500/50 transition-colors group mb-2 shadow-sm" onclick="if(event.target.closest('button')) return; document.getElementById('det-${v.id}').classList.toggle('hidden')">
+            <div data-analysis-transaction-card class="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col cursor-pointer hover:border-emerald-500/50 transition-colors group mb-2 shadow-sm">
                 <div class="flex justify-between items-center">
                     <div class="flex items-center gap-3">
                         <div class="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center text-emerald-500 shrink-0 border border-emerald-200 dark:border-emerald-500/20"><i data-lucide="shopping-cart" class="w-4 h-4"></i></div>
@@ -562,8 +757,8 @@ function showDayDetails(daySummary) {
                         </div>
                     </div>
                     <div class="text-right flex flex-col items-end">
-                        <p class="text-sm font-black text-emerald-500">+ ${formatMoney(v.total)}</p>
-                        <p class="text-[9px] text-slate-400 font-bold mt-0.5">${time} • ${metodoPago}</p>
+                        <p class="text-sm font-black text-emerald-500">+ ${formatMoney(Number(v.total) || 0)}</p>
+                        <p class="text-[9px] text-slate-400 font-bold mt-0.5">${escaparHtml(time)} • ${metodoPago}</p>
                     </div>
                 </div>
                 ${iHtml}
@@ -571,34 +766,37 @@ function showDayDetails(daySummary) {
     });
     
     gastos.forEach(g => { 
-        // FIX: Mostrar hora correcta o actual si no hay timestamp temporal
         const time = getOperationTime(g);
-        const localInfo = g.localNombre && g.localNombre !== 'Global' ? ` • <span class="text-[9px] uppercase tracking-wider">${g.localNombre}</span>` : '';
+        const expenseId = String(g.id || '');
+        const safeExpenseId = escaparHtml(expenseId);
+        const localInfo = g.localNombre && g.localNombre !== 'Global'
+            ? ` • <span class="text-[9px] uppercase tracking-wider">${escaparHtml(g.localNombre)}</span>`
+            : '';
         
-        let gHtml = `<div id="det-${g.id}" class="hidden mt-3 pt-2">`;
+        let gHtml = '<div data-analysis-transaction-detail class="hidden mt-3 pt-2">';
         if (isAdmin) {
             gHtml += `
             <div class="flex gap-1.5 justify-end border-t border-red-200 dark:border-red-500/20 pt-2">
-                <button onclick="window.editarOperacionCaja('${g.id}', 'gasto', ${Number(g.monto)})" class="text-slate-500 hover:text-amber-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
-                <button onclick="window.eliminarOperacionCaja('${g.id}', 'gasto')" class="text-slate-500 hover:text-red-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Borrar</button>
+                <button data-analysis-action="edit" data-record-id="${safeExpenseId}" data-record-kind="gasto" data-record-amount="${escaparHtml(Number(g.monto) || 0)}" class="text-slate-500 hover:text-amber-500 bg-white dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Editar</button>
+                <button data-analysis-action="delete" data-record-id="${safeExpenseId}" data-record-kind="gasto" class="text-slate-500 hover:text-red-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-1.5 rounded transition-colors flex items-center gap-1 text-[10px] uppercase font-bold"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Borrar</button>
             </div>
             `;
         }
         gHtml += `</div>`;
 
         lHtml += `
-            <div class="bg-red-50 dark:bg-red-500/5 p-3.5 rounded-xl border border-red-200 dark:border-red-500/20 flex flex-col cursor-pointer hover:border-red-300 dark:hover:border-red-500/40 transition-colors group mb-2 shadow-sm" onclick="if(event.target.closest('button')) return; document.getElementById('det-${g.id}').classList.toggle('hidden')">
+            <div data-analysis-transaction-card class="bg-red-50 dark:bg-red-500/5 p-3.5 rounded-xl border border-red-200 dark:border-red-500/20 flex flex-col cursor-pointer hover:border-red-300 dark:hover:border-red-500/40 transition-colors group mb-2 shadow-sm">
                 <div class="flex justify-between items-center">
                     <div class="flex items-center gap-3">
                         <div class="w-8 h-8 rounded-full bg-red-100 dark:bg-red-500/10 flex items-center justify-center text-red-500 shrink-0 border border-red-200 dark:border-red-500/20"><i data-lucide="trending-down" class="w-4 h-4"></i></div>
                         <div>
                             <p class="text-xs font-bold text-red-500">Gasto</p>
-                            <p class="text-[10px] text-slate-500">${g.descripcion} ${localInfo}</p>
+                            <p class="text-[10px] text-slate-500">${escaparHtml(g.descripcion || 'Sin descripción')} ${localInfo}</p>
                         </div>
                     </div>
                     <div class="text-right">
-                        <p class="text-sm font-black text-red-500">- ${formatMoney(g.monto)}</p>
-                        <p class="text-[9px] text-red-400/70 font-bold mt-0.5">${time}</p>
+                        <p class="text-sm font-black text-red-500">- ${formatMoney(Number(g.monto) || 0)}</p>
+                        <p class="text-[9px] text-red-400/70 font-bold mt-0.5">${escaparHtml(time)}</p>
                     </div>
                 </div>
                 ${gHtml}
@@ -614,6 +812,7 @@ function showDayDetails(daySummary) {
  * ni a filtrar Firestore, por lo que sus cifras son las mismas de la tarjeta.
  */
 function showBreakdown(type, dayObj) {
+    if (!analisisInicializado) return;
     const modal = document.getElementById('breakdownModal');
     const title = document.getElementById('brkTitle');
     const paymentContainer = document.getElementById('brkPaymentSummary');
@@ -777,9 +976,17 @@ function showBreakdown(type, dayObj) {
         clearTimeout(breakdownCloseTimer);
         breakdownCloseTimer = null;
     }
+    if (breakdownShowTimer) {
+        clearTimeout(breakdownShowTimer);
+        breakdownShowTimer = null;
+    }
     categoriesContainer.classList.remove('hidden');
     modal.classList.remove('hidden');
-    setTimeout(() => modal.classList.remove('opacity-0'), 10);
+    breakdownShowTimer = setTimeout(() => {
+        breakdownShowTimer = null;
+        if (!analisisInicializado) return;
+        modal.classList.remove('opacity-0');
+    }, 10);
     if(window.lucide) window.lucide.createIcons({ root: modal });
 }
 
@@ -787,6 +994,8 @@ function closeBreakdownModal() {
     const m = document.getElementById('breakdownModal'); 
     if(m) {
         if (breakdownCloseTimer) clearTimeout(breakdownCloseTimer);
+        if (breakdownShowTimer) clearTimeout(breakdownShowTimer);
+        breakdownShowTimer = null;
         m.classList.add('opacity-0'); 
         breakdownCloseTimer = setTimeout(() => {
             m.classList.add('hidden');

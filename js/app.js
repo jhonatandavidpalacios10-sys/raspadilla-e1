@@ -398,7 +398,6 @@ const lazyViews = {
 };
 
 const loadedViewModules = new Map();
-const persistentInitializedViews = new Set();
 const activeViewModules = new Set();
 const viewActivationPromises = new Map();
 const viewImportPromises = new Map();
@@ -414,6 +413,7 @@ let sessionRetryContextKey = '';
 let sessionRetryAttempts = 0;
 let viewPrefetchIdleHandle = null;
 let viewPrefetchTimer = null;
+let viewPrefetchGeneration = 0;
 
 function importViewModuleCode(viewName) {
     const config = lazyViews[viewName];
@@ -440,6 +440,7 @@ function importViewModuleCode(viewName) {
 }
 
 function cancelRoleViewPrefetch() {
+    viewPrefetchGeneration++;
     if (
         viewPrefetchIdleHandle !== null
         && typeof globalThis.cancelIdleCallback === 'function'
@@ -453,21 +454,16 @@ function cancelRoleViewPrefetch() {
 
 function scheduleRoleViewPrefetch(role) {
     cancelRoleViewPrefetch();
-
-    const connection = navigator.connection
-        || navigator.mozConnection
-        || navigator.webkitConnection;
-    if (
-        connection?.saveData
-        || ['slow-2g', '2g'].includes(String(connection?.effectiveType || ''))
-    ) {
-        return;
-    }
+    const generation = viewPrefetchGeneration;
 
     const normalizedRole = String(role || '').trim().toLowerCase();
-    const preferredViews = ['admin', 'administrador', 'master'].includes(normalizedRole)
-        ? ['pedidos', 'caja', 'analisis']
-        : ['pedidos'];
+    const preferredViews = [
+        'pedidos',
+        'caja',
+        'analisis',
+        'usuarios',
+        ...(normalizedRole === 'master' ? ['respaldo'] : [])
+    ];
     const allowedViews = preferredViews.filter(viewName => {
         const nav = document.getElementById(`nav-${viewName}`);
         return nav && !nav.classList.contains('hidden');
@@ -475,24 +471,36 @@ function scheduleRoleViewPrefetch(role) {
     if (allowedViews.length === 0) return;
 
     const prefetch = () => {
+        if (generation !== viewPrefetchGeneration) return;
         viewPrefetchIdleHandle = null;
         viewPrefetchTimer = null;
-        allowedViews.reduce(
-            (chain, viewName) => chain.then(() => (
-                importViewModuleCode(viewName).catch(error => {
+        void Promise.allSettled(
+            allowedViews.map(async viewName => {
+                try {
+                    await loadViewModule(viewName);
+                    if (
+                        generation === viewPrefetchGeneration
+                        && !activeViewModules.has(viewName)
+                    ) {
+                        await loadViewModule(viewName);
+                    }
+                } catch (error) {
                     console.debug(`No se pudo precargar ${viewName}:`, error);
-                })
-            )),
-            Promise.resolve()
+                }
+            })
         );
     };
 
-    if (typeof globalThis.requestIdleCallback === 'function') {
-        viewPrefetchIdleHandle = globalThis.requestIdleCallback(prefetch, {
-            timeout: 4000
+    if (
+        typeof requestAnimationFrame === 'function'
+        && document.visibilityState !== 'hidden'
+    ) {
+        requestAnimationFrame(() => {
+            if (generation !== viewPrefetchGeneration) return;
+            viewPrefetchTimer = setTimeout(prefetch, 0);
         });
     } else {
-        viewPrefetchTimer = setTimeout(prefetch, 1200);
+        viewPrefetchTimer = setTimeout(prefetch, 0);
     }
 }
 
@@ -505,15 +513,10 @@ async function loadViewModule(viewName) {
 
     const activation = (async () => {
         const module = await importViewModuleCode(viewName);
-        if (viewName === 'usuarios') {
-            if (!persistentInitializedViews.has(viewName)) {
-                await config.init(module);
-                persistentInitializedViews.add(viewName);
-            }
-            await module.cargarUsuariosYLocales();
-        } else {
-            await config.init(module);
+        if ((viewLifecycleGenerations.get(viewName) || 0) !== lifecycleGeneration) {
+            return module;
         }
+        await config.init(module);
         if ((viewLifecycleGenerations.get(viewName) || 0) !== lifecycleGeneration) {
             config.destroy(module);
             return module;
@@ -553,6 +556,23 @@ function stopAllViewModules() {
     currentLiveView = 'ventas';
 }
 
+function reconcileAllowedViewModules() {
+    let activeViewWasRevoked = false;
+    Object.keys(lazyViews).forEach(viewName => {
+        const nav = document.getElementById(`nav-${viewName}`);
+        const isAllowed = Boolean(nav && !nav.classList.contains('hidden'));
+        if (isAllowed) return;
+        if (
+            activeViewModules.has(viewName)
+            || viewActivationPromises.has(viewName)
+        ) {
+            stopViewModule(viewName);
+        }
+        if (currentLiveView === viewName) activeViewWasRevoked = true;
+    });
+    if (activeViewWasRevoked) window.switchView?.('ventas');
+}
+
 function installLazyNavigation() {
     if (window.__iceposLazyNavigationInstalled || typeof window.switchView !== 'function') return;
     window.__iceposLazyNavigationInstalled = true;
@@ -563,20 +583,37 @@ function installLazyNavigation() {
             switchViewBase(viewName);
             return;
         }
-        if (currentLiveView !== viewName) stopViewModule(currentLiveView);
 
         switchViewBase(viewName);
         currentLiveView = viewName;
+        const navigationSessionToken = sessionToken;
+        const navigationLifecycleGeneration = (
+            viewLifecycleGenerations.get(viewName) || 0
+        );
 
         try {
             await loadViewModule(viewName);
-            if (currentLiveView !== viewName) {
-                stopViewModule(viewName);
-            } else if (lazyViews[viewName] && !activeViewModules.has(viewName)) {
+            if (lazyViews[viewName] && !activeViewModules.has(viewName)) {
+                const nav = document.getElementById(`nav-${viewName}`);
+                if (
+                    navigationSessionToken !== sessionToken
+                    || (
+                        viewLifecycleGenerations.get(viewName) || 0
+                    ) !== navigationLifecycleGeneration
+                    || !nav
+                    || nav.classList.contains('hidden')
+                ) return;
                 await loadViewModule(viewName);
             }
         } catch (error) {
             console.error(`No se pudo abrir la vista ${viewName}:`, error);
+            if (
+                navigationSessionToken !== sessionToken
+                || (
+                    viewLifecycleGenerations.get(viewName) || 0
+                ) !== navigationLifecycleGeneration
+                || currentLiveView !== viewName
+            ) return;
             window.mostrarToast?.(
                 'No se pudo cargar',
                 'Verifica tu conexión e inténtalo nuevamente.',
@@ -588,7 +625,11 @@ function installLazyNavigation() {
 
 async function initializeUserSession(context) {
     const key = `${context.uid}:${context.role}:${context.localId || ''}`;
-    if (key === activeSessionKey) return;
+    if (key === activeSessionKey) {
+        reconcileAllowedViewModules();
+        scheduleRoleViewPrefetch(context.role);
+        return;
+    }
     cancelRoleViewPrefetch();
     const token = ++sessionToken;
     const contextChanged = Boolean(activeSessionKey && activeSessionKey !== key);
@@ -623,7 +664,7 @@ async function initializeUserSession(context) {
         role: context.role,
         localId: context.localId || ''
     });
-    if (cachedSession.locationsLoaded) populateLocationFilters();
+    populateLocationFilters();
     window.renderProductosVenta?.();
     window.actualizarCarritoUI?.();
     activeSessionKey = key;
@@ -631,6 +672,9 @@ async function initializeUserSession(context) {
 
     try {
         initVentas();
+        // Las secciones permitidas cargan código y datos en segundo plano
+        // apenas inicia la sesión. Cambiar de vista nunca espera Firebase.
+        scheduleRoleViewPrefetch(context.role);
         void resumeSyncQueue({ ownerId: context.uid })
             .then(syncSummary => {
                 if (token !== sessionToken || syncSummary.failed <= 0) return;
@@ -681,16 +725,16 @@ async function initializeUserSession(context) {
         window.renderProductosVenta?.();
         window.actualizarCarritoUI?.();
         sessionRetryAttempts = 0;
-        scheduleRoleViewPrefetch(context.role);
     } catch (error) {
-        if (token === sessionToken) activeSessionKey = '';
         console.error('Error inicializando la sesión:', error);
+        if (token !== sessionToken) return;
+        activeSessionKey = '';
         window.mostrarToast?.(
             'Sincronización incompleta',
             'La sesión inició, pero algunos datos no pudieron cargarse.',
             'amber'
         );
-        if (token === sessionToken && sessionRetryAttempts < 3) {
+        if (sessionRetryAttempts < 3) {
             sessionRetryAttempts++;
             sessionRetryTimer = setTimeout(() => {
                 if (token === sessionToken && auth.currentUser?.uid === context.uid) {
@@ -732,7 +776,10 @@ function cleanupUserSession() {
 
 document.addEventListener("DOMContentLoaded", () => {
     window.addEventListener('icepos:sync-operation-complete', event => {
-        const type = event.detail?.operation?.type;
+        const operation = event.detail?.operation;
+        const currentUid = String(state.currentUser?.uid || '');
+        if (!currentUid || String(operation?.ownerId || '') !== currentUid) return;
+        const type = operation.type;
         if (type === 'sale.save') {
             window.mostrarToast?.(
                 'Venta sincronizada',
@@ -743,6 +790,8 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     window.addEventListener('icepos:sync-operation-failed', event => {
         const operation = event.detail?.operation;
+        const currentUid = String(state.currentUser?.uid || '');
+        if (!currentUid || String(operation?.ownerId || '') !== currentUid) return;
         const message = event.detail?.error?.message
             || 'La operación local necesita revisión.';
         const title = operation?.type === 'sale.save'

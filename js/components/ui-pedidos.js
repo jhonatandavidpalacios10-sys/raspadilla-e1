@@ -30,8 +30,13 @@ let pedidosGlobales = [];
 let filtroLocalPedidos = 'todas'; 
 const operacionesPedidoEnCurso = new Set();
 let lockRefreshTimer = null;
+let pedidosRetryTimer = null;
+let pedidosRetryAttempts = 0;
 let editLockAcquisitionInProgress = false;
 let pedidosLifecycleGeneration = 0;
+let pedidosSubscriptionGeneration = 0;
+let lastPendingMarkup = null;
+let lastReadyMarkup = null;
 const TEMPORARY_EDIT_LOCK_ERROR_CODES = new Set([
     'aborted',
     'cancelled',
@@ -104,7 +109,43 @@ function isAdminUser() {
 
 function handleFiltroPedidosChange(event) {
     filtroLocalPedidos = event.target.value;
+    if (lockRefreshTimer) {
+        clearTimeout(lockRefreshTimer);
+        lockRefreshTimer = null;
+    }
+    if (pedidosRetryTimer) {
+        clearTimeout(pedidosRetryTimer);
+        pedidosRetryTimer = null;
+    }
+    pedidosRetryAttempts = 0;
+    pedidosGlobales = [];
+    const pendingList = document.getElementById('pedidos-pendientes-list');
+    const readyList = document.getElementById('pedidos-listos-list');
+    const pendingCounter = document.getElementById('contador-pendientes');
+    const readyCounter = document.getElementById('contador-listos');
+    const loadingMarkup = '<p class="text-xs text-slate-500 text-center py-4">Actualizando pedidos de la sede…</p>';
+    if (pendingList) pendingList.innerHTML = loadingMarkup;
+    if (readyList) readyList.innerHTML = loadingMarkup;
+    if (pendingCounter) pendingCounter.textContent = '0';
+    if (readyCounter) readyCounter.textContent = '0';
+    lastPendingMarkup = loadingMarkup;
+    lastReadyMarkup = loadingMarkup;
     iniciarEscuchaPedidos();
+}
+
+function schedulePedidosRetry(lifecycleGeneration, subscriptionGeneration) {
+    if (pedidosRetryTimer) clearTimeout(pedidosRetryTimer);
+    pedidosRetryAttempts++;
+    const delay = Math.min(30_000, 2_000 * (2 ** (pedidosRetryAttempts - 1)));
+    pedidosRetryTimer = setTimeout(() => {
+        pedidosRetryTimer = null;
+        if (
+            lifecycleGeneration !== pedidosLifecycleGeneration
+            || subscriptionGeneration !== pedidosSubscriptionGeneration
+            || !pedidosInicializado
+        ) return;
+        iniciarEscuchaPedidos();
+    }, delay);
 }
 
 function handlePedidosClick(event) {
@@ -155,18 +196,55 @@ export function initPedidos() {
 
 function iniciarEscuchaPedidos() {
     if(unsubscribePedidos) unsubscribePedidos();
+    const subscriptionGeneration = ++pedidosSubscriptionGeneration;
+    const lifecycleGeneration = pedidosLifecycleGeneration;
     const hoy = getTodayDateStr(); 
 
-    unsubscribePedidos = subscribeDailySales(rows => {
+    unsubscribePedidos = subscribeDailySales((rows, metadata) => {
+        if (
+            subscriptionGeneration !== pedidosSubscriptionGeneration
+            || lifecycleGeneration !== pedidosLifecycleGeneration
+        ) return;
+        if (metadata?.hasRemoteSnapshot === false && rows.length === 0) return;
+        if (
+            rows.length === 0
+            && metadata?.fromCache === true
+            && metadata?.hasPendingWrites !== true
+            && metadata?.emptyCacheSettled !== true
+            && (typeof navigator === 'undefined' || navigator.onLine !== false)
+        ) return;
+        if (pedidosRetryTimer) {
+            clearTimeout(pedidosRetryTimer);
+            pedidosRetryTimer = null;
+        }
+        pedidosRetryAttempts = 0;
         pedidosGlobales = rows;
         renderPedidosUI();
     }, (error) => {
+        if (
+            subscriptionGeneration !== pedidosSubscriptionGeneration
+            || lifecycleGeneration !== pedidosLifecycleGeneration
+        ) return;
         console.error('Error escuchando pedidos:', error);
+        unsubscribePedidos = null;
+        if (pedidosGlobales.length > 0) {
+            renderPedidosUI();
+        } else {
+            const errorMarkup = '<p class="text-xs text-amber-500 text-center py-4">Sin conexión. Reintentando pedidos automáticamente…</p>';
+            const pendingList = document.getElementById('pedidos-pendientes-list');
+            const readyList = document.getElementById('pedidos-listos-list');
+            if (pendingList) pendingList.innerHTML = errorMarkup;
+            if (readyList) readyList.innerHTML = errorMarkup;
+            lastPendingMarkup = errorMarkup;
+            lastReadyMarkup = errorMarkup;
+        }
+        schedulePedidosRetry(lifecycleGeneration, subscriptionGeneration);
     }, hoy, filtroLocalPedidos);
 }
 
 export function destroyPedidos() {
     pedidosLifecycleGeneration++;
+    pedidosSubscriptionGeneration++;
     if (unsubscribePedidos) {
         unsubscribePedidos();
         unsubscribePedidos = null;
@@ -179,10 +257,27 @@ export function destroyPedidos() {
     pedidosGlobales = [];
     filtroLocalPedidos = 'todas';
     operacionesPedidoEnCurso.clear();
+    lastPendingMarkup = null;
+    lastReadyMarkup = null;
     if (lockRefreshTimer) {
         clearTimeout(lockRefreshTimer);
         lockRefreshTimer = null;
     }
+    if (pedidosRetryTimer) {
+        clearTimeout(pedidosRetryTimer);
+        pedidosRetryTimer = null;
+    }
+    pedidosRetryAttempts = 0;
+    const filter = document.getElementById('filtro-local-pedidos');
+    const pendingList = document.getElementById('pedidos-pendientes-list');
+    const readyList = document.getElementById('pedidos-listos-list');
+    const pendingCounter = document.getElementById('contador-pendientes');
+    const readyCounter = document.getElementById('contador-listos');
+    if (filter) filter.value = 'todas';
+    if (pendingList) pendingList.innerHTML = '';
+    if (readyList) readyList.innerHTML = '';
+    if (pendingCounter) pendingCounter.textContent = '0';
+    if (readyCounter) readyCounter.textContent = '0';
     pedidosInicializado = false;
 }
 
@@ -247,18 +342,28 @@ function renderPedidosUI() {
     if (contListos) contListos.textContent = listos.length;
     
     const lp = document.getElementById('pedidos-pendientes-list'); 
-    if(lp) {
-        lp.innerHTML = pendientes.map(v => generarHTMLPedido(v)).join('') || '<p class="text-xs text-slate-500 text-center py-4">No hay pedidos pendientes.</p>';
+    const pendingMarkup = pendientes.map(v => generarHTMLPedido(v)).join('')
+        || '<p class="text-xs text-slate-500 text-center py-4">No hay pedidos pendientes.</p>';
+    const pendingChanged = pendingMarkup !== lastPendingMarkup;
+    if(lp && pendingChanged) {
+        lp.innerHTML = pendingMarkup;
+        lastPendingMarkup = pendingMarkup;
     }
     
     const ll = document.getElementById('pedidos-listos-list'); 
-    if(ll) {
-        ll.innerHTML = listos.map(v => generarHTMLPedido(v, true)).join('') || '<p class="text-xs text-slate-500 text-center py-4">No hay pedidos despachados.</p>';
+    const readyMarkup = listos.map(v => generarHTMLPedido(v, true)).join('')
+        || '<p class="text-xs text-slate-500 text-center py-4">No hay pedidos despachados.</p>';
+    const readyChanged = readyMarkup !== lastReadyMarkup;
+    if(ll && readyChanged) {
+        ll.innerHTML = readyMarkup;
+        lastReadyMarkup = readyMarkup;
     }
     
-    const pedidosView = document.getElementById('view-pedidos');
-    if (window.lucide && pedidosView) {
-        window.lucide.createIcons({ root: pedidosView });
+    if (window.lucide && lp && pendingChanged) {
+        window.lucide.createIcons({ root: lp });
+    }
+    if (window.lucide && ll && readyChanged) {
+        window.lucide.createIcons({ root: ll });
     }
     scheduleLockRefresh();
 }
@@ -268,32 +373,42 @@ function generarHTMLPedido(v, esListo = false) {
     const isLocked = editLock.active;
     const isRecoverable = editLock.stale;
     const isSyncPending = v.sincronizacionPendiente === true;
+    const safeSaleId = escaparHtml(v.id || '');
     let iHtml = '';
     (Array.isArray(v.items) ? v.items : []).forEach(i => { 
+        if (!i || typeof i !== 'object') return;
         // 1. Mostrar Tamaño
         let tamanoHtml = '';
         if (i.tamano && i.tamano !== 'Estándar' && i.tamano !== 'Único / Estándar' && i.productoId !== 'AJUSTE') {
-            tamanoHtml = `<div class="text-[10px] text-emerald-400 font-bold ml-4 leading-tight mt-0.5"><span class="text-slate-500">Tam:</span> ${i.tamano}</div>`;
+            tamanoHtml = `<div class="text-[10px] text-emerald-400 font-bold ml-4 leading-tight mt-0.5"><span class="text-slate-500">Tam:</span> ${escaparHtml(i.tamano)}</div>`;
         }
 
         // 2. Mostrar Sabores
         let saboresHtml = '';
-        if (i.sabores && i.sabores.length > 0) {
-            const listaSabores = Array.isArray(i.sabores) ? i.sabores.join(', ') : i.sabores;
-            saboresHtml = `<div class="text-[10px] text-sky-400 font-bold ml-4 leading-tight mt-0.5"><span class="text-slate-500">Sab:</span> ${listaSabores}</div>`;
+        const listaSabores = Array.isArray(i.sabores)
+            ? i.sabores.map(sabor => (
+                typeof sabor === 'object' ? sabor?.nombre : sabor
+            )).filter(Boolean).join(', ')
+            : String(i.sabores || '').trim();
+        if (listaSabores) {
+            saboresHtml = `<div class="text-[10px] text-sky-400 font-bold ml-4 leading-tight mt-0.5"><span class="text-slate-500">Sab:</span> ${escaparHtml(listaSabores)}</div>`;
         }
 
         // 3. Mostrar Toppings
         let toppingsHtml = '';
-        if (i.toppings && i.toppings.length > 0) {
-            const listaToppings = i.toppings.map(t => t.nombre).join(', ');
-            toppingsHtml = `<div class="text-[10px] text-amber-400 font-bold ml-4 leading-tight mt-0.5"><span class="text-slate-500">Top:</span> ${listaToppings}</div>`;
+        const listaToppings = Array.isArray(i.toppings)
+            ? i.toppings.map(topping => (
+                typeof topping === 'object' ? topping?.nombre : topping
+            )).filter(Boolean).join(', ')
+            : String(i.toppings || '').trim();
+        if (listaToppings) {
+            toppingsHtml = `<div class="text-[10px] text-amber-400 font-bold ml-4 leading-tight mt-0.5"><span class="text-slate-500">Top:</span> ${escaparHtml(listaToppings)}</div>`;
         }
 
         iHtml += `
             <div class="mb-2 border-b border-slate-700/40 pb-2 last:border-0 last:pb-0">
                 <div class="flex justify-between items-start text-xs">
-                    <p class="text-white leading-tight pr-2 font-medium"><span class="text-emerald-400 font-bold text-sm mr-1">${i.cantidad}x</span> ${i.nombre}</p>
+                    <p class="text-white leading-tight pr-2 font-medium"><span class="text-emerald-400 font-bold text-sm mr-1">${escaparHtml(Number(i.cantidad) || 0)}x</span> ${escaparHtml(i.nombre || 'Producto')}</p>
                 </div>
                 ${tamanoHtml}
                 ${saboresHtml}
@@ -315,7 +430,9 @@ function generarHTMLPedido(v, esListo = false) {
         timeZone: 'America/Lima'
     });
     
-    const num = String(v.id || '').replace(/^T-/, '').slice(0, 8).toUpperCase() || '---';
+    const num = escaparHtml(
+        String(v.id || '').replace(/^T-/, '').slice(0, 8).toUpperCase() || '---'
+    );
     const editBdge = v.editado ? `<span class="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] px-1 rounded uppercase font-bold ml-2 animate-pulse">Modificado</span>` : '';
     const lockBadge = (isLocked || isRecoverable) ? `
         <div class="mt-2 rounded-lg border border-orange-400/50 bg-orange-500/15 px-2.5 py-2 text-orange-300">
@@ -341,7 +458,7 @@ function generarHTMLPedido(v, esListo = false) {
         </div>` : '';
     
     // --- NUEVO: Etiqueta Visual del Método de Pago ---
-    const metodoPago = (v.metodoPago || v.metodo_pago || 'efectivo').toLowerCase();
+    const metodoPago = String(v.metodoPago || v.metodo_pago || 'efectivo').toLowerCase();
     let badgePago = '';
     
     if (metodoPago.includes('yape') || metodoPago.includes('plin')) {
@@ -354,7 +471,7 @@ function generarHTMLPedido(v, esListo = false) {
 
     // Si es Master/Admin, mostrar de qué sede viene el pedido
     const badgeLocal = isAdminUser() && v.localNombre && v.localNombre !== 'Sin Local' 
-        ? `<div class="text-[9px] text-slate-400 mt-1 uppercase font-bold"><i data-lucide="store" class="w-3 h-3 inline"></i> ${v.localNombre}</div>` 
+        ? `<div class="text-[9px] text-slate-400 mt-1 uppercase font-bold"><i data-lucide="store" class="w-3 h-3 inline"></i> ${escaparHtml(v.localNombre)}</div>` 
         : '';
 
     // Destacar el nombre del cliente si existe (incluye claves de versiones anteriores)
@@ -367,13 +484,13 @@ function generarHTMLPedido(v, esListo = false) {
 
     let actionBtn = esListo ? '' : `
         <div class="flex gap-2 mt-3 pt-3 border-t border-slate-700/50">
-            <button data-action="rechazar-pedido" data-id="${v.id}" ${isLocked ? 'disabled aria-disabled="true"' : ''} class="min-h-11 min-w-11 flex items-center justify-center p-2 rounded-lg transition-colors border border-transparent ${isLocked ? 'text-orange-300/40 cursor-not-allowed' : 'text-slate-400 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/30'}" title="${isLocked ? 'Pedido reservado para edición' : 'Rechazar (Devuelve Stock)'}">
+            <button data-action="rechazar-pedido" data-id="${safeSaleId}" ${isLocked ? 'disabled aria-disabled="true"' : ''} class="min-h-11 min-w-11 flex items-center justify-center p-2 rounded-lg transition-colors border border-transparent ${isLocked ? 'text-orange-300/40 cursor-not-allowed' : 'text-slate-400 hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/30'}" title="${isLocked ? 'Pedido reservado para edición' : 'Rechazar (Devuelve Stock)'}">
                 <i data-lucide="x" class="w-4 h-4"></i>
             </button>
-            <button data-action="editar-pedido" data-id="${v.id}" ${isLocked ? 'disabled aria-disabled="true"' : ''} class="min-h-11 min-w-11 flex items-center justify-center p-2 rounded-lg transition-colors border border-transparent ${isLocked ? 'text-orange-300/40 cursor-not-allowed' : 'text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/30'}" title="${isLocked ? 'Pedido bloqueado por edición' : (isSyncPending ? 'Editar pedido guardado localmente' : (isRecoverable ? 'Recuperar edición expirada' : 'Devolver a Caja'))}">
+            <button data-action="editar-pedido" data-id="${safeSaleId}" ${isLocked ? 'disabled aria-disabled="true"' : ''} class="min-h-11 min-w-11 flex items-center justify-center p-2 rounded-lg transition-colors border border-transparent ${isLocked ? 'text-orange-300/40 cursor-not-allowed' : 'text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/30'}" title="${isLocked ? 'Pedido bloqueado por edición' : (isSyncPending ? 'Editar pedido guardado localmente' : (isRecoverable ? 'Recuperar edición expirada' : 'Devolver a Caja'))}">
                 <i data-lucide="edit" class="w-4 h-4"></i>
             </button>
-            <button data-action="despachar-pedido" data-id="${v.id}" ${isLocked ? 'disabled aria-disabled="true"' : ''} class="min-h-11 flex-1 rounded-lg py-2 text-xs font-bold transition-all shadow-lg flex justify-center items-center gap-1 ${isLocked ? 'bg-orange-500/15 border border-orange-400/40 text-orange-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 border border-emerald-500 text-white'}">
+            <button data-action="despachar-pedido" data-id="${safeSaleId}" ${isLocked ? 'disabled aria-disabled="true"' : ''} class="min-h-11 flex-1 rounded-lg py-2 text-xs font-bold transition-all shadow-lg flex justify-center items-center gap-1 ${isLocked ? 'bg-orange-500/15 border border-orange-400/40 text-orange-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 border border-emerald-500 text-white'}">
                 <i data-lucide="${isLocked ? 'lock-keyhole' : 'check-circle'}" class="w-4 h-4"></i> ${isLocked ? 'En edición' : 'Despachar'}
             </button>
         </div>`;

@@ -1247,6 +1247,7 @@ export async function acquireSaleEditLock({
 
 export async function releaseSaleEditLock({
     saleId,
+    operationId = '',
     lockToken,
     actor,
     reason = 'edicion_cancelada'
@@ -1267,13 +1268,26 @@ export async function releaseSaleEditLock({
 
         const sale = snapshot.data();
         const currentLock = getSaleEditLockState(sale);
+        const operationFields = operationId ? {
+            lastOperationId: operationId,
+            lastOperationType: 'liberar_edicion',
+            appliedOperations: appendAppliedOperation(
+                sale,
+                operationId,
+                'liberar_edicion'
+            )
+        } : {};
         if (!currentLock.token) {
             if (String(sale.estado || '').toLowerCase() === 'editando') {
                 transaction.update(saleRef, {
                     estado: 'pendiente',
-                    ...buildClearedEditLockFields(actor, 'bloqueo_huerfano')
+                    ...buildClearedEditLockFields(actor, 'bloqueo_huerfano'),
+                    ...operationFields
                 });
                 return { saleId, alreadyReleased: false, recoveredOrphan: true };
+            }
+            if (operationId && !wasOperationApplied(sale, operationId)) {
+                transaction.update(saleRef, operationFields);
             }
             return { saleId, alreadyReleased: true };
         }
@@ -1297,7 +1311,8 @@ export async function releaseSaleEditLock({
                 ...(String(sale.estado || '').toLowerCase() === 'editando'
                     ? { estado: 'pendiente' }
                     : {}),
-                ...buildClearedEditLockFields(actor, reason)
+                ...buildClearedEditLockFields(actor, reason),
+                ...operationFields
             }
         );
         return { saleId, alreadyReleased: false };
@@ -1334,8 +1349,28 @@ async function commitSaleStateTransition({
         const sale = saleSnapshot.data();
         const currentState = String(sale.estado || 'pendiente').toLowerCase();
 
-        if (wasOperationApplied(sale, operationId) || currentState === normalizedNextState) {
+        if (wasOperationApplied(sale, operationId)) {
             return { saleId, alreadyApplied: true, previousState: currentState };
+        }
+        if (currentState === normalizedNextState) {
+            const operationType = normalizedNextState === 'rechazado'
+                ? 'anular_venta'
+                : 'cambiar_estado';
+            transaction.update(saleRef, {
+                lastOperationId: operationId,
+                lastOperationType: operationType,
+                appliedOperations: appendAppliedOperation(
+                    sale,
+                    operationId,
+                    operationType
+                )
+            });
+            return {
+                saleId,
+                alreadyApplied: true,
+                operationRecorded: true,
+                previousState: currentState
+            };
         }
 
         const editLock = assertSaleEditUnlocked(sale);
@@ -2040,7 +2075,9 @@ export function releaseSaleEditLockTransaction({
                 edicionTtlMs: null,
                 edicionFinalizadaEnMs: getTrustedNowMs(),
                 edicionFinalizadaPor: actor || 'Desconocido',
-                edicionFinalizadaMotivo: reason || 'liberado'
+                edicionFinalizadaMotivo: reason || 'liberado',
+                lastOperationId: operationId,
+                lastOperationType: 'liberar_edicion'
             }
         }]
     });
