@@ -1,4 +1,4 @@
-const CACHE_NAME = 'raffaelito-v12'; // Catálogo virtual de vasos y opciones
+const CACHE_NAME = 'raffaelito-v13'; // Reparación y publicación completa del catálogo
 
 const LOCAL_ASSETS_TO_CACHE = [
   '/',

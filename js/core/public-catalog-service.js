@@ -16,8 +16,8 @@ import { state } from './store.js';
 export const GENERAL_CATALOG_ID = 'general';
 
 const ACTIVE_SITES_CACHE_KEY = 'raffaelito_catalog_sites_v1';
-const AUTO_PUBLISH_CACHE_KEY = 'raffaelito_catalog_auto_publish_v2';
-const AUTO_PUBLISH_SCHEMA_VERSION = 2;
+const AUTO_PUBLISH_CACHE_KEY = 'raffaelito_catalog_auto_publish_v3';
+const AUTO_PUBLISH_SCHEMA_VERSION = 3;
 const IMAGE_MAX_SIDE = 720;
 const IMAGE_TARGET_BYTES = 90 * 1024;
 const IMAGE_HARD_LIMIT_BYTES = 128 * 1024;
@@ -488,7 +488,6 @@ export async function ensurePublicCatalogPublished({
             );
         } catch (error) {
             if (cached?.fingerprint === fingerprint) {
-                automaticPublishedFingerprint = fingerprint;
                 return {
                     published: false,
                     reason: 'cached-current',
@@ -515,7 +514,6 @@ export async function ensurePublicCatalogPublished({
             generalSnapshot.metadata.fromCache === true
             && cached?.fingerprint === fingerprint
         ) {
-            automaticPublishedFingerprint = fingerprint;
             return { published: false, reason: 'offline-current', fingerprint };
         }
 
@@ -673,16 +671,22 @@ export async function saveProductAndPublicCatalog({
             batch.delete(imageRef);
         }
 
-        const nextProducts = upsertProductSnapshot(
-            state.productos || [],
-            optimisticProduct
-        );
-        publicationFingerprint = queueAutomaticPublicationMarker(
-            batch,
-            nextProducts,
-            locales,
-            activeIds
-        );
+        // Un guardado incremental solo puede declarar la proyección completa
+        // cuando esta sesión ya verificó o publicó el catálogo entero. Si es
+        // la primera apertura, el reconciliador de fondo debe crear antes todos
+        // los documentos, no solo el producto que acaba de editarse.
+        if (automaticPublishedFingerprint) {
+            const nextProducts = upsertProductSnapshot(
+                state.productos || [],
+                optimisticProduct
+            );
+            publicationFingerprint = queueAutomaticPublicationMarker(
+                batch,
+                nextProducts,
+                locales,
+                activeIds
+            );
+        }
     }
 
     await batch.commit();
@@ -717,16 +721,18 @@ export async function deleteProductAndPublicCatalog(
             ));
         });
         batch.delete(doc(db, 'catalogo_imagenes', String(productId)));
-        const nextProducts = withoutProductSnapshot(
-            state.productos || [],
-            productId
-        );
-        publicationFingerprint = queueAutomaticPublicationMarker(
-            batch,
-            nextProducts,
-            locales,
-            activeIds
-        );
+        if (automaticPublishedFingerprint) {
+            const nextProducts = withoutProductSnapshot(
+                state.productos || [],
+                productId
+            );
+            publicationFingerprint = queueAutomaticPublicationMarker(
+                batch,
+                nextProducts,
+                locales,
+                activeIds
+            );
+        }
     }
     await batch.commit();
     if (publicationFingerprint) {
@@ -759,14 +765,18 @@ export async function deletePublicCatalogProduct(
         state.productos || [],
         productId
     );
-    const publicationFingerprint = queueAutomaticPublicationMarker(
-        batch,
-        nextProducts,
-        locales,
-        activeIds
-    );
+    const publicationFingerprint = automaticPublishedFingerprint
+        ? queueAutomaticPublicationMarker(
+            batch,
+            nextProducts,
+            locales,
+            activeIds
+        )
+        : '';
     await batch.commit();
-    persistAutomaticPublishCache(publicationFingerprint, nextProducts.length);
+    if (publicationFingerprint) {
+        persistAutomaticPublishCache(publicationFingerprint, nextProducts.length);
+    }
     return true;
 }
 
