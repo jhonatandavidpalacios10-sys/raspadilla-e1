@@ -636,6 +636,7 @@ export async function saveProductAndPublicCatalog({
     isNew = false,
     image = null,
     removeImage = false,
+    relatedPrivateUpdates = [],
     locales = state.locales || []
 } = {}) {
     if (!productId || !privateData || !optimisticProduct) {
@@ -648,6 +649,17 @@ export async function saveProductAndPublicCatalog({
     const productRef = doc(db, 'productos', String(productId));
     if (isNew) batch.set(productRef, privateData);
     else batch.update(productRef, privateData);
+    relatedPrivateUpdates.forEach(update => {
+        if (
+            !update?.productId
+            || !update?.privateData
+            || String(update.productId) === String(productId)
+        ) return;
+        batch.update(
+            doc(db, 'productos', String(update.productId)),
+            update.privateData
+        );
+    });
 
     if (manager) {
         const activeIds = getActiveIdsForLocales(locales);

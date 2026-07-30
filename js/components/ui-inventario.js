@@ -157,6 +157,7 @@ function loadCatalogQrLogo() {
 
 // Estado temporal para construir los tamaños en el modal
 let tamanosActuales = [];
+let cupProductLinkSelections = new Set();
 
 function closeModal(modalId, delay = 200) {
     const modal = document.getElementById(modalId);
@@ -577,7 +578,233 @@ function getCatalogQrArtworkSiteLabel(siteName = 'General') {
         : normalizedName.toLocaleUpperCase('es');
 }
 
-async function createCatalogQrArtwork(QRCode, logo, url, siteName, size) {
+function drawCatalogQrFinder(
+    context,
+    x,
+    y,
+    moduleSize,
+    centerColor
+) {
+    const finderSize = moduleSize * 7;
+    catalogQrRoundedRect(
+        context,
+        x,
+        y,
+        finderSize,
+        finderSize,
+        moduleSize * 0.7
+    );
+    context.fillStyle = '#0f172a';
+    context.fill();
+
+    catalogQrRoundedRect(
+        context,
+        x + moduleSize,
+        y + moduleSize,
+        moduleSize * 5,
+        moduleSize * 5,
+        moduleSize * 0.42
+    );
+    context.fillStyle = '#ffffff';
+    context.fill();
+
+    catalogQrRoundedRect(
+        context,
+        x + (moduleSize * 2),
+        y + (moduleSize * 2),
+        moduleSize * 3,
+        moduleSize * 3,
+        moduleSize * 0.32
+    );
+    context.fillStyle = centerColor;
+    context.fill();
+}
+
+function getCatalogQrBrandMarkPosition(model, markModules) {
+    const moduleCount = Number(model.modules.size);
+    const centerStart = Math.floor((moduleCount - markModules) / 2);
+    let best = {
+        row: centerStart,
+        column: centerStart,
+        reserved: Number.POSITIVE_INFINITY,
+        distance: Number.POSITIVE_INFINITY
+    };
+
+    for (let rowOffset = -5; rowOffset <= 5; rowOffset++) {
+        for (let columnOffset = -5; columnOffset <= 5; columnOffset++) {
+            const row = centerStart + rowOffset;
+            const column = centerStart + columnOffset;
+            if (
+                row < 9
+                || column < 9
+                || row + markModules > moduleCount - 9
+                || column + markModules > moduleCount - 9
+            ) continue;
+
+            let reserved = 0;
+            for (let r = row; r < row + markModules; r++) {
+                for (let c = column; c < column + markModules; c++) {
+                    reserved += model.modules.isReserved(r, c) ? 1 : 0;
+                }
+            }
+            const distance = Math.abs(rowOffset) + Math.abs(columnOffset);
+            if (
+                reserved < best.reserved
+                || (reserved === best.reserved && distance < best.distance)
+            ) {
+                best = { row, column, reserved, distance };
+            }
+        }
+    }
+    return best;
+}
+
+function drawCatalogQrCupMark(context, x, y, size) {
+    const unit = size / 100;
+    catalogQrRoundedRect(context, x, y, size, size, 19 * unit);
+    context.fillStyle = '#ffffff';
+    context.fill();
+    context.lineWidth = Math.max(1, 2.5 * unit);
+    context.strokeStyle = '#e2e8f0';
+    context.stroke();
+
+    context.save();
+    context.lineCap = 'round';
+    context.lineWidth = Math.max(2, 7 * unit);
+    context.strokeStyle = '#0f172a';
+    context.beginPath();
+    context.moveTo(x + (61 * unit), y + (33 * unit));
+    context.lineTo(x + (73 * unit), y + (12 * unit));
+    context.stroke();
+    context.restore();
+
+    context.beginPath();
+    context.moveTo(x + (25 * unit), y + (45 * unit));
+    context.bezierCurveTo(
+        x + (28 * unit),
+        y + (24 * unit),
+        x + (72 * unit),
+        y + (24 * unit),
+        x + (75 * unit),
+        y + (45 * unit)
+    );
+    context.closePath();
+    context.fillStyle = '#9f1239';
+    context.fill();
+
+    context.beginPath();
+    context.moveTo(x + (27 * unit), y + (45 * unit));
+    context.lineTo(x + (73 * unit), y + (45 * unit));
+    context.lineTo(x + (65 * unit), y + (84 * unit));
+    context.quadraticCurveTo(
+        x + (50 * unit),
+        y + (91 * unit),
+        x + (35 * unit),
+        y + (84 * unit)
+    );
+    context.closePath();
+    context.fillStyle = '#0f766e';
+    context.fill();
+
+    context.save();
+    context.fillStyle = '#ffffff';
+    context.font = `800 ${Math.max(8, 27 * unit)}px Arial, sans-serif`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText('R', x + (50 * unit), y + (65 * unit));
+    context.restore();
+}
+
+function createBrandedCatalogQrMatrix(QRCode, url, maxSize) {
+    const model = QRCode.create(url, {
+        errorCorrectionLevel: CATALOG_QR_OPTIONS.errorCorrectionLevel
+    });
+    const moduleCount = Number(model?.modules?.size || 0);
+    if (!moduleCount) throw new Error('No se pudo calcular el código QR.');
+
+    const quietZone = CATALOG_QR_OPTIONS.margin;
+    const totalModules = moduleCount + (quietZone * 2);
+    const moduleSize = Math.max(1, Math.floor(maxSize / totalModules));
+    const canvas = document.createElement('canvas');
+    canvas.width = totalModules * moduleSize;
+    canvas.height = totalModules * moduleSize;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('El navegador no pudo dibujar la matriz QR.');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    const origin = quietZone * moduleSize;
+    const finderModule = (row, column) => (
+        (row < 7 && column < 7)
+        || (row < 7 && column >= moduleCount - 7)
+        || (row >= moduleCount - 7 && column < 7)
+    );
+    context.fillStyle = '#0f172a';
+    for (let row = 0; row < moduleCount; row++) {
+        for (let column = 0; column < moduleCount; column++) {
+            if (
+                !model.modules.get(row, column)
+                || finderModule(row, column)
+            ) continue;
+            const x = origin + (column * moduleSize);
+            const y = origin + (row * moduleSize);
+            if (!model.modules.isReserved(row, column) && moduleSize >= 8) {
+                const inset = Math.max(1, Math.floor(moduleSize * 0.06));
+                catalogQrRoundedRect(
+                    context,
+                    x + inset,
+                    y + inset,
+                    moduleSize - (inset * 2),
+                    moduleSize - (inset * 2),
+                    Math.max(1, moduleSize * 0.16)
+                );
+                context.fill();
+            } else {
+                context.fillRect(x, y, moduleSize, moduleSize);
+            }
+        }
+    }
+
+    drawCatalogQrFinder(
+        context,
+        origin,
+        origin,
+        moduleSize,
+        '#9f1239'
+    );
+    drawCatalogQrFinder(
+        context,
+        origin + ((moduleCount - 7) * moduleSize),
+        origin,
+        moduleSize,
+        '#0f766e'
+    );
+    drawCatalogQrFinder(
+        context,
+        origin,
+        origin + ((moduleCount - 7) * moduleSize),
+        moduleSize,
+        '#9f1239'
+    );
+
+    const markModules = moduleCount >= 33 ? 7 : 5;
+    const markPosition = getCatalogQrBrandMarkPosition(model, markModules);
+    drawCatalogQrCupMark(
+        context,
+        origin + (markPosition.column * moduleSize),
+        origin + (markPosition.row * moduleSize),
+        markModules * moduleSize
+    );
+    return canvas;
+}
+
+function createCatalogQrArtwork(
+    QRCode,
+    logo,
+    url,
+    siteName,
+    size
+) {
     const canvas = document.createElement('canvas');
     canvas.width = size;
     canvas.height = size;
@@ -660,21 +887,8 @@ async function createCatalogQrArtwork(QRCode, logo, url, siteName, size) {
     context.strokeStyle = '#dbe4ec';
     context.stroke();
 
-    const model = QRCode.create(url, {
-        errorCorrectionLevel: CATALOG_QR_OPTIONS.errorCorrectionLevel
-    });
-    const moduleCount = Number(model?.modules?.size || 0);
-    if (!moduleCount) throw new Error('No se pudo calcular el código QR.');
     const maxMatrixSize = px(1376);
-    const qrScale = Math.max(
-        1,
-        Math.floor(maxMatrixSize / (moduleCount + (CATALOG_QR_OPTIONS.margin * 2)))
-    );
-    const qrCanvas = document.createElement('canvas');
-    await QRCode.toCanvas(qrCanvas, url, {
-        ...CATALOG_QR_OPTIONS,
-        scale: qrScale
-    });
+    const qrCanvas = createBrandedCatalogQrMatrix(QRCode, url, maxMatrixSize);
     const qrX = Math.round((size - qrCanvas.width) / 2);
     const qrY = Math.round(panelY + ((panelSize - qrCanvas.height) / 2));
     context.imageSmoothingEnabled = false;
@@ -698,22 +912,12 @@ async function createCatalogQrArtwork(QRCode, logo, url, siteName, size) {
     drawCatalogQrCenteredText(
         context,
         getCatalogQrArtworkSiteLabel(siteName),
-        px(1907),
+        px(1934),
         px(1420),
         px(34),
         px(25),
         700,
         '#ef3340'
-    );
-    drawCatalogQrCenteredText(
-        context,
-        'raffaelito-catalogo.vercel.app',
-        px(1960),
-        px(1480),
-        px(27),
-        px(21),
-        600,
-        '#0f766e'
     );
 
     return canvas;
@@ -1003,7 +1207,6 @@ async function renderSelectedCatalogQr() {
     const select = document.getElementById('catalog-qr-site-select');
     const canvas = document.getElementById('catalog-qr-canvas');
     const zoomCanvas = document.getElementById('catalog-qr-zoom-canvas');
-    const urlLabel = document.getElementById('catalog-qr-url');
     const zoomSiteLabel = document.getElementById('catalog-qr-zoom-site');
     if (!canvas || !zoomCanvas) return;
 
@@ -1017,10 +1220,6 @@ async function renderSelectedCatalogQr() {
         && zoomCanvas.width > 0
     ) {
         catalogQrCurrentUrl = url;
-        if (urlLabel) {
-            urlLabel.textContent = url;
-            urlLabel.title = url;
-        }
         if (zoomSiteLabel) zoomSiteLabel.textContent = selectedSiteName;
         setCatalogQrActionsReady(true);
         setCatalogQrStatus('QR listo para compartir, copiar o descargar.', 'emerald');
@@ -1033,10 +1232,6 @@ async function renderSelectedCatalogQr() {
     [canvas, zoomCanvas].forEach(target => {
         target.getContext('2d')?.clearRect(0, 0, target.width, target.height);
     });
-    if (urlLabel) {
-        urlLabel.textContent = url;
-        urlLabel.title = url;
-    }
     if (zoomSiteLabel) zoomSiteLabel.textContent = selectedSiteName;
     setCatalogQrStatus('Generando QR en este dispositivo…');
 
@@ -2536,6 +2731,7 @@ export async function initInventario() {
     window.eliminarProducto = eliminarProductoFn;
     window.abrirIngresoStockVaso = id => abrirModalIngresoStock(id);
     window.reactivarVaso = id => setCupActiveState(id, true);
+    window.eliminarVasoArchivado = deleteArchivedCupFn;
     window.updateTamano = (idx, field, val) => {
         if (field === 'precio') tamanosActuales[idx][field] = parseFloat(val) || 0;
         else tamanosActuales[idx][field] = val;
@@ -2650,6 +2846,179 @@ function getSizeCupAssignment(size) {
         localId: 'global',
         insumoId: cupIds[0]
     };
+}
+
+function getEffectiveCupAssignment(product, size) {
+    const sizeAssignment = getSizeCupAssignment(size);
+    if (sizeAssignment) return sizeAssignment;
+    const legacyConsumption = product?.consumoVaso;
+    if (!legacyConsumption || typeof legacyConsumption !== 'object') return null;
+    const legacyAssignment = getSizeCupAssignment({
+        consumoVaso: legacyConsumption
+    });
+    if (legacyAssignment) return legacyAssignment;
+    const legacyCupId = String(legacyConsumption.insumoId || '').trim();
+    return legacyCupId
+        ? { localId: 'global', insumoId: legacyCupId }
+        : null;
+}
+
+function getCupProductLinkKey(productId, sizeIndex) {
+    return `${String(productId)}::${Number(sizeIndex)}`;
+}
+
+function getSellableCupProducts() {
+    return state.productos.filter(product => (
+        String(product?.categoria || '').trim().toLowerCase() === 'vaso'
+    ));
+}
+
+function getProductSizesForCupLinks(product) {
+    if (Array.isArray(product?.tamanos) && product.tamanos.length > 0) {
+        return product.tamanos;
+    }
+    return [{
+        nombre: 'Único / Estándar',
+        precio: Number(product?.precio || 0),
+        ...(product?.consumoVaso
+            ? { consumoVaso: product.consumoVaso }
+            : {})
+    }];
+}
+
+function resetCupProductLinkEditor(cupId = '') {
+    cupProductLinkSelections = new Set();
+    if (cupId) {
+        getSellableCupProducts().forEach(product => {
+            getProductSizesForCupLinks(product).forEach((size, sizeIndex) => {
+                const assignedCupId = getEffectiveCupAssignment(
+                    product,
+                    size
+                )?.insumoId;
+                if (String(assignedCupId || '') === String(cupId)) {
+                    cupProductLinkSelections.add(
+                        getCupProductLinkKey(product.id, sizeIndex)
+                    );
+                }
+            });
+        });
+    }
+    renderCupProductLinkEditor();
+}
+
+function renderCupProductLinkEditor() {
+    const section = document.getElementById('div-vinculos-productos-vaso');
+    const container = document.getElementById('lista-vinculos-productos-vaso');
+    if (!section || !container) return;
+    const products = categoriaActual === 'insumo'
+        ? getSellableCupProducts()
+        : [];
+    section.classList.toggle('hidden', products.length === 0);
+    if (products.length === 0) {
+        container.replaceChildren();
+        return;
+    }
+
+    container.innerHTML = products.map(product => {
+        const sizes = getProductSizesForCupLinks(product);
+        return `
+            <fieldset class="rounded-lg border border-slate-700 bg-slate-900/60 p-2.5">
+                <legend class="px-1 text-xs font-bold text-white">${escapeCatalogHtml(product.nombre || 'Vaso')}</legend>
+                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    ${sizes.map((size, sizeIndex) => {
+                        const key = getCupProductLinkKey(
+                            product.id,
+                            sizeIndex
+                        );
+                        return `
+                            <label class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-bold text-slate-100 hover:border-amber-400/60">
+                                <input
+                                    type="checkbox"
+                                    class="h-5 w-5 shrink-0 accent-amber-500"
+                                    data-cup-product-link="${escapeCatalogHtml(key)}"
+                                    ${cupProductLinkSelections.has(key) ? 'checked' : ''}
+                                >
+                                <span class="min-w-0 break-words">${escapeCatalogHtml(size.nombre || 'Único / Estándar')}</span>
+                            </label>`;
+                    }).join('')}
+                </div>
+            </fieldset>`;
+    }).join('');
+
+    container.querySelectorAll('[data-cup-product-link]').forEach(input => {
+        input.addEventListener('change', event => {
+            const checkbox = event.currentTarget;
+            const key = String(checkbox.dataset.cupProductLink || '');
+            if (!key) return;
+            if (checkbox.checked) cupProductLinkSelections.add(key);
+            else cupProductLinkSelections.delete(key);
+        });
+    });
+}
+
+function buildCupProductLinkUpdates(cupId) {
+    const updates = [];
+    getSellableCupProducts().forEach(product => {
+        const originalSizes = getProductSizesForCupLinks(product);
+        let changed = false;
+        const nextSizes = originalSizes.map((size, sizeIndex) => {
+            const key = getCupProductLinkKey(product.id, sizeIndex);
+            const shouldUseCup = cupProductLinkSelections.has(key);
+            const currentAssignment = getEffectiveCupAssignment(product, size);
+            const currentCupId = String(currentAssignment?.insumoId || '');
+            if (!shouldUseCup && currentCupId !== String(cupId)) {
+                return { ...size };
+            }
+            if (!shouldUseCup && currentCupId === String(cupId)) {
+                throw new Error(
+                    `Selecciona otro vaso para ${product.nombre || 'el producto'} · ${
+                        size.nombre || 'Único / Estándar'
+                    }.`
+                );
+            }
+            if (currentCupId === String(cupId)) return { ...size };
+
+            changed = true;
+            return {
+                ...size,
+                consumoVaso: {
+                    unidades: 1,
+                    asignaciones: [{
+                        localId: 'global',
+                        insumoId: String(cupId)
+                    }]
+                }
+            };
+        });
+        if (!changed) return;
+        updates.push({
+            productId: String(product.id),
+            privateData: { tamanos: nextSizes },
+            optimisticProduct: {
+                ...product,
+                tamanos: nextSizes
+            }
+        });
+    });
+    return updates;
+}
+
+function getCupProductReferences(cupId) {
+    const references = [];
+    getSellableCupProducts().forEach(product => {
+        getProductSizesForCupLinks(product).forEach((size, sizeIndex) => {
+            const assignment = getEffectiveCupAssignment(product, size);
+            if (String(assignment?.insumoId || '') !== String(cupId)) return;
+            references.push({
+                productId: String(product.id),
+                sizeIndex,
+                label: `${product.nombre || 'Vaso'} · ${
+                    size.nombre || 'Único / Estándar'
+                }`
+            });
+        });
+    });
+    return references;
 }
 
 function renderCupAssignmentsForSize(size, sizeIndex) {
@@ -2903,6 +3272,9 @@ function configureProductModalForCategory() {
     const costs = document.getElementById('div-campos-costos');
     const flavorLimit = document.getElementById('div-limite-sabores');
     const publicCatalog = document.getElementById('div-catalogo-publico');
+    const cupProductLinks = document.getElementById(
+        'div-vinculos-productos-vaso'
+    );
     const stock = document.getElementById('prod-stock');
     const stockLabel = document.getElementById('prod-stock-label');
 
@@ -2918,6 +3290,7 @@ function configureProductModalForCategory() {
     costs?.classList.toggle('hidden', hidesInternalCost);
     flavorLimit?.classList.toggle('hidden', !isSellableCup);
     if (isCupInventory) publicCatalog?.classList.add('hidden');
+    if (!isCupInventory) cupProductLinks?.classList.add('hidden');
     if (stock) {
         stock.required = isCupInventory;
         stock.placeholder = isCupInventory ? 'Ej. 250' : 'Infinito';
@@ -2970,6 +3343,7 @@ function abrirModalProducto() {
     }
     configureProductModalForCategory();
     renderTamanosBuilder();
+    resetCupProductLinkEditor('');
     
     const m = document.getElementById('modal-producto'); 
     m.classList.remove('hidden', 'pointer-events-none'); 
@@ -3000,6 +3374,7 @@ function editarProductoFn(id) {
         }];
     }
     renderTamanosBuilder();
+    resetCupProductLinkEditor(p.id);
 }
 
 function getInventoryItems(cat) {
@@ -3071,8 +3446,11 @@ function createInventoryRow(p) {
         ? `<button onclick="window.abrirIngresoStockVaso('${p.id}')" class="min-h-11 min-w-11 px-2 flex items-center justify-center gap-1 text-emerald-500 bg-white dark:bg-slate-900 border border-emerald-200 hover:border-emerald-500 p-1.5 rounded-lg transition-colors" aria-label="Añadir stock a ${escapeCatalogHtml(p.nombre)}" title="Añadir stock"><i data-lucide="package-plus" class="w-4 h-4"></i><span class="sm:hidden text-[9px] font-bold">+ Stock</span></button>`
         : '';
     const archiveAction = isArchivedCup
-        ? `<button onclick="window.reactivarVaso('${p.id}')" class="min-h-11 min-w-11 flex items-center justify-center text-emerald-500 bg-white dark:bg-slate-900 border border-emerald-200 hover:border-emerald-500 p-1.5 rounded-lg transition-colors" aria-label="Reactivar vaso"><i data-lucide="archive-restore" class="w-4 h-4"></i></button>`
+        ? `<button onclick="window.reactivarVaso('${p.id}')" class="min-h-11 min-w-11 flex items-center justify-center text-emerald-500 bg-white dark:bg-slate-900 border border-emerald-200 hover:border-emerald-500 p-1.5 rounded-lg transition-colors" aria-label="Reactivar vaso" title="Reactivar vaso"><i data-lucide="archive-restore" class="w-4 h-4"></i></button>`
         : `<button onclick="window.eliminarProducto('${p.id}')" class="min-h-11 min-w-11 flex items-center justify-center text-slate-400 hover:text-red-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-red-300 dark:hover:border-red-500/50 p-1.5 rounded-lg transition-colors" aria-label="${isCupInventory ? 'Archivar vaso' : 'Eliminar producto'}"><i data-lucide="${isCupInventory ? 'archive' : 'trash'}" class="w-4 h-4"></i></button>`;
+    const deleteArchivedAction = isArchivedCup
+        ? `<button onclick="window.eliminarVasoArchivado('${p.id}')" class="min-h-11 min-w-11 flex items-center justify-center text-red-500 bg-white dark:bg-slate-900 border border-red-200 hover:border-red-500 p-1.5 rounded-lg transition-colors" aria-label="Eliminar vaso" title="Eliminar vaso"><i data-lucide="trash-2" class="w-4 h-4"></i></button>`
+        : '';
 
     const tr = document.createElement('tr');
     tr.dataset.productId = p.id;
@@ -3083,10 +3461,11 @@ function createInventoryRow(p) {
         <td data-label="${isCupInventory ? 'Tipo' : 'Precio'}" class="p-3 text-sm text-sky-600 dark:text-sky-500 font-bold text-right">${priceStr}</td>
         <td data-label="${isCupInventory ? 'Actual' : 'Stock'}" class="p-3 text-center">${stkStr}</td>
         <td data-label="Acciones" class="p-3 text-center">
-            <div class="flex justify-center gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+            <div class="flex justify-center gap-1.5 opacity-100">
                 ${stockAction}
                 <button onclick="window.editarProducto('${p.id}')" class="min-h-11 min-w-11 flex items-center justify-center text-slate-400 hover:text-sky-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-sky-300 dark:hover:border-sky-500/50 p-1.5 rounded-lg transition-colors" aria-label="Editar producto"><i data-lucide="edit-2" class="w-4 h-4"></i></button>
                 ${archiveAction}
+                ${deleteArchivedAction}
             </div>
         </td>`;
     return tr;
@@ -3346,6 +3725,19 @@ function guardarProducto(e) {
                 productoBase || prodExistente
             );
         if (catalogo !== undefined) prodData.catalogo = catalogo;
+        let relatedProductUpdates = [];
+        if (isCupInventory) {
+            try {
+                relatedProductUpdates = buildCupProductLinkUpdates(productId);
+            } catch (error) {
+                window.mostrarToast?.(
+                    'Revisa los vínculos',
+                    error?.message || 'Hay una presentación sin vaso asignado.',
+                    'amber'
+                );
+                return;
+            }
+        }
         const optimisticProduct = {
             ...(productoBase || prodExistente || {}),
             id: productId,
@@ -3355,19 +3747,37 @@ function guardarProducto(e) {
         const baseCatalog = confirmedCatalogRows.length > 0
             ? confirmedCatalogRows
             : state.productos;
+        const relatedById = new Map(
+            relatedProductUpdates.map(update => [
+                update.productId,
+                update.optimisticProduct
+            ])
+        );
         if (id) {
             confirmedCatalogRows = baseCatalog.map(product => (
-                product.id === id ? optimisticProduct : product
+                product.id === id
+                    ? optimisticProduct
+                    : (relatedById.get(String(product.id)) || product)
             ));
         } else {
-            confirmedCatalogRows = [...baseCatalog, optimisticProduct];
+            confirmedCatalogRows = [
+                ...baseCatalog.map(product => (
+                    relatedById.get(String(product.id)) || product
+                )),
+                optimisticProduct
+            ];
         }
         state.productos = applyPendingDocumentMutations(
             'productos',
             confirmedCatalogRows
         );
         persistProductsCache(confirmedCatalogRows);
-        queueCatalogUiUpdate({ changedIds: [productId] });
+        queueCatalogUiUpdate({
+            changedIds: [
+                productId,
+                ...relatedProductUpdates.map(update => update.productId)
+            ]
+        });
         catalogEditorToken++;
         releaseCatalogImagePreview();
         closeModal('modal-producto', 0);
@@ -3384,7 +3794,11 @@ function guardarProducto(e) {
                 optimisticProduct,
                 isNew: !id,
                 image: imageToSave,
-                removeImage: shouldRemoveImage
+                removeImage: shouldRemoveImage,
+                relatedPrivateUpdates: relatedProductUpdates.map(update => ({
+                    productId: update.productId,
+                    privateData: update.privateData
+                }))
             });
             void cloudWrite
                 .then(() => {
@@ -3420,8 +3834,16 @@ function guardarProducto(e) {
 function eliminarProductoFn(id) {
     const product = state.productos.find(item => item.id === id);
     if (isCupInventoryProduct(product)) {
+        if (!canManagePublicCatalog()) {
+            window.mostrarToast?.(
+                'Acceso restringido',
+                'Solo admin o master puede archivar vasos.',
+                'amber'
+            );
+            return;
+        }
         window.mostrarConfirmacion?.(
-            '¿Archivar este vaso? Seguirá existiendo para devolver inventario de ventas antiguas, pero ya no podrá asignarse a nuevas ventas.',
+            '¿Archivar este vaso?',
             () => setCupActiveState(id, false)
         );
         return;
@@ -3476,9 +3898,99 @@ function eliminarProductoFn(id) {
     }
 }
 
+function deleteArchivedCupFn(id) {
+    if (!canManagePublicCatalog()) {
+        window.mostrarToast?.(
+            'Acceso restringido',
+            'Solo admin o master puede eliminar vasos.',
+            'amber'
+        );
+        return;
+    }
+    const product = state.productos.find(item => item.id === id);
+    if (!isCupInventoryProduct(product) || product.activo !== false) return;
+
+    const references = getCupProductReferences(id);
+    if (references.length > 0) {
+        window.mostrarAlerta?.(
+            'Vaso vinculado',
+            `Reasigna ${references.length} ${
+                references.length === 1 ? 'presentación' : 'presentaciones'
+            } antes de eliminarlo.`,
+            'amber'
+        );
+        return;
+    }
+    const salesCount = Math.max(0, Number(product.ventasTotales || 0));
+    if (salesCount > 0) {
+        window.mostrarAlerta?.(
+            'Vaso con movimientos',
+            'Este vaso todavía forma parte de ventas que pueden anularse.',
+            'amber'
+        );
+        return;
+    }
+
+    window.mostrarConfirmacion?.(
+        '¿Eliminar definitivamente este vaso?',
+        () => {
+            const baseCatalog = confirmedCatalogRows.length > 0
+                ? confirmedCatalogRows
+                : state.productos;
+            confirmedCatalogRows = baseCatalog.filter(item => item.id !== id);
+            state.productos = applyPendingDocumentMutations(
+                'productos',
+                confirmedCatalogRows
+            );
+            persistProductsCache(confirmedCatalogRows);
+            queueCatalogUiUpdate({ changedIds: [id] });
+            window.mostrarToast?.(
+                'Vaso eliminado',
+                'Se quitó del inventario.',
+                'sky'
+            );
+
+            runAfterImmediateUiPaint(() => {
+                void deleteProductAndPublicCatalog(id).catch(error => {
+                    console.error('No se pudo eliminar el vaso:', error);
+                    window.cargarInventarioDesdeFirebase?.();
+                    window.mostrarToast?.(
+                        'Cambio no sincronizado',
+                        'Se recuperará el último estado confirmado.',
+                        'red'
+                    );
+                });
+            });
+        }
+    );
+}
+
 function setCupActiveState(id, active) {
+    if (!canManagePublicCatalog()) {
+        window.mostrarToast?.(
+            'Acceso restringido',
+            'Solo admin o master puede cambiar este vaso.',
+            'amber'
+        );
+        return;
+    }
     const current = state.productos.find(product => product.id === id);
     if (!isCupInventoryProduct(current)) return;
+    if (!active) {
+        const references = getCupProductReferences(id);
+        if (references.length > 0) {
+            window.mostrarAlerta?.(
+                'Vaso vinculado',
+                `Reasigna ${references.length} ${
+                    references.length === 1
+                        ? 'presentación'
+                        : 'presentaciones'
+                } antes de archivarlo.`,
+                'amber'
+            );
+            return;
+        }
+    }
     const catalogo = {
         ...getCatalogSettings(current),
         visible: false,
