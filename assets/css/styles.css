@@ -208,6 +208,197 @@ input:focus, select:focus { border-color: #e05f5f !important; }
     font-weight: 800;
 }
 
+#modal-producto {
+    padding-top: env(safe-area-inset-top) !important;
+    padding-right: max(0.5rem, env(safe-area-inset-right)) !important;
+    padding-bottom: env(safe-area-inset-bottom) !important;
+    padding-left: max(0.5rem, env(safe-area-inset-left)) !important;
+}
+
+#modal-producto > div {
+    max-height: 90vh !important;
+    max-height: min(
+        90dvh,
+        calc(
+            100dvh
+            - env(safe-area-inset-top)
+            - env(safe-area-inset-bottom)
+            - 0.75rem
+        )
+    ) !important;
+}
+
+#div-vinculos-productos-vaso {
+    min-width: 0;
+    padding: 0.75rem !important;
+    border: 1px solid #fde3a7 !important;
+    border-radius: 0.75rem !important;
+    background: linear-gradient(180deg, #fffdf8 0%, #fffbeb 100%) !important;
+}
+
+.cup-product-links-title {
+    margin: 0 0 0.625rem !important;
+    color: #ad5800 !important;
+    font-size: 0.75rem !important;
+    font-weight: 800;
+    line-height: 1.2 !important;
+    letter-spacing: 0.035em;
+    text-transform: uppercase;
+}
+
+.cup-product-links-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    align-items: start;
+    gap: 0.625rem;
+}
+
+.cup-product-link-card {
+    min-width: 0;
+    padding: 0.625rem;
+    border: 1px solid #eee4e1;
+    border-radius: 0.75rem;
+    background: #ffffff;
+    box-shadow: 0 3px 10px rgba(30, 41, 59, 0.04);
+}
+
+.cup-product-link-name {
+    min-width: 0;
+    margin: 0 0 0.5rem;
+    color: #334155;
+    font-size: 0.8125rem;
+    font-weight: 800;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+.cup-product-link-options {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    gap: 0.4rem;
+}
+
+.cup-product-link-option {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    min-height: 2.75rem;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.55rem 0.625rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.625rem;
+    background: #f8fafc;
+    color: #1e293b;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    transition:
+        background-color 160ms ease,
+        border-color 160ms ease,
+        box-shadow 160ms ease;
+}
+
+.cup-product-link-option:hover {
+    border-color: #f3bf69;
+    background: #fffdf7;
+}
+
+.cup-product-link-option:focus-within {
+    border-color: #e05f5f;
+    box-shadow: 0 0 0 3px rgba(224, 95, 95, 0.14);
+}
+
+.cup-product-link-option.is-selected {
+    border-color: #0f766e;
+    background: #f0fdfa;
+    box-shadow: inset 3px 0 #0f766e;
+}
+
+.cup-product-link-native {
+    position: absolute;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    opacity: 0;
+    white-space: nowrap;
+}
+
+.cup-product-link-check {
+    display: grid;
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: 0 0 1.25rem;
+    place-items: center;
+    border: 1.5px solid #64748b;
+    border-radius: 0.3rem;
+    background: #ffffff;
+    transition:
+        background-color 160ms ease,
+        border-color 160ms ease;
+}
+
+.cup-product-link-check svg {
+    width: 0.85rem;
+    height: 0.85rem;
+    color: #ffffff;
+    opacity: 0;
+}
+
+.cup-product-link-native:checked + .cup-product-link-check {
+    border-color: #0f766e;
+    background: #0f766e;
+}
+
+.cup-product-link-native:checked + .cup-product-link-check svg {
+    opacity: 1;
+}
+
+.cup-product-link-native:focus-visible + .cup-product-link-check {
+    outline: 2px solid #e05f5f;
+    outline-offset: 2px;
+}
+
+.cup-product-link-size {
+    min-width: 0;
+    color: #1e293b;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+#modal-producto input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+#modal-producto select {
+    min-height: 2.75rem;
+}
+
+@media (min-width: 640px) {
+    .cup-product-links-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 374.98px) {
+    #div-vinculos-productos-vaso {
+        padding: 0.625rem !important;
+    }
+
+    .cup-product-link-card {
+        padding: 0.5rem;
+    }
+
+    .cup-product-link-option {
+        gap: 0.5rem;
+        padding: 0.5rem;
+    }
+
+}
+
 #app-navigation,
 #app-navigation .mobile-nav-actions {
     transition:

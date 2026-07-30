@@ -768,11 +768,11 @@
     </div>
 
     <!-- NUEVO: MODAL PRODUCTO ADAPTADO PARA MÚLTIPLES TAMAÑOS -->
-    <div id="modal-producto" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex flex-col justify-end md:justify-center items-center transition-opacity duration-300 opacity-0 px-4">
-        <div class="bg-slate-800 w-full md:w-[560px] md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none max-h-[90vh]">
+    <div id="modal-producto" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex flex-col justify-end md:justify-center items-center transition-opacity duration-300 opacity-0 px-2 sm:px-4">
+        <div class="bg-slate-800 w-full max-w-[42rem] md:rounded-2xl rounded-t-2xl flex flex-col shadow-2xl border border-slate-700 bottom-sheet-up md:bottom-sheet-none max-h-[90dvh]">
             <header class="p-4 border-b border-slate-700 flex justify-between items-center shrink-0">
                 <h3 id="modal-producto-titulo" class="text-lg font-bold text-white flex items-center gap-2"><i data-lucide="package" class="w-5 h-5 text-emerald-400"></i> Ítem del Catálogo</h3>
-                <button id="btn-cerrar-modal-producto" class="text-slate-400 hover:text-white bg-slate-700 p-1.5 rounded-lg transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+                <button id="btn-cerrar-modal-producto" type="button" aria-label="Cerrar" class="min-h-11 min-w-11 flex items-center justify-center text-slate-400 hover:text-white bg-slate-700 p-0 rounded-lg transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
             </header>
             <div class="flex-1 overflow-y-auto p-4 no-scrollbar">
                 <form id="form-insumo" class="space-y-4">
@@ -820,9 +820,9 @@
                         </div>
                     </div>
 
-                    <section id="div-vinculos-productos-vaso" class="hidden rounded-xl border border-amber-400/30 bg-amber-400/5 p-3">
-                        <h4 class="mb-2 text-xs font-bold uppercase text-amber-400">Productos que usan este vaso</h4>
-                        <div id="lista-vinculos-productos-vaso" class="space-y-2"></div>
+                    <section id="div-vinculos-productos-vaso" class="cup-product-links-panel hidden">
+                        <h4 class="cup-product-links-title">Productos que usan este vaso</h4>
+                        <div id="lista-vinculos-productos-vaso" class="cup-product-links-grid"></div>
                     </section>
 
                     <section id="div-catalogo-publico" class="solo-admin hidden rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 space-y-3">

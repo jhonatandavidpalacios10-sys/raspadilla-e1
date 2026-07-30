@@ -2922,27 +2922,38 @@ function renderCupProductLinkEditor() {
     container.innerHTML = products.map(product => {
         const sizes = getProductSizesForCupLinks(product);
         return `
-            <fieldset class="rounded-lg border border-slate-700 bg-slate-900/60 p-2.5">
-                <legend class="px-1 text-xs font-bold text-white">${escapeCatalogHtml(product.nombre || 'Vaso')}</legend>
-                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <article
+                class="cup-product-link-card"
+                role="group"
+                aria-label="${escapeCatalogHtml(product.nombre || 'Vaso')}"
+            >
+                <h5 class="cup-product-link-name">${escapeCatalogHtml(product.nombre || 'Vaso')}</h5>
+                <div class="cup-product-link-options">
                     ${sizes.map((size, sizeIndex) => {
                         const key = getCupProductLinkKey(
                             product.id,
                             sizeIndex
                         );
+                        const selected = cupProductLinkSelections.has(key);
                         return `
-                            <label class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-bold text-slate-100 hover:border-amber-400/60">
+                            <label class="cup-product-link-option${selected ? ' is-selected' : ''}">
                                 <input
                                     type="checkbox"
-                                    class="h-5 w-5 shrink-0 accent-amber-500"
+                                    class="cup-product-link-native"
                                     data-cup-product-link="${escapeCatalogHtml(key)}"
-                                    ${cupProductLinkSelections.has(key) ? 'checked' : ''}
+                                    aria-label="${escapeCatalogHtml(`${product.nombre || 'Vaso'} · ${size.nombre || 'Único / Estándar'}`)}"
+                                    ${selected ? 'checked' : ''}
                                 >
-                                <span class="min-w-0 break-words">${escapeCatalogHtml(size.nombre || 'Único / Estándar')}</span>
+                                <span class="cup-product-link-check" aria-hidden="true">
+                                    <svg viewBox="0 0 16 16" fill="none">
+                                        <path d="m3.2 8.4 3 3.1 6.6-7" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"></path>
+                                    </svg>
+                                </span>
+                                <span class="cup-product-link-size">${escapeCatalogHtml(size.nombre || 'Único / Estándar')}</span>
                             </label>`;
                     }).join('')}
                 </div>
-            </fieldset>`;
+            </article>`;
     }).join('');
 
     container.querySelectorAll('[data-cup-product-link]').forEach(input => {
@@ -2952,6 +2963,8 @@ function renderCupProductLinkEditor() {
             if (!key) return;
             if (checkbox.checked) cupProductLinkSelections.add(key);
             else cupProductLinkSelections.delete(key);
+            checkbox.closest('.cup-product-link-option')
+                ?.classList.toggle('is-selected', checkbox.checked);
         });
     });
 }
