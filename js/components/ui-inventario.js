@@ -67,7 +67,8 @@ const virtualCatalogSaveTokens = new Map();
 
 const PUBLIC_CATALOG_BASE_URL = 'https://raffaelito-catalogo.vercel.app/';
 const CATALOG_SITE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
-const CATALOG_QUICK_QR_SIZE = 2048;
+const CATALOG_QR_ARTWORK_SIZE = 2048;
+const CATALOG_QR_PREVIEW_SIZE = 640;
 const CATALOG_QR_LOGO_URL = '/assets/img/logo.png';
 const CATALOG_QR_OPTIONS = Object.freeze({
     errorCorrectionLevel: 'H',
@@ -229,7 +230,7 @@ function resetCatalogEditor(product = null) {
     updateCatalogDescriptionCount();
 
     if (!settings.imagenId) {
-        setCatalogImageStatus('Se optimiza automáticamente para cargar rápido.');
+        setCatalogImageStatus('');
         return;
     }
 
@@ -462,26 +463,7 @@ function getCatalogQrUrl(siteId = 'general') {
 }
 
 function getCatalogQuickQrSiteId() {
-    const candidate = String(state.userLocalId || '').trim();
-    if (
-        !candidate
-        || ['general', 'global'].includes(candidate.toLowerCase())
-        || !CATALOG_SITE_ID_PATTERN.test(candidate)
-    ) {
-        return 'general';
-    }
-    const knownSiteIds = new Set(
-        (state.locales || []).map(local => String(local?.id || '')).filter(Boolean)
-    );
-    const activeSiteIds = new Set(
-        getActiveCatalogSiteIds().map(siteId => String(siteId))
-    );
-    return (
-        (knownSiteIds.size === 0 || knownSiteIds.has(candidate))
-        && activeSiteIds.has(candidate)
-    )
-        ? candidate
-        : 'general';
+    return 'general';
 }
 
 function setCatalogQuickQrStatus(message) {
@@ -504,35 +486,247 @@ function setCatalogQuickQrReady(ready) {
         ?.classList.toggle('hidden', ready);
 }
 
-function paintCatalogQrLogo(canvas, image) {
+function catalogQrRoundedRect(context, x, y, width, height, radius) {
+    const safeRadius = Math.min(radius, width / 2, height / 2);
+    context.beginPath();
+    context.moveTo(x + safeRadius, y);
+    context.lineTo(x + width - safeRadius, y);
+    context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+    context.lineTo(x + width, y + height - safeRadius);
+    context.quadraticCurveTo(
+        x + width,
+        y + height,
+        x + width - safeRadius,
+        y + height
+    );
+    context.lineTo(x + safeRadius, y + height);
+    context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+    context.lineTo(x, y + safeRadius);
+    context.quadraticCurveTo(x, y, x + safeRadius, y);
+    context.closePath();
+}
+
+function drawCatalogQrLogo(context, image, x, y, width, height) {
     if (!image) return;
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    const plateSize = Math.round(canvas.width * 0.18);
-    const logoSize = Math.round(canvas.width * 0.16);
-    const plateX = Math.round((canvas.width - plateSize) / 2);
-    const plateY = Math.round((canvas.height - plateSize) / 2);
-    const radius = Math.round(plateSize * 0.18);
+    const sourceWidth = Number(image.naturalWidth || image.width || 0);
+    const sourceHeight = Number(image.naturalHeight || image.height || 0);
+    if (!sourceWidth || !sourceHeight) return;
+
+    let sourceX = 0;
+    let sourceY = 0;
+    let cropWidth = sourceWidth;
+    let cropHeight = sourceHeight;
+    if (sourceWidth / sourceHeight > 0.85 && sourceWidth / sourceHeight < 1.15) {
+        sourceY = Math.round(sourceHeight * 0.29);
+        cropHeight = Math.round(sourceHeight * 0.42);
+    }
+    const scale = Math.min(width / cropWidth, height / cropHeight);
+    const drawWidth = Math.round(cropWidth * scale);
+    const drawHeight = Math.round(cropHeight * scale);
+    const drawX = Math.round(x + ((width - drawWidth) / 2));
+    const drawY = Math.round(y + ((height - drawHeight) / 2));
 
     context.save();
-    context.fillStyle = '#ffffff';
-    context.beginPath();
-    if (typeof context.roundRect === 'function') {
-        context.roundRect(plateX, plateY, plateSize, plateSize, radius);
-    } else {
-        context.rect(plateX, plateY, plateSize, plateSize);
-    }
-    context.fill();
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
     context.drawImage(
         image,
-        Math.round((canvas.width - logoSize) / 2),
-        Math.round((canvas.height - logoSize) / 2),
-        logoSize,
-        logoSize
+        sourceX,
+        sourceY,
+        cropWidth,
+        cropHeight,
+        drawX,
+        drawY,
+        drawWidth,
+        drawHeight
     );
     context.restore();
+}
+
+function drawCatalogQrCenteredText(
+    context,
+    text,
+    y,
+    maxWidth,
+    initialSize,
+    minimumSize,
+    weight,
+    color
+) {
+    let fontSize = initialSize;
+    context.save();
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillStyle = color;
+    do {
+        context.font = `${weight} ${fontSize}px Arial, sans-serif`;
+        if (context.measureText(text).width <= maxWidth || fontSize <= minimumSize) {
+            break;
+        }
+        fontSize -= 2;
+    } while (fontSize > minimumSize);
+    context.fillText(text, context.canvas.width / 2, y);
+    context.restore();
+}
+
+function getCatalogQrArtworkSiteLabel(siteName = 'General') {
+    const cleanName = String(siteName || 'General').split('·')[0];
+    const normalizedName = String(cleanName).trim();
+    return normalizedName.toLocaleLowerCase('es') === 'general'
+        ? 'LOCAL GENERAL'
+        : normalizedName.toLocaleUpperCase('es');
+}
+
+async function createCatalogQrArtwork(QRCode, logo, url, siteName, size) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('El navegador no pudo dibujar el QR.');
+    const scaleValue = size / CATALOG_QR_ARTWORK_SIZE;
+    const px = value => Math.round(value * scaleValue);
+
+    context.fillStyle = '#eef2f6';
+    context.fillRect(0, 0, size, size);
+
+    const cardX = px(48);
+    const cardY = px(48);
+    const cardSize = px(1952);
+    context.save();
+    context.shadowColor = 'rgba(15, 23, 42, 0.12)';
+    context.shadowBlur = px(34);
+    context.shadowOffsetY = px(12);
+    catalogQrRoundedRect(
+        context,
+        cardX,
+        cardY,
+        cardSize,
+        cardSize,
+        px(92)
+    );
+    context.fillStyle = '#ffffff';
+    context.fill();
+    context.restore();
+
+    context.save();
+    catalogQrRoundedRect(
+        context,
+        cardX,
+        cardY,
+        cardSize,
+        cardSize,
+        px(92)
+    );
+    context.clip();
+    context.fillStyle = '#ef3340';
+    context.fillRect(cardX, cardY, cardSize, px(22));
+    context.fillStyle = '#10b9ad';
+    context.fillRect(cardX, cardY + px(22), cardSize, px(12));
+    context.restore();
+
+    drawCatalogQrLogo(
+        context,
+        logo,
+        px(454),
+        px(82),
+        px(1140),
+        px(226)
+    );
+    drawCatalogQrCenteredText(
+        context,
+        'ESCANEA PARA VER EL CATÁLOGO',
+        px(337),
+        px(1540),
+        px(45),
+        px(32),
+        700,
+        '#0f172a'
+    );
+
+    const panelX = px(288);
+    const panelY = px(380);
+    const panelSize = px(1472);
+    catalogQrRoundedRect(
+        context,
+        panelX,
+        panelY,
+        panelSize,
+        panelSize,
+        px(48)
+    );
+    context.fillStyle = '#ffffff';
+    context.fill();
+    context.lineWidth = Math.max(1, px(3));
+    context.strokeStyle = '#dbe4ec';
+    context.stroke();
+
+    const model = QRCode.create(url, {
+        errorCorrectionLevel: CATALOG_QR_OPTIONS.errorCorrectionLevel
+    });
+    const moduleCount = Number(model?.modules?.size || 0);
+    if (!moduleCount) throw new Error('No se pudo calcular el código QR.');
+    const maxMatrixSize = px(1376);
+    const qrScale = Math.max(
+        1,
+        Math.floor(maxMatrixSize / (moduleCount + (CATALOG_QR_OPTIONS.margin * 2)))
+    );
+    const qrCanvas = document.createElement('canvas');
+    await QRCode.toCanvas(qrCanvas, url, {
+        ...CATALOG_QR_OPTIONS,
+        scale: qrScale
+    });
+    const qrX = Math.round((size - qrCanvas.width) / 2);
+    const qrY = Math.round(panelY + ((panelSize - qrCanvas.height) / 2));
+    context.imageSmoothingEnabled = false;
+    context.drawImage(qrCanvas, qrX, qrY);
+
+    context.save();
+    context.lineCap = 'round';
+    context.lineWidth = Math.max(2, px(14));
+    context.strokeStyle = '#ef3340';
+    context.beginPath();
+    context.moveTo(panelX + px(56), panelY);
+    context.lineTo(panelX + px(330), panelY);
+    context.stroke();
+    context.strokeStyle = '#10b9ad';
+    context.beginPath();
+    context.moveTo(panelX + panelSize - px(330), panelY + panelSize);
+    context.lineTo(panelX + panelSize - px(56), panelY + panelSize);
+    context.stroke();
+    context.restore();
+
+    drawCatalogQrCenteredText(
+        context,
+        getCatalogQrArtworkSiteLabel(siteName),
+        px(1907),
+        px(1420),
+        px(34),
+        px(25),
+        700,
+        '#ef3340'
+    );
+    drawCatalogQrCenteredText(
+        context,
+        'raffaelito-catalogo.vercel.app',
+        px(1960),
+        px(1480),
+        px(27),
+        px(21),
+        600,
+        '#0f766e'
+    );
+
+    return canvas;
+}
+
+function paintCatalogQrArtwork(target, source) {
+    target.width = source.width;
+    target.height = source.height;
+    const context = target.getContext('2d');
+    if (!context) throw new Error('El navegador no pudo mostrar el QR.');
+    context.clearRect(0, 0, target.width, target.height);
+    context.imageSmoothingEnabled = false;
+    context.drawImage(source, 0, 0);
 }
 
 function catalogCanvasToBlob(canvas) {
@@ -560,7 +754,7 @@ async function renderCatalogQuickQr() {
     if (
         catalogQuickQrReadyUrl === url
         && catalogQuickQrPreparedBlob
-        && canvas.width === CATALOG_QUICK_QR_SIZE
+        && canvas.width === CATALOG_QR_ARTWORK_SIZE
     ) {
         catalogQuickQrCurrentUrl = url;
         catalogQuickQrCurrentSiteId = siteId;
@@ -586,20 +780,15 @@ async function renderCatalogQuickQr() {
         ]);
         if (token !== catalogQuickQrRenderToken) return false;
 
-        const buffer = document.createElement('canvas');
-        await QRCode.toCanvas(buffer, url, {
-            ...CATALOG_QR_OPTIONS,
-            width: CATALOG_QUICK_QR_SIZE
-        });
+        const buffer = await createCatalogQrArtwork(
+            QRCode,
+            logo,
+            url,
+            getCatalogQrSiteName(siteId),
+            CATALOG_QR_ARTWORK_SIZE
+        );
         if (token !== catalogQuickQrRenderToken) return false;
-        paintCatalogQrLogo(buffer, logo);
-
-        canvas.width = buffer.width;
-        canvas.height = buffer.height;
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('El navegador no pudo dibujar el QR.');
-        context.imageSmoothingEnabled = false;
-        context.drawImage(buffer, 0, 0);
+        paintCatalogQrArtwork(canvas, buffer);
 
         const blob = await catalogCanvasToBlob(canvas);
         if (token !== catalogQuickQrRenderToken) return false;
@@ -852,31 +1041,32 @@ async function renderSelectedCatalogQr() {
     setCatalogQrStatus('Generando QR en este dispositivo…');
 
     try {
-        const QRCode = await loadCatalogQrModule();
+        const [QRCode, logo] = await Promise.all([
+            loadCatalogQrModule(),
+            loadCatalogQrLogo()
+        ]);
         if (token !== catalogQrRenderToken) return;
-        const previewBuffer = document.createElement('canvas');
-        const zoomBuffer = document.createElement('canvas');
-        await Promise.all([
-            QRCode.toCanvas(previewBuffer, url, {
-                ...CATALOG_QR_OPTIONS,
-                width: 384
-            }),
-            QRCode.toCanvas(zoomBuffer, url, {
-                ...CATALOG_QR_OPTIONS,
-                width: 1024
-            })
+        const [previewBuffer, zoomBuffer] = await Promise.all([
+            createCatalogQrArtwork(
+                QRCode,
+                logo,
+                url,
+                selectedSiteName,
+                CATALOG_QR_PREVIEW_SIZE
+            ),
+            createCatalogQrArtwork(
+                QRCode,
+                logo,
+                url,
+                selectedSiteName,
+                CATALOG_QR_ARTWORK_SIZE
+            )
         ]);
         if (token !== catalogQrRenderToken) return;
         [
             [canvas, previewBuffer],
             [zoomCanvas, zoomBuffer]
-        ].forEach(([target, source]) => {
-            target.width = source.width;
-            target.height = source.height;
-            const context = target.getContext('2d');
-            context?.clearRect(0, 0, target.width, target.height);
-            context?.drawImage(source, 0, 0);
-        });
+        ].forEach(([target, source]) => paintCatalogQrArtwork(target, source));
         catalogQrReadyUrl = url;
         setCatalogQrActionsReady(true);
         canvas.setAttribute(
@@ -1013,14 +1203,16 @@ async function downloadSelectedCatalogQr() {
                 }
             }
         }
+        const blob = await catalogCanvasToBlob(canvas);
+        const objectUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.download = fileName;
-        link.href = canvas.toDataURL('image/png');
+        link.href = objectUrl;
         link.rel = 'noopener';
-        link.target = '_blank';
         document.body.appendChild(link);
         link.click();
         link.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
         setCatalogQrStatus(
             isAppleTouchDevice
                 ? 'Si se abrió la imagen, mantenla presionada para guardarla.'
@@ -1234,12 +1426,12 @@ function createVirtualCatalogProductCard(product) {
                         Quitar
                     </button>
                 </div>
-                <p data-virtual-image-status class="mt-1.5 text-[10px] text-slate-500">La foto se optimiza automáticamente.</p>
+                <p data-virtual-image-status class="mt-1.5 text-[10px] text-slate-500" role="status" aria-live="polite"></p>
             </div>
         </div>
 
         <div class="px-3 pb-3 sm:px-4 sm:pb-4 flex items-center gap-3">
-            <p data-virtual-save-status class="min-w-0 flex-1 truncate text-[11px] text-slate-500">Los cambios solo afectan la carta virtual.</p>
+            <p data-virtual-save-status class="min-w-0 flex-1 truncate text-[11px] text-slate-500" role="status" aria-live="polite"></p>
             <button data-virtual-action="save" type="button" class="min-h-11 shrink-0 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-4 text-sm font-bold text-white flex items-center justify-center gap-2 transition-colors">
                 <i data-lucide="save" class="w-4 h-4"></i>
                 Guardar
@@ -1331,7 +1523,6 @@ function renderVirtualCatalogProducts() {
             <div class="lg:col-span-2 rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
                 <i data-lucide="cup-soda" class="w-9 h-9 mx-auto text-slate-300"></i>
                 <h4 class="mt-3 text-sm font-bold text-slate-800">Todavía no hay vasos</h4>
-                <p class="mt-1 text-xs text-slate-500">Primero crea un producto en la categoría Vasos.</p>
             </div>
         `;
         window.lucide?.createIcons({ root: container });
@@ -1578,12 +1769,7 @@ function renderCatalogSites(activeIds = [], { loading = false } = {}) {
         const title = document.createElement('span');
         title.className = 'block truncate text-sm font-bold text-slate-700';
         title.textContent = site.nombre;
-        const caption = document.createElement('span');
-        caption.className = 'block text-[10px] text-slate-400';
-        caption.textContent = site.fixed
-            ? 'Siempre disponible; muestra todos los productos públicos.'
-            : 'Genera una cartilla propia para esta sede.';
-        text.append(title, caption);
+        text.append(title);
 
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
