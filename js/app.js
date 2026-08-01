@@ -88,6 +88,7 @@ const CONNECTIVITY_PROBE_INTERVAL_MS = 30_000;
 const CONNECTIVITY_PROBE_TIMEOUT_MS = 6_000;
 const CONNECTIVITY_SLOW_THRESHOLD_MS = 2_000;
 const FIREBASE_FAILURE_HOLD_MS = 15_000;
+const FIREBASE_SUCCESS_HOLD_MS = 60_000;
 const CONNECTIVITY_STATES = new Set([
     'online',
     'unstable',
@@ -109,6 +110,7 @@ let connectivityProbeController = null;
 let connectivityProbeSequence = 0;
 let connectivityRecoveredTimer = null;
 let lastFirebaseConnectivityFailureAt = 0;
+let lastFirebaseConnectivitySuccessAt = 0;
 
 document.documentElement.dataset.connectivityState = connectivityVisualState;
 
@@ -217,8 +219,19 @@ function recordConnectivityFailure() {
     return 'unstable';
 }
 
-function recordConnectivitySuccess({ elapsedMs = 0 } = {}) {
-    if (navigator.onLine === false) {
+function recordConnectivitySuccess({
+    elapsedMs = 0,
+    firebaseConfirmed = false
+} = {}) {
+    const firebaseSuccessIsRecent = (
+        firebaseConfirmed
+        || (
+            lastFirebaseConnectivitySuccessAt > 0
+            && Date.now() - lastFirebaseConnectivitySuccessAt
+                < FIREBASE_SUCCESS_HOLD_MS
+        )
+    );
+    if (navigator.onLine === false && !firebaseSuccessIsRecent) {
         connectivityFailures = Math.max(connectivityFailures, 2);
         setConnectivityState('offline');
         return 'offline';
@@ -230,6 +243,7 @@ function recordConnectivitySuccess({ elapsedMs = 0 } = {}) {
     );
     if (
         firebaseFailureIsRecent
+        || !firebaseSuccessIsRecent
         || elapsedMs >= CONNECTIVITY_SLOW_THRESHOLD_MS
         || hasSlowNetworkInformation()
     ) {
@@ -307,9 +321,10 @@ async function probeConnectivity({ force = false } = {}) {
 function handleSyncConnectivityEvidence(event) {
     const detail = event.detail || {};
     if (detail.ok === true) {
+        lastFirebaseConnectivitySuccessAt = Date.now();
         lastFirebaseConnectivityFailureAt = 0;
         connectivityFailures = 0;
-        recordConnectivitySuccess();
+        recordConnectivitySuccess({ firebaseConfirmed: true });
         return;
     }
 
@@ -372,7 +387,6 @@ function installConnectivityMonitoring() {
 // ---- SERVICE WORKER: ACTUALIZACIÓN VOLUNTARIA Y SEGURA ----
 const WORKER_UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1_000;
 const APP_SYNC_RELOAD_KEY = 'raffaelito:app-sync-complete';
-const LEGACY_APP_CACHE_PATTERN = /^raffaelito-v\d+$/;
 
 let serviceWorkerRegistration = null;
 let pendingServiceWorker = null;
@@ -409,18 +423,6 @@ function setAppSyncControlsBusy(isBusy) {
             button.classList.toggle('opacity-60', isBusy);
             button.classList.toggle('cursor-wait', isBusy);
         });
-}
-
-async function clearSafeApplicationCaches() {
-    if (!('caches' in globalThis)) return;
-    const cacheNames = await caches.keys();
-    const safeNames = cacheNames.filter(cacheName => (
-        cacheName === 'raffaelito-runtime-assets'
-        || LEGACY_APP_CACHE_PATTERN.test(cacheName)
-    ));
-    await Promise.allSettled(
-        safeNames.map(cacheName => caches.delete(cacheName))
-    );
 }
 
 function markAppSyncReload() {
@@ -464,7 +466,6 @@ async function reloadAfterControllerChangeWhenSafe() {
 
         const shouldClearSafeCaches = clearSafeCachesBeforeReload;
         if (shouldClearSafeCaches) {
-            await clearSafeApplicationCaches();
             markAppSyncReload();
         }
         clearSafeCachesBeforeReload = false;
@@ -653,10 +654,13 @@ function monitorWorkerRegistration(registration) {
 }
 
 async function ensureServiceWorkerRegistration() {
-    serviceWorkerRegistration ||= await navigator.serviceWorker.getRegistration();
-    if (!serviceWorkerRegistration) {
-        serviceWorkerRegistration = await navigator.serviceWorker.register('/sw.js');
-    }
+    serviceWorkerRegistration ||= await navigator.serviceWorker.register(
+        '/sw.js',
+        {
+            scope: '/',
+            updateViaCache: 'none'
+        }
+    );
     if (!serviceWorkerRegistration) {
         throw new Error('El navegador no devolvió un registro de actualización.');
     }
@@ -667,7 +671,6 @@ async function ensureServiceWorkerRegistration() {
 async function checkForWorkerUpdate({ force = false } = {}) {
     if (
         !('serviceWorker' in navigator)
-        || navigator.onLine === false
         || document.visibilityState !== 'visible'
     ) return null;
     if (workerUpdateCheckPromise) return workerUpdateCheckPromise;
@@ -701,7 +704,6 @@ async function checkForWorkerUpdate({ force = false } = {}) {
 }
 
 async function reloadCurrentAppSafely() {
-    await clearSafeApplicationCaches();
     markAppSyncReload();
     window.location.reload();
 }

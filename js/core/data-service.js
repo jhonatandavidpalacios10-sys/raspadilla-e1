@@ -14,6 +14,23 @@ import { applyPendingDocumentMutations } from './sync-queue.js';
 const sharedSubscriptions = new Map();
 let syncQueueListenerInstalled = false;
 let lastLocationsStateSignature = '';
+const CONNECTIVITY_ERROR_CODES = new Set([
+    'deadline-exceeded',
+    'network-request-failed',
+    'unavailable'
+]);
+
+function emitFirestoreConnectivityEvidence({ ok, code = '' }) {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('icepos:connectivity-evidence', {
+        detail: {
+            ok: ok === true,
+            code: String(code || '').replace(/^firestore\//, ''),
+            source: 'firestore-snapshot',
+            at: Date.now()
+        }
+    }));
+}
 
 function isPrivilegedRole() {
     const role = String(state.userRole || '').trim().toLowerCase();
@@ -121,6 +138,9 @@ function subscribeShared(
             { includeMetadataChanges: true },
             snapshot => {
                 if (entry.closed) return;
+                if (snapshot.metadata.fromCache === false) {
+                    emitFirestoreConnectivityEvidence({ ok: true });
+                }
                 clearTimeout(entry.emptyCacheTimer);
                 entry.emptyCacheTimer = null;
                 entry.snapshotMetadata = {
@@ -162,6 +182,14 @@ function subscribeShared(
             },
             error => {
                 if (entry.closed) return;
+                const errorCode = String(error?.code || '')
+                    .replace(/^firestore\//, '');
+                if (CONNECTIVITY_ERROR_CODES.has(errorCode)) {
+                    emitFirestoreConnectivityEvidence({
+                        ok: false,
+                        code: errorCode
+                    });
+                }
                 entry.closed = true;
                 clearTimeout(entry.emptyCacheTimer);
                 entry.emptyCacheTimer = null;

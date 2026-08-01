@@ -23,16 +23,15 @@ export default defineConfig({
   plugins: [
     VitePWA({
       injectRegister: false,
-      registerType: 'prompt',
+      registerType: 'autoUpdate',
       manifest: false,
       workbox: {
         cleanupOutdatedCaches: true,
         clientsClaim: true,
-        skipWaiting: false,
+        skipWaiting: true,
         navigateFallback: '/index.html',
-        // Todos los recursos propios quedan disponibles desde el primer
-        // service worker instalado. Las revisiones nuevas se descargan en
-        // segundo plano, pero esperan la confirmación del usuario para activar.
+        // La versión nueva toma control automáticamente. app.js aplaza la
+        // recarga si hay carrito, edición o persistencia local en curso.
         globPatterns: ['**/*.{html,js,css,json,png,jpg,jpeg,webp,ico}'],
         runtimeCaching: [
           {

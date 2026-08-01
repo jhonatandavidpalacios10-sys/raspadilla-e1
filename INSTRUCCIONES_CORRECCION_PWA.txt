@@ -1,0 +1,35 @@
+RASPADILLA POS 1.0.1 - CORRECCION PWA Y SINCRONIZACION
+
+IMPORTANTE PARA CONSERVAR LOS PEDIDOS EXISTENTES
+
+1. Publique esta version sobre el mismo dominio, protocolo y puerto que usa la
+   aplicacion actual.
+2. No desinstale la PWA y no use "Borrar datos", "Borrar almacenamiento" ni
+   herramientas de limpieza del navegador.
+3. Despues de publicar, abra la aplicacion instalada con conexion. La nueva
+   version se descargara automaticamente.
+4. Si hay un carrito, una edicion o un guardado en curso, la recarga se aplaza
+   hasta que la operacion termine; no fuerce el cierre durante ese momento.
+5. En Pedidos, los registros locales indicaran: En cola local, Enviando a la
+   nube o Reintentando. Los reintentos son automaticos.
+
+GARANTIAS DE COMPATIBILIDAD LOCAL
+
+- Se conservan los nombres, versiones y stores de IndexedDB existentes:
+  raffaelito-pos-sync (version 2) y raffaelito-pos-drafts (version 1).
+- La actualizacion no ejecuta indexedDB.deleteDatabase, no vacia stores y no
+  limpia el almacenamiento de la aplicacion.
+- Los reintentos reutilizan el mismo operationId para evitar pedidos dobles.
+
+CORRECCIONES INCLUIDAS
+
+- Recuperacion durable de operaciones que quedaron en estado syncing al
+  suspender o cerrar la PWA.
+- Deadline para Firebase y reintento automatico sin bloquear toda la cola.
+- Timeouts de IndexedDB que liberan una transaccion congelada sin borrar datos.
+- El carrito y el pago solo se limpian cuando la outbox ya quedo guardada.
+- Activacion automatica y segura del nuevo service worker.
+- Indicadores separados para cola local, envio y reintento.
+- La conectividad usa evidencia real de snapshots de Firebase; el manifest por
+  si solo ya no se considera confirmacion suficiente de acceso a la base.
+

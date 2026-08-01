@@ -9,6 +9,8 @@ const FALLBACK_LEASE_TTL_MS = 120_000;
 const FALLBACK_LEASE_RENEW_MS = 30_000;
 const COMMITTED_TOMBSTONE_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_RETRY_DELAY_MS = 60_000;
+const LOCAL_STORAGE_TRANSACTION_TIMEOUT_MS = 10_000;
+const SYNC_OPERATION_TIMEOUT_MS = 45_000;
 
 const handlers = new Map();
 const operations = new Map();
@@ -20,6 +22,7 @@ let reloadPromise = null;
 let reloadRequested = false;
 let workerPromise = null;
 let retryTimer = null;
+let retryTimerDueAt = 0;
 let activeOwnerId = '';
 let queueEnabled = false;
 let workerGeneration = 0;
@@ -142,6 +145,68 @@ function createQueueError(code, message) {
     return Object.assign(new Error(message), { code });
 }
 
+function invalidateDatabaseConnection(database) {
+    try {
+        database?.close();
+    } catch (_) {}
+    databasePromise = null;
+}
+
+function armStorageTransactionTimeout({
+    database,
+    transaction,
+    reject,
+    message
+}) {
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+        timedOut = true;
+        const error = createQueueError(
+            'local-storage-timeout',
+            message || 'El almacenamiento local tardó demasiado en responder.'
+        );
+        // Rechazamos primero para conservar el motivo real. abort() puede
+        // disparar onabort inmediatamente en algunos WebView antiguos.
+        reject(error);
+        try {
+            transaction.abort();
+        } catch (_) {}
+        invalidateDatabaseConnection(database);
+    }, LOCAL_STORAGE_TRANSACTION_TIMEOUT_MS);
+
+    return {
+        clear() {
+            clearTimeout(timeout);
+        },
+        didTimeout() {
+            return timedOut;
+        }
+    };
+}
+
+function runSyncHandlerWithDeadline(handler, payload, operation) {
+    let timeout = null;
+    const remoteWork = Promise.resolve().then(() => (
+        handler(cloneValue(payload), operation)
+    ));
+    const deadline = new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+            reject(createQueueError(
+                'deadline-exceeded',
+                'Firebase no respondió a tiempo. La operación se reintentará automáticamente.'
+            ));
+        }, SYNC_OPERATION_TIMEOUT_MS);
+    });
+
+    // Firestore no permite cancelar runTransaction. La operación remota puede
+    // terminar después del deadline; todos los handlers usan operationId
+    // estable, por lo que el siguiente intento confirma o reutiliza el mismo
+    // resultado sin duplicar la venta.
+    return Promise.race([remoteWork, deadline]).finally(() => {
+        if (timeout !== null) clearTimeout(timeout);
+    });
+}
+
 async function awaitPersistAfter(persistAfter) {
     if (persistAfter === undefined || persistAfter === null) return;
     const result = await (
@@ -223,21 +288,37 @@ async function runStoreRequest(mode, operation) {
         const transaction = database.transaction(STORE_NAME, mode);
         const store = transaction.objectStore(STORE_NAME);
         let request;
+        const timeoutGuard = armStorageTransactionTimeout({
+            database,
+            transaction,
+            reject,
+            message: 'La cola local tardó demasiado en responder.'
+        });
 
         try {
             request = operation(store);
         } catch (error) {
+            timeoutGuard.clear();
+            try {
+                transaction.abort();
+            } catch (_) {}
             reject(error);
             return;
         }
 
-        transaction.oncomplete = () => resolve(request?.result);
-        transaction.onerror = () => reject(
-            transaction.error || request?.error || new Error('Falló la cola local.')
-        );
-        transaction.onabort = () => reject(
-            transaction.error || new Error('Se canceló una operación de la cola local.')
-        );
+        transaction.oncomplete = () => {
+            timeoutGuard.clear();
+            resolve(request?.result);
+        };
+        transaction.onerror = () => {
+            timeoutGuard.clear();
+            reject(transaction.error || request?.error || new Error('Falló la cola local.'));
+        };
+        transaction.onabort = () => {
+            timeoutGuard.clear();
+            if (timeoutGuard.didTimeout()) return;
+            reject(transaction.error || new Error('Se canceló una operación de la cola local.'));
+        };
     });
 }
 
@@ -271,6 +352,12 @@ async function putRecordAtomically(record, {
         let operationError = null;
         const supersededRecords = [];
         const request = store.get(candidate.id);
+        const timeoutGuard = armStorageTransactionTimeout({
+            database,
+            transaction,
+            reject,
+            message: 'El guardado de la operación local tardó demasiado.'
+        });
 
         request.onsuccess = () => {
             const existing = request.result;
@@ -343,18 +430,28 @@ async function putRecordAtomically(record, {
             };
         };
 
-        transaction.oncomplete = () => resolve(outcome);
-        transaction.onerror = () => reject(
-            operationError
-            || transaction.error
-            || request.error
-            || new Error('No se pudo guardar la operación local.')
-        );
-        transaction.onabort = () => reject(
-            operationError
-            || transaction.error
-            || new Error('Se canceló el guardado de la operación local.')
-        );
+        transaction.oncomplete = () => {
+            timeoutGuard.clear();
+            resolve(outcome);
+        };
+        transaction.onerror = () => {
+            timeoutGuard.clear();
+            reject(
+                operationError
+                || transaction.error
+                || request.error
+                || new Error('No se pudo guardar la operación local.')
+            );
+        };
+        transaction.onabort = () => {
+            timeoutGuard.clear();
+            if (timeoutGuard.didTimeout()) return;
+            reject(
+                operationError
+                || transaction.error
+                || new Error('Se canceló el guardado de la operación local.')
+            );
+        };
     });
 }
 
@@ -372,6 +469,12 @@ async function replaceRecordAtomically(record, {
         let outcome = null;
         let operationError = null;
         const request = store.get(candidate.id);
+        const timeoutGuard = armStorageTransactionTimeout({
+            database,
+            transaction,
+            reject,
+            message: 'La actualización de la operación local tardó demasiado.'
+        });
 
         request.onsuccess = () => {
             const existing = request.result;
@@ -444,18 +547,28 @@ async function replaceRecordAtomically(record, {
             };
         };
 
-        transaction.oncomplete = () => resolve(outcome);
-        transaction.onerror = () => reject(
-            operationError
-            || transaction.error
-            || request.error
-            || new Error('No se pudo reemplazar la operación local.')
-        );
-        transaction.onabort = () => reject(
-            operationError
-            || transaction.error
-            || new Error('Se canceló el reemplazo de la operación local.')
-        );
+        transaction.oncomplete = () => {
+            timeoutGuard.clear();
+            resolve(outcome);
+        };
+        transaction.onerror = () => {
+            timeoutGuard.clear();
+            reject(
+                operationError
+                || transaction.error
+                || request.error
+                || new Error('No se pudo reemplazar la operación local.')
+            );
+        };
+        transaction.onabort = () => {
+            timeoutGuard.clear();
+            if (timeoutGuard.didTimeout()) return;
+            reject(
+                operationError
+                || transaction.error
+                || new Error('Se canceló el reemplazo de la operación local.')
+            );
+        };
     });
 }
 
@@ -475,6 +588,12 @@ async function deleteRecordConditionally(id, {
         let outcome = null;
         let operationError = null;
         const request = store.get(normalizedId);
+        const timeoutGuard = armStorageTransactionTimeout({
+            database,
+            transaction,
+            reject,
+            message: 'La revisión de la operación local tardó demasiado.'
+        });
 
         request.onsuccess = () => {
             const existing = request.result;
@@ -522,18 +641,28 @@ async function deleteRecordConditionally(id, {
             };
         };
 
-        transaction.oncomplete = () => resolve(outcome);
-        transaction.onerror = () => reject(
-            operationError
-            || transaction.error
-            || request.error
-            || new Error('No se pudo eliminar la operación local.')
-        );
-        transaction.onabort = () => reject(
-            operationError
-            || transaction.error
-            || new Error('Se canceló la eliminación de la operación local.')
-        );
+        transaction.oncomplete = () => {
+            timeoutGuard.clear();
+            resolve(outcome);
+        };
+        transaction.onerror = () => {
+            timeoutGuard.clear();
+            reject(
+                operationError
+                || transaction.error
+                || request.error
+                || new Error('No se pudo eliminar la operación local.')
+            );
+        };
+        transaction.onabort = () => {
+            timeoutGuard.clear();
+            if (timeoutGuard.didTimeout()) return;
+            reject(
+                operationError
+                || transaction.error
+                || new Error('Se canceló la eliminación de la operación local.')
+            );
+        };
     });
 }
 
@@ -547,33 +676,120 @@ async function runLeaseTransaction(operation) {
         const transaction = database.transaction(LEASE_STORE_NAME, 'readwrite');
         const store = transaction.objectStore(LEASE_STORE_NAME);
         let result = null;
+        const timeoutGuard = armStorageTransactionTimeout({
+            database,
+            transaction,
+            reject,
+            message: 'El bloqueo local de sincronización tardó demasiado.'
+        });
 
         try {
             operation(store, value => {
                 result = value;
             });
         } catch (error) {
+            timeoutGuard.clear();
+            try {
+                transaction.abort();
+            } catch (_) {}
             reject(error);
             return;
         }
 
-        transaction.oncomplete = () => resolve(result);
-        transaction.onerror = () => reject(
-            transaction.error || new Error('Falló el bloqueo local de sincronización.')
-        );
-        transaction.onabort = () => reject(
-            transaction.error || new Error('Se canceló el bloqueo local de sincronización.')
-        );
+        transaction.oncomplete = () => {
+            timeoutGuard.clear();
+            resolve(result);
+        };
+        transaction.onerror = () => {
+            timeoutGuard.clear();
+            reject(transaction.error || new Error('Falló el bloqueo local de sincronización.'));
+        };
+        transaction.onabort = () => {
+            timeoutGuard.clear();
+            if (timeoutGuard.didTimeout()) return;
+            reject(transaction.error || new Error('Se canceló el bloqueo local de sincronización.'));
+        };
+    });
+}
+
+async function settleSyncAttemptAtomically(record, nextRecord) {
+    const database = await openDatabase();
+    const candidate = toDurableRecord(nextRecord);
+    const expectedVersion = getRecordVersion(record);
+    const expectedAttemptId = String(record?.syncAttemptId || '');
+
+    return new Promise((resolve, reject) => {
+        const transaction = database.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        let outcome = null;
+        const request = store.get(record.id);
+        const timeoutGuard = armStorageTransactionTimeout({
+            database,
+            transaction,
+            reject,
+            message: 'La confirmación local del intento tardó demasiado.'
+        });
+
+        request.onsuccess = () => {
+            const existing = request.result;
+            const canSettle = Boolean(
+                existing
+                && existing.ownerId === record.ownerId
+                && existing.status === 'syncing'
+                && getRecordVersion(existing) === expectedVersion
+                && String(existing.syncAttemptId || '') === expectedAttemptId
+            );
+            if (!canSettle) {
+                outcome = {
+                    applied: false,
+                    record: existing || null
+                };
+                return;
+            }
+
+            const settledRecord = {
+                ...candidate,
+                createdAt: Number(existing.createdAt) || candidate.createdAt,
+                syncAttemptId: '',
+                syncAttemptStartedAt: 0
+            };
+            const writeRequest = store.put(settledRecord);
+            writeRequest.onsuccess = () => {
+                outcome = {
+                    applied: true,
+                    record: settledRecord
+                };
+            };
+        };
+
+        transaction.oncomplete = () => {
+            timeoutGuard.clear();
+            resolve(outcome);
+        };
+        transaction.onerror = () => {
+            timeoutGuard.clear();
+            reject(
+                transaction.error
+                || request.error
+                || new Error('No se pudo confirmar el intento en la cola local.')
+            );
+        };
+        transaction.onabort = () => {
+            timeoutGuard.clear();
+            if (timeoutGuard.didTimeout()) return;
+            reject(
+                transaction.error
+                || new Error('Se canceló la confirmación del intento local.')
+            );
+        };
     });
 }
 
 function normalizeLoadedRecord(record) {
     if (!record?.id || !record?.type || !record?.ownerId) return null;
-    const syncingIsAbandoned = (
-        record.status === 'syncing'
-        && Number(record.updatedAt || 0) < Date.now() - FALLBACK_LEASE_TTL_MS
-    );
-    const status = syncingIsAbandoned ? 'retry' : record.status;
+    // IndexedDB es la autoridad. Una fila syncing se recupera y persiste bajo
+    // el lock del worker; cambiarla solo en memoria creaba un ciclo infinito.
+    const status = record.status;
     return {
         ...record,
         version: getRecordVersion(record),
@@ -586,6 +802,17 @@ function normalizeLoadedRecord(record) {
         nextAttemptAt: Math.max(0, Number(record.nextAttemptAt) || 0),
         createdAt: Number(record.createdAt) || Date.now(),
         updatedAt: Number(record.updatedAt) || Date.now(),
+        syncAttemptId: status === 'syncing'
+            ? String(record.syncAttemptId || '')
+            : '',
+        syncAttemptStartedAt: status === 'syncing'
+            ? Math.max(
+                0,
+                Number(record.syncAttemptStartedAt)
+                || Number(record.updatedAt)
+                || 0
+            )
+            : 0,
         persistencePending: false,
         optimisticMutations: Array.isArray(record.optimisticMutations)
             ? record.optimisticMutations
@@ -690,6 +917,7 @@ function getPublicOperation(record) {
         dependsOn: normalizeDependsOn(record.dependsOn),
         status: record.status,
         attempts: record.attempts,
+        nextAttemptAt: Math.max(0, Number(record.nextAttemptAt) || 0),
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
         durable: (
@@ -807,6 +1035,7 @@ function getReloadSignature(record) {
         getRecordVersion(record),
         String(record.status || ''),
         Number(record.updatedAt) || 0,
+        String(record.syncAttemptId || ''),
         record.persistencePending === true ? 'pending' : 'durable',
         record.volatile === true ? 'volatile' : 'stored',
         String(record.stagingToken || '')
@@ -951,13 +1180,19 @@ function isTransientError(error) {
 
 function scheduleDrain(delayMs = 0) {
     if (!queueEnabled || !activeOwnerId) return;
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
-
-    if (retryTimer) clearTimeout(retryTimer);
+    const normalizedDelay = Math.max(0, Number(delayMs) || 0);
+    const dueAt = Date.now() + normalizedDelay;
+    // navigator.onLine no confirma acceso a Firebase y algunos WebView lo
+    // mantienen en false aun cuando la red volvió. Dejamos que el handler real
+    // pruebe la conexión, protegido por deadline y backoff.
+    if (retryTimer !== null && retryTimerDueAt <= dueAt) return;
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimerDueAt = dueAt;
     retryTimer = setTimeout(() => {
         retryTimer = null;
+        retryTimerDueAt = 0;
         void drainQueue();
-    }, Math.max(0, Number(delayMs) || 0));
+    }, normalizedDelay);
 }
 
 function compareOperationOrder(left, right) {
@@ -983,34 +1218,42 @@ function getBlockingDependency(record) {
         if (explicitDependencies.has(candidate.id)) return true;
         return (
             Boolean(entityKey)
-            && candidate.status === 'failed'
             && candidate.entityKey === entityKey
             && compareOperationOrder(candidate, record) < 0
         );
     }) || null;
 }
 
-function getFirstQueuedOperation() {
+function getNextOperation() {
+    const now = Date.now();
     return [...operations.values()]
         .filter(record => (
             record.ownerId === activeOwnerId
             && ['queued', 'retry'].includes(record.status)
             && handlers.has(record.type)
+            && record.persistencePending !== true
+            && Number(record.nextAttemptAt || 0) <= now
         ))
         .sort(compareOperationOrder)
         .find(record => !getBlockingDependency(record)) || null;
 }
 
-function getNextOperation() {
+function getNextQueuedWakeAt() {
     const now = Date.now();
-    const first = getFirstQueuedOperation();
-    return (
-        first
-        && first.persistencePending !== true
-        && first.nextAttemptAt <= now
-    )
-        ? first
-        : null;
+    const nextRecord = [...operations.values()]
+        .filter(record => (
+            record.ownerId === activeOwnerId
+            && ['queued', 'retry'].includes(record.status)
+            && handlers.has(record.type)
+            && record.persistencePending !== true
+            && Number(record.nextAttemptAt || 0) > now
+            && !getBlockingDependency(record)
+        ))
+        .sort((left, right) => (
+            Number(left.nextAttemptAt || 0) - Number(right.nextAttemptAt || 0)
+            || compareOperationOrder(left, right)
+        ))[0];
+    return Math.max(0, Number(nextRecord?.nextAttemptAt) || 0);
 }
 
 function isCurrentWorker(ownerId, generation) {
@@ -1022,23 +1265,27 @@ function isCurrentWorker(ownerId, generation) {
 }
 
 async function markOperationForSessionRetry(record) {
-    let retryRecord = {
+    const retryRecord = {
         ...record,
         status: 'retry',
+        syncAttemptId: '',
+        syncAttemptStartedAt: 0,
         nextAttemptAt: 0,
-        updatedAt: Date.now()
+        updatedAt: Math.max(Date.now(), Number(record.updatedAt || 0) + 1)
     };
     try {
-        await putRecord(retryRecord);
+        const outcome = await settleSyncAttemptAtomically(record, retryRecord);
+        if (outcome?.applied) {
+            operations.set(retryRecord.id, normalizeLoadedRecord(outcome.record));
+        } else {
+            await reloadOperationsFromStorage();
+        }
     } catch (error) {
-        retryRecord = {
-            ...retryRecord,
-            volatile: true
-        };
         console.warn('No se pudo pausar limpiamente la operación local:', error);
+        await reloadOperationsFromStorage().catch(() => {});
+        scheduleDrain(5_000);
     }
-    operations.set(retryRecord.id, retryRecord);
-    emitQueueChanged({ affectedCollections: [] });
+    emitQueueChanged({ affectedCollections: getAffectedCollections(record) });
 }
 
 async function recoverOwnedSyncingRecords(ownerId) {
@@ -1054,25 +1301,44 @@ async function recoverOwnedSyncingRecords(ownerId) {
         const retryRecord = {
             ...record,
             status: 'retry',
+            syncAttemptId: '',
+            syncAttemptStartedAt: 0,
             nextAttemptAt: 0,
-            updatedAt: Date.now()
+            updatedAt: Math.max(Date.now(), Number(record.updatedAt || 0) + 1)
         };
-        await putRecord(retryRecord);
-        operations.set(retryRecord.id, retryRecord);
+        const outcome = await settleSyncAttemptAtomically(record, retryRecord);
+        if (outcome?.applied) {
+            operations.set(
+                retryRecord.id,
+                normalizeLoadedRecord(outcome.record)
+            );
+        } else if (outcome?.record) {
+            operations.set(
+                retryRecord.id,
+                normalizeLoadedRecord(outcome.record)
+            );
+        }
     }
-    emitQueueChanged({ affectedCollections: [] });
+    emitQueueChanged({
+        affectedCollections: [...new Set(
+            syncingRecords.flatMap(getAffectedCollections)
+        )]
+    });
 }
 
-async function persistWorkerStateBestEffort(record, warning) {
+async function persistWorkerState(record, nextRecord, warning) {
     try {
-        await putRecord(record);
-        return record;
+        const outcome = await settleSyncAttemptAtomically(record, nextRecord);
+        if (!outcome?.applied) {
+            await reloadOperationsFromStorage();
+            return null;
+        }
+        return normalizeLoadedRecord(outcome.record);
     } catch (error) {
         console.warn(warning, error);
-        return {
-            ...record,
-            volatile: true
-        };
+        await reloadOperationsFromStorage().catch(() => {});
+        scheduleDrain(5_000);
+        return null;
     }
 }
 
@@ -1082,13 +1348,9 @@ async function processOperations(
     hasWorkerLease = () => true
 ) {
     while (isCurrentWorker(ownerId, generation) && hasWorkerLease()) {
-        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
-
         let record = getNextOperation();
         if (!record) {
-            const nextRetry = Number(
-                getFirstQueuedOperation()?.nextAttemptAt || 0
-            );
+            const nextRetry = getNextQueuedWakeAt();
             if (nextRetry > Date.now()) scheduleDrain(nextRetry - Date.now());
             return;
         }
@@ -1097,6 +1359,8 @@ async function processOperations(
         const syncingRecord = {
             ...record,
             status: 'syncing',
+            syncAttemptId: createVersionToken(),
+            syncAttemptStartedAt: Date.now(),
             updatedAt: Date.now()
         };
         try {
@@ -1118,17 +1382,30 @@ async function processOperations(
             throw error;
         }
         operations.set(record.id, record);
-        emitQueueChanged({ affectedCollections: [] });
+        emitQueueChanged({ affectedCollections: getAffectedCollections(record) });
 
         try {
             const affectedCollections = getAffectedCollections(record);
-            const result = await handler(cloneValue(record.payload), getPublicOperation(record));
+            const result = await runSyncHandlerWithDeadline(
+                handler,
+                record.payload,
+                getPublicOperation(record)
+            );
+            if (!isCurrentWorker(ownerId, generation) || !hasWorkerLease()) {
+                await markOperationForSessionRetry(record);
+                return;
+            }
             emitConnectivityEvidence({ ok: true });
-            const committedAt = Date.now();
+            const committedAt = Math.max(
+                Date.now(),
+                Number(record.updatedAt || 0) + 1
+            );
             const committedBridgeMutations = getCommittedBridgeMutations(record);
-            const committedRecord = await persistWorkerStateBestEffort({
+            const committedRecord = await persistWorkerState(record, {
                 ...record,
                 status: 'committed',
+                syncAttemptId: '',
+                syncAttemptStartedAt: 0,
                 updatedAt: committedAt,
                 committedAt,
                 projectionOperationId: String(record.payload?.operationId || ''),
@@ -1138,6 +1415,7 @@ async function processOperations(
                 // antigua entre la confirmación de Firebase y su snapshot.
                 optimisticMutations: committedBridgeMutations
             }, 'No se pudo marcar localmente una operación confirmada:');
+            if (!committedRecord) return;
             operations.set(committedRecord.id, committedRecord);
             emitQueueChanged({ affectedCollections });
             if (committedRecord.ownerId === activeOwnerId) {
@@ -1147,7 +1425,7 @@ async function processOperations(
                 });
             }
         } catch (error) {
-            if (!isCurrentWorker(ownerId, generation)) {
+            if (!isCurrentWorker(ownerId, generation) || !hasWorkerLease()) {
                 await markOperationForSessionRetry(record);
                 return;
             }
@@ -1156,38 +1434,47 @@ async function processOperations(
                 error?.message || 'No se pudo sincronizar la operación.'
             ).slice(0, 500);
             const attempts = record.attempts + 1;
-            const updatedAt = Date.now();
+            const updatedAt = Math.max(
+                Date.now(),
+                Number(record.updatedAt || 0) + 1
+            );
 
             if (isTransientError(error)) {
                 if (CONNECTIVITY_ERROR_CODES.has(code)) {
                     emitConnectivityEvidence({ ok: false, code });
                 }
                 const delay = getRetryDelay(attempts);
-                const retryRecord = await persistWorkerStateBestEffort({
+                const retryRecord = await persistWorkerState(record, {
                     ...record,
                     status: 'retry',
+                    syncAttemptId: '',
+                    syncAttemptStartedAt: 0,
                     attempts,
                     updatedAt,
                     lastErrorCode: code,
                     lastErrorMessage: message,
                     nextAttemptAt: Date.now() + delay
                 }, 'No se pudo guardar el reintento local:');
+                if (!retryRecord) return;
                 operations.set(retryRecord.id, retryRecord);
-                emitQueueChanged({ affectedCollections: [] });
+                emitQueueChanged({ affectedCollections: getAffectedCollections(record) });
                 scheduleDrain(delay);
-                return;
+                continue;
             }
 
             const affectedCollections = getAffectedCollections(record);
-            const failedRecord = await persistWorkerStateBestEffort({
+            const failedRecord = await persistWorkerState(record, {
                 ...record,
                 status: 'failed',
+                syncAttemptId: '',
+                syncAttemptStartedAt: 0,
                 attempts,
                 updatedAt,
                 lastErrorCode: code,
                 lastErrorMessage: message,
                 nextAttemptAt: 0
             }, 'No se pudo guardar el fallo definitivo en la cola local:');
+            if (!failedRecord) return;
             operations.set(failedRecord.id, failedRecord);
             const detail = {
                 operation: getPublicOperation(failedRecord),
@@ -1941,11 +2228,26 @@ export function applyPendingDocumentMutations(collectionName, rows = []) {
                         ...(isCommittedProjection
                             ? {
                                 sincronizacionPendiente: false,
-                                sincronizacionOperacionId: ''
+                                sincronizacionOperacionId: '',
+                                sincronizacionEstado: '',
+                                sincronizacionIntentos: 0,
+                                sincronizacionErrorCodigo: '',
+                                sincronizacionErrorMensaje: ''
                             }
                             : {
                                 sincronizacionPendiente: true,
-                                sincronizacionOperacionId: record.id
+                                sincronizacionOperacionId: record.id,
+                                sincronizacionEstado: String(record.status || 'queued'),
+                                sincronizacionIntentos: Math.max(
+                                    0,
+                                    Number(record.attempts) || 0
+                                ),
+                                sincronizacionErrorCodigo: String(
+                                    record.lastErrorCode || ''
+                                ),
+                                sincronizacionErrorMensaje: String(
+                                    record.lastErrorMessage || ''
+                                )
                             })
                     });
                     return;
@@ -1959,11 +2261,26 @@ export function applyPendingDocumentMutations(collectionName, rows = []) {
                     ...(isCommittedProjection
                         ? {
                             sincronizacionPendiente: false,
-                            sincronizacionOperacionId: ''
+                            sincronizacionOperacionId: '',
+                            sincronizacionEstado: '',
+                            sincronizacionIntentos: 0,
+                            sincronizacionErrorCodigo: '',
+                            sincronizacionErrorMensaje: ''
                         }
                         : {
                             sincronizacionPendiente: true,
-                            sincronizacionOperacionId: record.id
+                            sincronizacionOperacionId: record.id,
+                            sincronizacionEstado: String(record.status || 'queued'),
+                            sincronizacionIntentos: Math.max(
+                                0,
+                                Number(record.attempts) || 0
+                            ),
+                            sincronizacionErrorCodigo: String(
+                                record.lastErrorCode || ''
+                            ),
+                            sincronizacionErrorMensaje: String(
+                                record.lastErrorMessage || ''
+                            )
                         })
                 });
             });
@@ -2086,9 +2403,10 @@ export function pauseSyncQueue() {
     workerGeneration += 1;
     queueEnabled = false;
     activeOwnerId = '';
-    if (retryTimer) {
+    if (retryTimer !== null) {
         clearTimeout(retryTimer);
         retryTimer = null;
+        retryTimerDueAt = 0;
     }
     emitQueueChanged({ broadcast: false });
 }

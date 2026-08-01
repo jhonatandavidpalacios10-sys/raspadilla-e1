@@ -133,6 +133,16 @@ function handleFiltroPedidosChange(event) {
     iniciarEscuchaPedidos();
 }
 
+function handlePedidosSyncQueueChanged(event) {
+    if (!pedidosInicializado) return;
+    const affectedCollections = event.detail?.affectedCollections;
+    if (
+        Array.isArray(affectedCollections)
+        && !affectedCollections.includes('ventas')
+    ) return;
+    renderPedidosUI();
+}
+
 function schedulePedidosRetry(lifecycleGeneration, subscriptionGeneration) {
     if (pedidosRetryTimer) clearTimeout(pedidosRetryTimer);
     pedidosRetryAttempts++;
@@ -190,6 +200,10 @@ export function initPedidos() {
     if (listaPendientes) {
         listaPendientes.addEventListener('click', handlePedidosClick);
     }
+    window.addEventListener(
+        'icepos:sync-queue-changed',
+        handlePedidosSyncQueueChanged
+    );
     
     iniciarEscuchaPedidos(); 
 }
@@ -253,6 +267,10 @@ export function destroyPedidos() {
         ?.removeEventListener('change', handleFiltroPedidosChange);
     document.getElementById('pedidos-pendientes-list')
         ?.removeEventListener('click', handlePedidosClick);
+    window.removeEventListener(
+        'icepos:sync-queue-changed',
+        handlePedidosSyncQueueChanged
+    );
 
     pedidosGlobales = [];
     filtroLocalPedidos = 'todas';
@@ -372,7 +390,19 @@ function generarHTMLPedido(v, esListo = false) {
     const editLock = getSaleEditLockState(v);
     const isLocked = editLock.active;
     const isRecoverable = editLock.stale;
-    const isSyncPending = v.sincronizacionPendiente === true;
+    const pendingSaleOperations = getPendingSaleOperations(v.id);
+    const projectedOperationId = String(v.sincronizacionOperacionId || '');
+    const syncOperation = (
+        pendingSaleOperations.find(operation => operation.id === projectedOperationId)
+        || [...pendingSaleOperations].sort((left, right) => (
+            Number(right.updatedAt || 0) - Number(left.updatedAt || 0)
+        ))[0]
+        || null
+    );
+    const isSyncPending = (
+        v.sincronizacionPendiente === true
+        || Boolean(syncOperation)
+    );
     const safeSaleId = escaparHtml(v.id || '');
     let iHtml = '';
     (Array.isArray(v.items) ? v.items : []).forEach(i => { 
@@ -446,14 +476,47 @@ function generarHTMLPedido(v, esListo = false) {
                     : 'Pulsa editar para recuperar el pedido'}
             </p>
         </div>` : '';
+    const syncStatus = String(
+        syncOperation?.status || v.sincronizacionEstado || 'queued'
+    );
+    const syncAttempts = Math.max(
+        0,
+        Number(syncOperation?.attempts ?? v.sincronizacionIntentos) || 0
+    );
+    const syncPresentation = syncStatus === 'syncing'
+        ? {
+            title: 'Enviando a la nube',
+            detail: 'El pedido está guardado y Firebase lo está confirmando.',
+            icon: 'cloud-upload',
+            color: 'sky'
+        }
+        : syncStatus === 'retry'
+            ? {
+                title: 'Reintentando',
+                detail: `El pedido sigue guardado. Reintento automático${syncAttempts > 0 ? ` (${syncAttempts})` : ''}.`,
+                icon: 'refresh-cw',
+                color: 'amber'
+            }
+            : {
+                title: 'En cola local',
+                detail: 'Guardado en este dispositivo; esperando turno para enviarse.',
+                icon: 'hard-drive-download',
+                color: 'sky'
+            };
+    const syncColorClasses = syncPresentation.color === 'amber'
+        ? 'border-amber-400/40 bg-amber-500/10 text-amber-300'
+        : 'border-sky-400/40 bg-sky-500/10 text-sky-300';
+    const syncDetailClasses = syncPresentation.color === 'amber'
+        ? 'text-amber-200/80'
+        : 'text-sky-200/80';
     const syncBadge = isSyncPending ? `
-        <div class="mt-2 rounded-lg border border-sky-400/40 bg-sky-500/10 px-2.5 py-2 text-sky-300">
+        <div class="mt-2 rounded-lg border px-2.5 py-2 ${syncColorClasses}">
             <div class="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider">
-                <i data-lucide="cloud-upload" class="w-3.5 h-3.5"></i>
-                Sincronizando
+                <i data-lucide="${syncPresentation.icon}" class="w-3.5 h-3.5"></i>
+                ${escaparHtml(syncPresentation.title)}
             </div>
-            <p class="mt-0.5 text-[10px] text-sky-200/80">
-                Guardado en este dispositivo
+            <p class="mt-0.5 text-[10px] ${syncDetailClasses}">
+                ${escaparHtml(syncPresentation.detail)}
             </p>
         </div>` : '';
     

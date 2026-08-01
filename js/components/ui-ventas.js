@@ -2865,6 +2865,12 @@ function showSaleError(error) {
 
     if (error?.code === 'unavailable' || error?.code === 'failed-precondition') {
         message = 'Necesitas conexión estable para confirmar la venta. El carrito se conservó.';
+    } else if ([
+        'local-storage-timeout',
+        'local-storage-failed',
+        'local-draft-storage-failed'
+    ].includes(String(error?.code || ''))) {
+        message = 'El dispositivo no terminó de guardar el pedido. El carrito y el pago siguen intactos; puedes volver a intentarlo.';
     } else if (error?.code === 'insufficient-stock') {
         const available = error.details?.disponible;
         message = `${error.message}${Number.isFinite(available) ? ` Disponible: ${available}.` : ''}`;
@@ -3273,7 +3279,7 @@ function handleSaleSyncFailure(event) {
     }, 0);
 }
 
-function procesarCobroFinal() {
+async function procesarCobroFinal() {
     const btn = document.getElementById('btn-procesar-cobro');
     if(
         !btn
@@ -3291,6 +3297,7 @@ function procesarCobroFinal() {
     let persistenceBarrier = null;
     let persistenceBarrierHasProducer = false;
     preparacionVentaEnProceso = true;
+    setSaleControlsLocked(true, originalButtonHtml);
 
     try {
         const cart = cloneCart(state.carrito);
@@ -3387,7 +3394,6 @@ function procesarCobroFinal() {
                 )
                 : []
         });
-        saleWasAccepted = true;
         const acceptedOperationId =
             queueReceipt.operationId || operationId;
         activeAttempt = {
@@ -3426,34 +3432,49 @@ function procesarCobroFinal() {
         }).catch(() => {
             persistenceBarrier.resolve(true);
         });
+
+        // No limpiar el carrito hasta que la outbox confirme que el pedido ya
+        // existe de forma durable en IndexedDB. Si WebView se queda bloqueado,
+        // el timeout conserva la venta en pantalla para volver a intentarla.
+        await queueReceipt.persisted;
+        saleWasAccepted = true;
+
         const cleanupToken = {
             scopeKey: saleDraftScope?.key || '',
             operationId: acceptedOperationId,
             queueVersion: activeAttempt.queueVersion
         };
-        deferredSaleDraftCleanup = cleanupToken;
+        const saleStillBelongsToVisibleSession = (
+            sessionGeneration === ventasSessionGeneration
+            && saleDraftScope?.key === activeSaleDraftScope?.key
+        );
+        if (saleStillBelongsToVisibleSession) {
+            deferredSaleDraftCleanup = cleanupToken;
+        }
         recoveredFailedSaleOperation = null;
-        limpiarCarritoYEdicion(true, {
-            discardDraft: false,
-            discardRecoveredOperation: false
-        });
-        resetPaymentInputs();
-        preparacionVentaEnProceso = false;
-        renderAcceptedSaleImmediately();
+        if (saleStillBelongsToVisibleSession) {
+            limpiarCarritoYEdicion(true, {
+                discardDraft: false,
+                discardRecoveredOperation: false
+            });
+            resetPaymentInputs();
+            preparacionVentaEnProceso = false;
+            renderAcceptedSaleImmediately();
 
-        if(window.mostrarToast) {
-            const shortId = saleId.replace(/^T-/, '').slice(0, 8).toUpperCase();
-            window.mostrarToast(
-                editContext ? 'Cambios guardados' : 'Venta guardada',
-                `Ticket #${shortId} registrado en este dispositivo y sincronizándose.`,
-                'emerald'
-            );
+            if(window.mostrarToast) {
+                const shortId = saleId.replace(/^T-/, '').slice(0, 8).toUpperCase();
+                window.mostrarToast(
+                    editContext ? 'Cambios guardados' : 'Venta guardada',
+                    `Ticket #${shortId} quedó guardado en este dispositivo y se sincronizará automáticamente.`,
+                    'emerald'
+                );
+            }
         }
 
         void draftSafetyPromise;
         const releasePersistenceGuard = finishPersistenceGuard;
         finishPersistenceGuard = null;
-        void queueReceipt.persisted.then(async () => {
+        void (async () => {
             const cleanupStillBelongsToThisSale = (
                 deferredSaleDraftCleanup === cleanupToken
             );
@@ -3482,19 +3503,10 @@ function procesarCobroFinal() {
                     .catch(() => false)
                     .then(() => recoverNextSaleRecoveryDraft());
             }, 0);
-        }).catch(error => {
-            if (deferredSaleDraftCleanup === cleanupToken) {
-                deferredSaleDraftCleanup = null;
-            }
-            console.warn(
-                'La venta quedó pendiente de recuperar en este dispositivo:',
-                error
-            );
-            void recoverDraftAfterQueuePersistenceFailure({
-                scope: saleDraftScope,
-                sessionGeneration,
-                ownerId: saleDraftScope?.uid
-            });
+        })().catch(error => {
+            // La venta ya es durable; si falla esta limpieza auxiliar se
+            // conserva el borrador para que pueda recuperarse, nunca se borra.
+            console.warn('Quedó pendiente limpiar el respaldo de la venta:', error);
         }).finally(() => {
             releasePersistenceGuard?.();
         });
@@ -3555,6 +3567,7 @@ function procesarCobroFinal() {
         if (sessionGeneration === ventasSessionGeneration) {
             preparacionVentaEnProceso = false;
             if (saleWasAccepted) {
+                setSaleControlsLocked(false, originalButtonHtml);
                 scheduleFullSaleUiRefreshAfterPaint();
             } else {
                 setSaleControlsLocked(false, originalButtonHtml);

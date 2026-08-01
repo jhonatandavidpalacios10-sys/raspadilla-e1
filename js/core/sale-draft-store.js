@@ -4,9 +4,43 @@ const STORE_NAME = 'saleDrafts';
 const DRAFT_VERSION = 1;
 const MAX_DRAFT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const RECOVERY_RECORD_KIND = 'accepted-sale-recovery';
+const TRANSACTION_TIMEOUT_MS = 8_000;
 
 let databasePromise = null;
 const writeQueues = new Map();
+
+function createStorageError(message) {
+    return Object.assign(new Error(message), { code: 'local-storage-timeout' });
+}
+
+function invalidateDatabaseConnection(database) {
+    try {
+        database?.close();
+    } catch (_) {}
+    databasePromise = null;
+}
+
+function armTransactionTimeout(database, transaction, reject, message) {
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+        timedOut = true;
+        // Rechazar antes de abortar conserva el diagnóstico real incluso en
+        // WebView antiguos cuyo onabort se dispara de forma sincrónica.
+        reject(createStorageError(message));
+        try {
+            transaction.abort();
+        } catch (_) {}
+        invalidateDatabaseConnection(database);
+    }, TRANSACTION_TIMEOUT_MS);
+    return {
+        clear() {
+            clearTimeout(timeout);
+        },
+        didTimeout() {
+            return timedOut;
+        }
+    };
+}
 
 function createWriteToken() {
     if (globalThis.crypto?.randomUUID) {
@@ -46,7 +80,7 @@ function openDatabase() {
             if (settled) return;
             settled = true;
             databasePromise = null;
-            reject(new Error('IndexedDB tardó demasiado en responder.'));
+            reject(createStorageError('IndexedDB tardó demasiado en responder.'));
         }, 3000);
         request.onupgradeneeded = () => {
             const database = request.result;
@@ -110,13 +144,25 @@ function putRecord(record) {
     return openDatabase().then(database => new Promise((resolve, reject) => {
         const transaction = database.transaction(STORE_NAME, 'readwrite');
         transaction.objectStore(STORE_NAME).put(record);
-        transaction.oncomplete = () => resolve(record);
-        transaction.onerror = () => reject(
-            transaction.error || new Error('No se pudo guardar el borrador local.')
+        const timeoutGuard = armTransactionTimeout(
+            database,
+            transaction,
+            reject,
+            'El guardado del borrador local tardó demasiado.'
         );
-        transaction.onabort = () => reject(
-            transaction.error || new Error('Se canceló el guardado del borrador local.')
-        );
+        transaction.oncomplete = () => {
+            timeoutGuard.clear();
+            resolve(record);
+        };
+        transaction.onerror = () => {
+            timeoutGuard.clear();
+            reject(transaction.error || new Error('No se pudo guardar el borrador local.'));
+        };
+        transaction.onabort = () => {
+            timeoutGuard.clear();
+            if (timeoutGuard.didTimeout()) return;
+            reject(transaction.error || new Error('Se canceló el guardado del borrador local.'));
+        };
     }));
 }
 
@@ -124,13 +170,25 @@ function deleteRecord(scopeKey) {
     return openDatabase().then(database => new Promise((resolve, reject) => {
         const transaction = database.transaction(STORE_NAME, 'readwrite');
         transaction.objectStore(STORE_NAME).delete(scopeKey);
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = () => reject(
-            transaction.error || new Error('No se pudo eliminar el borrador local.')
+        const timeoutGuard = armTransactionTimeout(
+            database,
+            transaction,
+            reject,
+            'La limpieza del borrador local tardó demasiado.'
         );
-        transaction.onabort = () => reject(
-            transaction.error || new Error('Se canceló la limpieza del borrador local.')
-        );
+        transaction.oncomplete = () => {
+            timeoutGuard.clear();
+            resolve();
+        };
+        transaction.onerror = () => {
+            timeoutGuard.clear();
+            reject(transaction.error || new Error('No se pudo eliminar el borrador local.'));
+        };
+        transaction.onabort = () => {
+            timeoutGuard.clear();
+            if (timeoutGuard.didTimeout()) return;
+            reject(transaction.error || new Error('Se canceló la limpieza del borrador local.'));
+        };
     }));
 }
 
@@ -138,10 +196,36 @@ function getRecord(scopeKey) {
     return openDatabase().then(database => new Promise((resolve, reject) => {
         const transaction = database.transaction(STORE_NAME, 'readonly');
         const request = transaction.objectStore(STORE_NAME).get(scopeKey);
-        request.onsuccess = () => resolve(request.result || null);
-        request.onerror = () => reject(
-            request.error || new Error('No se pudo leer el borrador local.')
+        let result = null;
+        let operationError = null;
+        const timeoutGuard = armTransactionTimeout(
+            database,
+            transaction,
+            reject,
+            'La lectura del borrador local tardó demasiado.'
         );
+        request.onsuccess = () => {
+            result = request.result || null;
+        };
+        request.onerror = () => {
+            operationError = request.error;
+            try {
+                transaction.abort();
+            } catch (_) {}
+        };
+        transaction.oncomplete = () => {
+            timeoutGuard.clear();
+            resolve(result);
+        };
+        transaction.onerror = () => {
+            timeoutGuard.clear();
+            reject(operationError || transaction.error || new Error('No se pudo leer el borrador local.'));
+        };
+        transaction.onabort = () => {
+            timeoutGuard.clear();
+            if (timeoutGuard.didTimeout()) return;
+            reject(operationError || transaction.error || new Error('Se canceló la lectura del borrador local.'));
+        };
     }));
 }
 
@@ -149,12 +233,36 @@ function getAllRecords() {
     return openDatabase().then(database => new Promise((resolve, reject) => {
         const transaction = database.transaction(STORE_NAME, 'readonly');
         const request = transaction.objectStore(STORE_NAME).getAll();
-        request.onsuccess = () => resolve(
-            Array.isArray(request.result) ? request.result : []
+        let result = [];
+        let operationError = null;
+        const timeoutGuard = armTransactionTimeout(
+            database,
+            transaction,
+            reject,
+            'La lectura de las recuperaciones locales tardó demasiado.'
         );
-        request.onerror = () => reject(
-            request.error || new Error('No se pudieron leer las recuperaciones locales.')
-        );
+        request.onsuccess = () => {
+            result = Array.isArray(request.result) ? request.result : [];
+        };
+        request.onerror = () => {
+            operationError = request.error;
+            try {
+                transaction.abort();
+            } catch (_) {}
+        };
+        transaction.oncomplete = () => {
+            timeoutGuard.clear();
+            resolve(result);
+        };
+        transaction.onerror = () => {
+            timeoutGuard.clear();
+            reject(operationError || transaction.error || new Error('No se pudieron leer las recuperaciones locales.'));
+        };
+        transaction.onabort = () => {
+            timeoutGuard.clear();
+            if (timeoutGuard.didTimeout()) return;
+            reject(operationError || transaction.error || new Error('Se canceló la lectura de las recuperaciones locales.'));
+        };
     }));
 }
 
@@ -194,6 +302,12 @@ function deleteRecordIfAttemptMatches(scopeKey, expectedAttempt) {
         const store = transaction.objectStore(STORE_NAME);
         const request = store.get(scopeKey);
         let deleted = false;
+        const timeoutGuard = armTransactionTimeout(
+            database,
+            transaction,
+            reject,
+            'La revisión del borrador local tardó demasiado.'
+        );
 
         request.onsuccess = () => {
             const storedAttempt = request.result?.attempt;
@@ -236,16 +350,26 @@ function deleteRecordIfAttemptMatches(scopeKey, expectedAttempt) {
             store.delete(scopeKey);
         };
         request.onerror = () => {
-            transaction.abort();
+            try {
+                transaction.abort();
+            } catch (_) {}
         };
-        transaction.oncomplete = () => resolve({ deleted });
-        transaction.onerror = () => reject(
-            transaction.error || new Error('No se pudo limpiar el borrador local.')
-        );
-        transaction.onabort = () => reject(
-            transaction.error || request.error
-            || new Error('Se canceló la limpieza del borrador local.')
-        );
+        transaction.oncomplete = () => {
+            timeoutGuard.clear();
+            resolve({ deleted });
+        };
+        transaction.onerror = () => {
+            timeoutGuard.clear();
+            reject(transaction.error || new Error('No se pudo limpiar el borrador local.'));
+        };
+        transaction.onabort = () => {
+            timeoutGuard.clear();
+            if (timeoutGuard.didTimeout()) return;
+            reject(
+                transaction.error || request.error
+                || new Error('Se canceló la limpieza del borrador local.')
+            );
+        };
     }));
 }
 
@@ -298,14 +422,9 @@ export async function loadSaleDraft(scope) {
 
     const record = await getRecord(scope.key);
     if (isValidRecord(record, scope)) return record;
-    if (record) {
-        await deleteSaleDraftIfAttemptMatches(scope, {
-            operationId: String(record.attempt?.operationId || ''),
-            queueVersion: String(record.attempt?.queueVersion || ''),
-            updatedAt: Number(record.updatedAt || 0),
-            writeToken: String(record.writeToken || '')
-        });
-    }
+    // Una lectura nunca borra datos. Un reloj incorrecto o una versión antigua
+    // no debe convertir una validación fallida en pérdida de un pedido.
+    if (record) console.warn('Se conservó un borrador local que requiere revisión.');
     return null;
 }
 
@@ -367,6 +486,12 @@ export async function promoteSaleRecoveryDraft(scope, recoveryRecord) {
             let outcome = { promoted: false };
             let operationError = null;
             const recoveryRequest = store.get(recoveryKey);
+            const timeoutGuard = armTransactionTimeout(
+                database,
+                transaction,
+                reject,
+                'La recuperación de la venta tardó demasiado.'
+            );
 
             recoveryRequest.onsuccess = () => {
                 const storedRecovery = recoveryRequest.result;
@@ -429,24 +554,38 @@ export async function promoteSaleRecoveryDraft(scope, recoveryRecord) {
                 };
                 baseRequest.onerror = () => {
                     operationError = baseRequest.error;
-                    transaction.abort();
+                    try {
+                        transaction.abort();
+                    } catch (_) {}
                 };
             };
             recoveryRequest.onerror = () => {
                 operationError = recoveryRequest.error;
-                transaction.abort();
+                try {
+                    transaction.abort();
+                } catch (_) {}
             };
-            transaction.oncomplete = () => resolve(outcome);
-            transaction.onerror = () => reject(
-                operationError
-                || transaction.error
-                || new Error('No se pudo promover la recuperación local.')
-            );
-            transaction.onabort = () => reject(
-                operationError
-                || transaction.error
-                || new Error('Se canceló la recuperación local.')
-            );
+            transaction.oncomplete = () => {
+                timeoutGuard.clear();
+                resolve(outcome);
+            };
+            transaction.onerror = () => {
+                timeoutGuard.clear();
+                reject(
+                    operationError
+                    || transaction.error
+                    || new Error('No se pudo promover la recuperación local.')
+                );
+            };
+            transaction.onabort = () => {
+                timeoutGuard.clear();
+                if (timeoutGuard.didTimeout()) return;
+                reject(
+                    operationError
+                    || transaction.error
+                    || new Error('Se canceló la recuperación local.')
+                );
+            };
         });
     });
 }
