@@ -1,6 +1,7 @@
 import { state } from '../core/store.js'; 
 import {
     escaparHtml,
+    formatMoney,
     getTodayDateStr,
     getTrustedNowMs,
     obtenerNombreCliente
@@ -404,8 +405,21 @@ function generarHTMLPedido(v, esListo = false) {
         || Boolean(syncOperation)
     );
     const safeSaleId = escaparHtml(v.id || '');
+    const items = Array.isArray(v.items) ? v.items : [];
+    const totalGuardado = Number(v.total);
+    const totalPedido = Number.isFinite(totalGuardado)
+        ? totalGuardado
+        : items.reduce((total, item) => {
+            const cantidad = Number(item?.cantidad);
+            const precio = Number(item?.precio);
+            return total + (
+                Number.isFinite(cantidad) && Number.isFinite(precio)
+                    ? cantidad * precio
+                    : 0
+            );
+        }, 0);
     let iHtml = '';
-    (Array.isArray(v.items) ? v.items : []).forEach(i => { 
+    items.forEach(i => { 
         if (!i || typeof i !== 'object') return;
         // 1. Mostrar Tamaño
         let tamanoHtml = '';
@@ -574,6 +588,10 @@ function generarHTMLPedido(v, esListo = false) {
             ${syncBadge}
             <div class="mb-1 mt-1 border-l-2 border-slate-700 pl-2">
                 ${iHtml}
+            </div>
+            <div class="mt-2 flex items-center justify-between border-t border-slate-700/50 pt-2">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total del pedido</span>
+                <span class="text-sm font-black text-emerald-400">${escaparHtml(formatMoney(totalPedido))}</span>
             </div>
             ${actionBtn}
         </div>`;
