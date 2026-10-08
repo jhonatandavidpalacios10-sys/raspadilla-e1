@@ -982,11 +982,6 @@ async function refreshEditLockHeartbeat() {
             nextDelay = EDIT_LOCK_HEARTBEAT_RETRY_MS;
             if (!editLockHeartbeatWarningShown) {
                 editLockHeartbeatWarningShown = true;
-                window.mostrarToast?.(
-                    'Conexión inestable',
-                    'No se pudo renovar la reserva del pedido. Se reintentará sin perder tus cambios.',
-                    'amber'
-                );
             }
             return false;
         }

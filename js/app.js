@@ -129,21 +129,6 @@ function showConnectivityToast(nextState) {
         );
         return;
     }
-    if (nextState === 'unstable') {
-        window.mostrarToast?.(
-            'Conexión inestable',
-            'La sincronización puede tardar un poco más.',
-            'amber'
-        );
-        return;
-    }
-    if (nextState === 'recovered') {
-        window.mostrarToast?.(
-            'Conexión recuperada',
-            'Los cambios pendientes volverán a sincronizarse.',
-            'emerald'
-        );
-    }
 }
 
 function setConnectivityState(nextState, { silent = false } = {}) {
